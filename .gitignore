@@ -1,0 +1,22 @@
+# builds
+build/
+
+# python builds
+python/build/
+python/kapy.egg-info
+python/kapy/_C/libkapy.pyd
+python/kapy/_C/libkapy.so
+
+# python cache
+__pycache__/
+*.py[cod]
+.pytest_cache
+
+# clangd cache
+.cache/
+
+# neovim
+.nvim.lua
+
+# vscode
+.vscode/
