@@ -36,6 +36,7 @@
 namespace mlir {
 namespace kapy {
 std::unique_ptr<Pass> createKgpuAccelerateMatmulPass();
+std::unique_ptr<Pass> createKgpuOptimizeDotOperandPass();
 } // namespace kapy
 
 #define GEN_PASS_REGISTRATION

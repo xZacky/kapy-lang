@@ -1,5 +1,6 @@
 add_mlir_dialect_library(KgpuTransform
   AccelerateMatmul.cpp
+  OptimizeDotOperand.cpp
 
   DEPENDS
   KapyIRIncGen

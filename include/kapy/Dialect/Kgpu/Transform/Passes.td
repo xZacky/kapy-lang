@@ -39,4 +39,10 @@ def KgpuAccelerateMatmul : Pass<"kgpu-accelerate-matmul", "ModuleOp"> {
   let dependentDialects = ["kapy::KapyDialect", "kapy::KgpuDialect"];
 }
 
+def KgpuOptimizeDotOperand : Pass<"kgpu-optimize-dot-operand", "ModuleOp"> {
+  let constructor = "kapy::createKgpuOptimizeDotOperandPass()";
+
+  let dependentDialects = ["kapy::KapyDialect", "kapy::KgpuDialect"];
+}
+
 #endif // KAPY_DIALECT_KGPU_TRANSFORM_PASSES
