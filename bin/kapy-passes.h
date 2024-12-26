@@ -3,6 +3,7 @@
 
 #include "kapy/Conversion/KapyToKgpu/Passes.h"
 #include "kapy/Dialect/Kapy/Transform/Passes.h"
+#include "kapy/Dialect/Kgpu/Transform/Passes.h"
 
 #include "mlir/InitAllPasses.h"
 
@@ -12,6 +13,7 @@ inline void registerAllKapyPasses() {
   registerAllPasses();
   registerKapyTransformPasses();
   registerKapyToKgpuPasses();
+  registerKgpuTransformPasses();
 }
 
 #endif // KAPY_PASSES_H

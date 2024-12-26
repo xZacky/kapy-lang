@@ -1,7 +1,7 @@
 add_mlir_library(KapyAnalysis
-  # Allocation.cpp
-  # MemBar.cpp
-  # OpHelpers.cpp
+  Allocation.cpp
+  MemBar.cpp
+  OpHelpers.cpp
   Utils.cpp
 
   DEPENDS
