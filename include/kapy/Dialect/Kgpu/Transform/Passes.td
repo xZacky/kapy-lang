@@ -45,4 +45,10 @@ def KgpuOptimizeDotOperand : Pass<"kgpu-optimize-dot-operand", "ModuleOp"> {
   let dependentDialects = ["kapy::KapyDialect", "kapy::KgpuDialect"];
 }
 
+def KgpuReorderInstruction : Pass<"kgpu-reorder-instruction", "ModuleOp"> {
+  let constructor = "kapy::createKgpuReorderInstructionPass()";
+
+  let dependentDialects = ["kapy::KapyDialect", "kapy::KgpuDialect"];
+}
+
 #endif // KAPY_DIALECT_KGPU_TRANSFORM_PASSES

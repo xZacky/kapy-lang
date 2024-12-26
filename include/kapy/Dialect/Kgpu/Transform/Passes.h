@@ -28,8 +28,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef KAPY_DIALECT_KGPU_TRANSFORMS_PASSES
-#define KAPY_DIALECT_KGPU_TRANSFORMS_PASSES
+#ifndef KAPY_DIALECT_KGPU_TRANSFORM_PASSES_H
+#define KAPY_DIALECT_KGPU_TRANSFORM_PASSES_H
 
 #include "mlir/Pass/Pass.h"
 
@@ -37,10 +37,11 @@ namespace mlir {
 namespace kapy {
 std::unique_ptr<Pass> createKgpuAccelerateMatmulPass();
 std::unique_ptr<Pass> createKgpuOptimizeDotOperandPass();
+std::unique_ptr<Pass> createKgpuReorderInstructionPass();
 } // namespace kapy
 
 #define GEN_PASS_REGISTRATION
 #include "kapy/Dialect/Kgpu/Transform/Passes.h.inc"
 } // namespace mlir
 
-#endif // KAPY_DIALECT_KGPU_TRANSFORMS_PASSES
+#endif // KAPY_DIALECT_KGPU_TRANSFORM_PASSES_H
