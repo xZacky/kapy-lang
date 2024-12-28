@@ -79,7 +79,7 @@ public:
       localAllocOp->moveAfter(defOp);
     });
 
-    // Move dot op load lhs after changes to dot op load rhs.
+    // Move dot op load lhs after dot op load rhs.
     module.walk([&](LocalLoadOp localLoadOp) {
       auto dotldLayout =
           dyn_cast<DotOpLoadLayoutAttr>(localLoadOp.getType().getEncoding());

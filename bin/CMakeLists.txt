@@ -13,3 +13,6 @@ target_link_libraries(kapy-opt
   MLIRTransforms
 )
 mlir_check_all_link_libraries(kapy-opt)
+
+add_llvm_executable(kapy-layout kapy-layout.cpp PARTIAL_SOURCES_INTENDED)
+target_link_libraries(kapy-layout PRIVATE ${dialect_libs})
