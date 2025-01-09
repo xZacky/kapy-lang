@@ -36,6 +36,7 @@
 
 namespace mlir {
 namespace kapy {
+
 /// This class represents a call graph for a given ModuleOp and holds data of
 /// type `T` assoicated with each function.
 template <typename T> class CallGraph {
@@ -63,7 +64,7 @@ public:
 
   ModuleOp getModule() const { return module; }
   SmallVector<FunctionOpInterface> getRoots() const { return roots; }
-  int getNumFunctions() const { return funcToData.size(); }
+  unsigned getNumFunctions() const { return funcToData.size(); }
 
   bool isRoot(FunctionOpInterface funcOp) const {
     return is_contained(roots, funcOp);
@@ -119,6 +120,7 @@ private:
     seen.erase(funcOp);
   }
 };
+
 } // namespace kapy
 } // namespace mlir
 

@@ -36,6 +36,14 @@ include "mlir/IR/EnumAttr.td"
 class Kapy_EnumAttr<string name, list<I32EnumAttrCase> cases>
     : I32EnumAttr<name, "", cases> { let cppNamespace = "mlir::kapy"; }
 
+def Kapy_PaddingOptionAttr : Kapy_EnumAttr<
+  "PaddingOption",
+  [
+    I32EnumAttrCase<"PadZero", 0, "pad_zero">,
+    I32EnumAttrCase<"PadNan", 1, "pad_nan">
+  ]
+>;
+
 def Kapy_CacheModifierAttr : Kapy_EnumAttr<
   "CacheModifier",
   [
@@ -108,13 +116,25 @@ def Kapy_PropagateNanAttr : Kapy_EnumAttr<
   ]
 >;
 
-def Kapy_DotPrecisionAttr : Kapy_EnumAttr<
-  "DotPrecision",
+def Kapy_MatmulFormatAttr : Kapy_EnumAttr<
+  "MatmulFormat",
   [
     I32EnumAttrCase<"IEEE", 0, "ieee">,
     I32EnumAttrCase<"TF32", 1, "tf32">,
     I32EnumAttrCase<"TF32x3", 2, "tf32x3">
   ]
 >;
+
+def Kapy_DefaultValuedPaddingOptionAttr
+    : DefaultValuedAttr<Kapy_PaddingOptionAttr, "PaddingOption::PadZero">;
+
+def Kapy_DefaultValuedCacheModifierAttr
+    : DefaultValuedAttr<Kapy_CacheModifierAttr, "CacheModifier::None">;
+
+def Kapy_DefaultValuedEvictPriorityAttr
+    : DefaultValuedAttr<Kapy_EvictPriorityAttr, "EvictPriority::Normal">;
+
+def Kapy_DefaultValuedMatmulFormatAttr
+    : DefaultValuedAttr<Kapy_MatmulFormatAttr, "MatmulFormat::TF32">;
 
 #endif // KAPY_DIALECT_KAPY_IR_ENUMS

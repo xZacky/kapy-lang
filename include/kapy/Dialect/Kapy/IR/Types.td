@@ -48,22 +48,22 @@ def Kapy_I1Like : AnyTypeOf<[I1, Kapy_I1Tensor]>;
 def Kapy_I32Tensor : RankedTensorOf<[I32]>;
 def Kapy_I32Like : AnyTypeOf<[I32, Kapy_I32Tensor]>;
 
-def Kapy_FP : AnyTypeOf<
+def Kapy_Fp : AnyTypeOf<
   [F8E4M3FNUZ, F8E5M2, F8E5M2FNUZ, F16, BF16, F32, F64], "floating-point"
 >;
-def Kapy_FPTensor : RankedTensorOf<[Kapy_FP]>;
-def Kapy_FPLike : AnyTypeOf<[Kapy_FP, Kapy_FPTensor]>;
+def Kapy_FpTensor : RankedTensorOf<[Kapy_Fp]>;
+def Kapy_FpLike : AnyTypeOf<[Kapy_Fp, Kapy_FpTensor]>;
 
-def Kapy_IntOrFP : AnyTypeOf<[Kapy_Int, Kapy_FP]>;
-def Kapy_IntOrFPTensor : RankedTensorOf<[Kapy_IntOrFP]>;
-def Kapy_IntOrFPLike : AnyTypeOf<[Kapy_IntOrFP, Kapy_IntOrFPTensor]>;
+def Kapy_IntFp : AnyTypeOf<[Kapy_Int, Kapy_Fp]>;
+def Kapy_IntFpTensor : RankedTensorOf<[Kapy_IntFp]>;
+def Kapy_IntFpLike : AnyTypeOf<[Kapy_IntFp, Kapy_IntFpTensor]>;
 
 def Kapy_PointerType : Kapy_TypeDef<"KapyPointer", "ptr"> {
-  let parameters = (ins "int":$address_space);
+  let parameters = (ins "unsigned":$address_space);
 
   let skipDefaultBuilders = 1;
   let builders = [
-    TypeBuilder<(ins "int":$space), "return $_get($_ctxt, space);">
+    TypeBuilder<(ins "unsigned":$space), "return $_get($_ctxt, space);">
   ];
 
   let assemblyFormat = "`<` $address_space `>`";
@@ -122,6 +122,6 @@ class Kapy_MemRefOf<list<Type> types> : DialectType<
   "KapyMemRefType"
 >;
 
-def Kapy_IntOrFPMemRef : Kapy_MemRefOf<[Kapy_IntOrFP]>;
+def Kapy_IntFpMemRef : Kapy_MemRefOf<[Kapy_IntFp]>;
 
 #endif // KAPY_DIALECT_KAPY_IR_TYPES

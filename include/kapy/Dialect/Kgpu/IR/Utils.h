@@ -12,15 +12,18 @@
 #include "llvm/ADT/SmallVector.h"
 
 namespace mlir {
+
 using llvm::ArrayRef;
 using llvm::SmallVector;
+
 namespace kapy {
+
 template <typename I> SmallVector<I, 4> computeStrides(ArrayRef<I> shape) {
   static_assert(std::is_integral_v<I>);
   auto rank = shape.size();
   SmallVector<I, 4> strides(rank, 1);
-  for (int i = 0; i < rank; ++i)
-    for (auto j = i + 1; j < rank; ++j)
+  for (unsigned i = 0; i < rank; ++i)
+    for (unsigned j = i + 1; j < rank; ++j)
       strides[i] *= shape[j];
   return strides;
 }
@@ -33,7 +36,7 @@ template <typename I> I linearize(ArrayRef<I> indices, ArrayRef<I> shape) {
   auto strides = computeStrides(shape);
   auto rank = shape.size();
   I index = 0;
-  for (int i = 0; i < rank; ++i)
+  for (unsigned i = 0; i < rank; ++i)
     index += indices[i] * strides[i];
   return index;
 }
@@ -48,7 +51,7 @@ SmallVector<I, 4> delinearize(I index, ArrayRef<I> shape) {
   auto strides = computeStrides(shape);
   auto rank = shape.size();
   SmallVector<I, 4> indices(rank, index);
-  for (int i = 0; i < rank; ++i) {
+  for (unsigned i = 0; i < rank; ++i) {
     if (i != 0)
       indices[i] %= strides[i - 1];
     if (i != rank - 1)
@@ -67,7 +70,7 @@ AffineExpr linearize(ArrayRef<AffineExpr> exprs, ArrayRef<I> shape) {
   auto strides = computeStrides(shape);
   auto rank = shape.size();
   auto expr = getAffineConstantExpr(0, exprs.begin()->getContext());
-  for (int i = 0; i < rank; ++i)
+  for (unsigned i = 0; i < rank; ++i)
     expr = expr + exprs[i] * strides[i];
   return expr;
 }
@@ -82,7 +85,7 @@ SmallVector<AffineExpr, 4> delinearize(AffineExpr expr, ArrayRef<I> shape) {
   auto strides = computeStrides(shape);
   auto rank = shape.size();
   SmallVector<AffineExpr, 4> exprs(rank, expr);
-  for (int i = 0; i < rank; ++i) {
+  for (unsigned i = 0; i < rank; ++i) {
     if (i != 0)
       exprs[i] = exprs[i] % strides[i - 1];
     if (i != rank - 1)
@@ -94,6 +97,7 @@ template <typename ShapeT>
 auto delinearize(AffineExpr expr, const ShapeT &shape) {
   return delinearize(expr, ArrayRef(shape));
 }
+
 } // namespace kapy
 } // namespace mlir
 

@@ -5,7 +5,6 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/SourceMgr.h"
-#include <llvm/Support/SMLoc.h>
 
 using namespace llvm;
 using namespace mlir;
@@ -33,12 +32,12 @@ static cl::opt<std::string> TensorStr("t",                       //
                                       cl::init(""),              //
                                       cl::cat(PrinterCategory));
 
-static cl::opt<int> NumWarps("w",                                     //
-                             cl::desc("Number of warps in each CTA"), //
-                             cl::init(4),                             //
-                             cl::cat(PrinterCategory));
+static cl::opt<int64_t> NumWarps("w",                         //
+                                 cl::desc("Number of warps"), //
+                                 cl::init(4),                 //
+                                 cl::cat(PrinterCategory));
 
-LogicalResult printImpl(RankedTensorType tensorType, int numWarps,
+LogicalResult printImpl(RankedTensorType tensorType, int64_t numWarps,
                         llvm::raw_ostream &os) {
   auto dialectName = tensorType.getEncoding().getDialect().getNamespace();
   if (dialectName == "kgpu") {
@@ -50,7 +49,7 @@ LogicalResult printImpl(RankedTensorType tensorType, int numWarps,
 }
 
 LogicalResult printFromFile(MLIRContext *context, StringRef fileName,
-                            RankedTensorType tensorType, int numWarps,
+                            RankedTensorType tensorType, int64_t numWarps,
                             llvm::raw_string_ostream &ss) {
   if (fileName.empty())
     return success();
@@ -74,7 +73,8 @@ LogicalResult printFromFile(MLIRContext *context, StringRef fileName,
   }
 
   auto printLambda = [&](StringRef name, Attribute layout) {
-    ss << "Print layout: #" << name << " = " << layout << "\n";
+    ss << "Layout: " << layout << "\n";
+    ss << "Tensor: " << tensorType << "\n";
     return printImpl(kapy::cloneWith(tensorType, layout), numWarps, ss);
   };
 
@@ -85,7 +85,7 @@ LogicalResult printFromFile(MLIRContext *context, StringRef fileName,
 }
 
 LogicalResult printFromString(MLIRContext *context, StringRef layoutStr,
-                              RankedTensorType tensorType, int numWarps,
+                              RankedTensorType tensorType, int64_t numWarps,
                               llvm::raw_string_ostream &ss) {
   if (layoutStr.empty())
     return success();
@@ -96,7 +96,8 @@ LogicalResult printFromString(MLIRContext *context, StringRef layoutStr,
     return failure();
   }
 
-  ss << "Print layout: " << layout << "\n";
+  ss << "Layout: " << layout << "\n";
+  ss << "Tensor: " << tensorType << "\n";
   return printImpl(kapy::cloneWith(tensorType, layout), numWarps, ss);
 }
 

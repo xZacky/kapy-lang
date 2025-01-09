@@ -41,7 +41,7 @@ KgpuConversionTarget::KgpuConversionTarget(MLIRContext *context,
     : ConversionTarget(*context) {
   addLegalDialect<KgpuDialect>();
 
-  // Some operations from scf dialect are illegal.
+  // Some operations from SCF dialect are illegal.
   addIllegalOp<scf::ExecuteRegionOp, scf::ParallelOp, scf::ReduceOp,
                scf::ReduceReturnOp>();
 
@@ -54,8 +54,8 @@ KgpuConversionTarget::KgpuConversionTarget(MLIRContext *context,
     return hasLegalRegions && typeConverter.isLegal(op);
   });
 
-  addDynamicallyLegalOp<DotOp>([](DotOp op) {
-    return hasLayout<DotOpLoadLayoutAttr>(op.getLhs().getType()) &&
-           hasLayout<DotOpLoadLayoutAttr>(op.getRhs().getType());
+  addDynamicallyLegalOp<MatmulOp>([](MatmulOp op) {
+    return hasLayout<MmOperandLayoutAttr>(op.getLhs().getType()) &&
+           hasLayout<MmOperandLayoutAttr>(op.getRhs().getType());
   });
 }

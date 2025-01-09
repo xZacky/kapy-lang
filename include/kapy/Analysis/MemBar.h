@@ -37,6 +37,7 @@
 
 namespace mlir {
 namespace kapy {
+
 class MemBarAnalysis;
 
 class BlockInfo {
@@ -69,11 +70,11 @@ public:
   bool operator!=(const BlockInfo &other) const { return !(*this == other); }
 
 private:
-  std::set<Interval<int>> readIntervals;
-  std::set<Interval<int>> writeIntervals;
+  std::set<Interval<int64_t>> readIntervals;
+  std::set<Interval<int64_t>> writeIntervals;
 
-  bool isIntersected(const std::set<Interval<int>> &intervals0,
-                     const std::set<Interval<int>> &intervals1) const {
+  bool isIntersected(const std::set<Interval<int64_t>> &intervals0,
+                     const std::set<Interval<int64_t>> &intervals1) const {
     for (const auto &interval0 : intervals0)
       for (const auto &interval1 : intervals1)
         if (interval0.intersects(interval1))
@@ -151,6 +152,7 @@ public:
 private:
   ModuleAllocationAnalysis *allocationAnalysis = nullptr;
 };
+
 } // namespace kapy
 } // namespace mlir
 

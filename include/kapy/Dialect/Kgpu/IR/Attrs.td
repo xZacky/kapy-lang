@@ -1,6 +1,6 @@
 //===- Attrs.td --------------------------------------------*- tablegen -*-===//
 //
-// This file defines the attributes used by the kgpu dialect.
+// This file defines the attributes used by the Kgpu dialect.
 //
 //===----------------------------------------------------------------------===//
 
@@ -14,126 +14,213 @@ class Kgpu_AttrDef<string name, string keyword, list<Trait> traits = []>
   let attrName = "kgpu." # keyword;
 }
 
-def Kgpu_RegistersLayout : Kgpu_AttrDef<"RegistersLayout", "regs"> {
+def Kgpu_SharedMemLayoutAttr : Kgpu_AttrDef<"SharedMemLayout", "shmem"> {
+  let mnemonic = "shmem";
+  let parameters = (ins
+    ArrayRefParameter<"int64_t">:$strides,
+    "unsigned":$bit_width,
+    "unsigned":$num_modes,
+    "unsigned":$mode_step
+  );
+
+  let assemblyFormat = [{
+    `<` `[` $strides `]` `,` $bit_width `,` $num_modes `,` $mode_step `>`
+  }];
+}
+
+def Kgpu_RegistersLayoutAttr : Kgpu_AttrDef<"RegistersLayout", "regis"> {
   let description = [{
-    RegistersLayout is an AffineMap that maps from a tuple of integers
-    `(elemId, laneId, warpId)` to tensor indices, where `elemId` is the id of
-    element within each thread.
+    RegistersLayout has five parameters:
+    1. `$shape_of_warps`: Shape of warps.
+    3. `$loops_per_warp`: Loops executed by each warp.
+    2. `$shape_of_lanes`: Shape of lanes.
+    4. `$loops_per_lane`: Loops executed by each lane.
+    5. `$order`: Order of axes from minor to major.
+    We will build a layout from these parameters.
+    For example:
+    ```
+    #regis<[2, 2], [2, 1], [2, 4], [1, 2], (0, 1)>
+    ```
+    We first compute the layout of threads from `$order`, `$shape_of_lanes` and
+    `$shape_of_warps`:
+    ```
+    [ 0,  1,  2,  3,  8,  9, 10, 11]
+    [ 4,  5,  6,  7, 12, 13, 14, 15]
+    [16, 17, 18, 19, 24, 25, 26, 27]
+    [20, 21, 22, 23, 28, 29, 30, 31]
+    ```
+    then we execute loop on each axis by `$loops_per_lane` and `$loops_per_warp`
+    to get the final layout:
+    ```
+    [ 0,  0,  1,  1,  2,  2,  3,  3,  8,  8,  9,  9, 10, 10, 11, 11]
+    [ 4,  4,  5,  5,  6,  6,  7,  7, 12, 12, 13, 13, 14, 14, 15, 15]
+    [ 0,  0,  1,  1,  2,  2,  3,  3,  8,  8,  9,  9, 10, 10, 11, 11]
+    [ 4,  4,  5,  5,  6,  6,  7,  7, 12, 12, 13, 13, 14, 14, 15, 15]
+    [16, 16, 17, 17, 18, 18, 19, 19, 24, 24, 25, 25, 26, 26, 27, 27]
+    [20, 20, 21, 21, 22, 22, 23, 23, 28, 28, 29, 29, 30, 30, 31, 31]
+    [16, 16, 17, 17, 18, 18, 19, 19, 24, 24, 25, 25, 26, 26, 27, 27]
+    [20, 20, 21, 21, 22, 22, 23, 23, 28, 28, 29, 29, 30, 30, 31, 31]
+    ```
+
+    Apply a layout to a tensor. Since layout and tensor may not have same shape,
+    we first broadcast them into same shape, then we can get the relationship of
+    elements and threads.
+    For example, we have a tensor:
+    ```
+    [A, B, C, D, E, F, G, H]
+    [I, J, K, L, M, N, O, P]
+    ```
+    and a layout:
+    ```
+    [0, 0, 1, 1]
+    [2, 2, 3, 3]
+    [4, 4, 5, 5]
+    [6, 6, 7, 7]
+    ```
+    We first broadcast both of them to shape [4, 8], and then we will distribute
+    elements to threads as:
+    ```
+    A -> {0, 4}; B -> {0, 4}; C -> {1, 5}; D -> {1, 5};
+    E -> {0, 4}; F -> {0, 4}; G -> {1, 5}; H -> {1, 5};
+    I -> {2, 6}; J -> {2, 6}; K -> {3, 7}; L -> {3, 7};
+    M -> {2, 6}; N -> {2, 6}; O -> {3, 7}; P -> {3, 7};
+    ```
   }];
 
-  let mnemonic = "regs";
-  let parameters = (ins "AffineMap":$map);
+  let mnemonic = "regis";
+  let parameters = (ins
+    ArrayRefParameter<"int64_t">:$shape_of_warps_ref,
+    ArrayRefParameter<"int64_t">:$loops_per_warp_ref,
+    ArrayRefParameter<"int64_t">:$shape_of_lanes_ref,
+    ArrayRefParameter<"int64_t">:$loops_per_lane_ref,
+    ArrayRefParameter<"unsigned">:$order_ref
+  );
 
   let builders = [
     AttrBuilder<
       (ins
-        "ArrayRef<int>":$tilePerLane,
-        "ArrayRef<int>":$lanePerWarp,
-        "ArrayRef<int>":$warpPerCTA,
-        "ArrayRef<int>":$replication
-      )
-    >,
-    AttrBuilder<
-      (ins
-        "ArrayRef<int64_t>":$shape,
-        "ArrayRef<int>":$tilePerLane,
-        "ArrayRef<int>":$lanePerWarp,
-        "ArrayRef<int>":$warpPerCTA
-      )
-    >,
-    AttrBuilder<
-      (ins
-        "ArrayRef<int64_t>":$shape,
-        "ArrayRef<int>":$tilePerLane,
-        "int":$numWarps
+        "ArrayRef<int64_t>":$shapeOfWarps,
+        "ArrayRef<int64_t>":$loopsPerWarp,
+        "ArrayRef<int64_t>":$shapeOfLanes,
+        "ArrayRef<int64_t>":$loopsPerLane
       )
     >
   ];
 
-  let assemblyFormat = "`<` struct(params) `>`";
+  let assemblyFormat = [{
+    `<` `[` $shape_of_warps_ref `]` `,` `[` $loops_per_warp_ref `]` `,`
+        `[` $shape_of_lanes_ref `]` `,` `[` $loops_per_lane_ref `]` `,`
+        `(` $order_ref `)` `>`
+  }];
 
   let extraClassDeclaration = [{
-    // Get the maximum element id `maxElemId`, range of element id used by this
-    // layout is `[0, maxElemId)`.
-    int getMaxElementId(ArrayRef<int64_t> shape, int numWarps) const;
+    unsigned getRank() const { return getOrderRef().size(); }
 
-    // Get the maximum lane id `maxLaneId`, range of lane id used by this layout
-    // is `[0, maxLaneId)`.
-    int getMaxLaneId(ArrayRef<int64_t> shape, int numWarps) const;
+    SmallVector<int64_t, 4> getShapeOfWarps() const {
+      return llvm::to_vector<4>(getShapeOfWarpsRef());
+    }
 
-    // Get the maximum warp id `maxWarpId`, range of warp id used by this layout
-    // is `[0, maxWarpId)`.
-    int getMaxWarpId(ArrayRef<int64_t> shape, int numWarps) const;
+    SmallVector<int64_t, 4> getLoopsPerWarp() const {
+      return llvm::to_vector<4>(getLoopsPerWarpRef());
+    }
+
+    SmallVector<int64_t, 4> getShapeOfLanes() const {
+      return llvm::to_vector<4>(getShapeOfLanesRef());
+    }
+
+    SmallVector<int64_t, 4> getLoopsPerLane() const {
+      return llvm::to_vector<4>(getLoopsPerLaneRef());
+    }
+
+    /// Get an AffineMap from layout indices to the thread id for this layout.
+    AffineMap getLayoutMap() const;
+
+    /// Get an AffineMap from tensor indices to the minimum thread id hold it.
+    AffineMap getTensorMap(ArrayRef<int64_t> shape) const;
   }];
 }
 
-def Kgpu_SharedMemLayout : Kgpu_AttrDef<"SharedMemLayout", "smem"> {
+def Kgpu_SliceAxisLayoutAttr : Kgpu_AttrDef<"SliceAxisLayout", "slice"> {
   let description = [{
-    There are two parameters of SharedMemLayout:
-    1. An AffineMap that maps from memref indices to `offset`, where `offset`
-       is the element offset from the base pointer before swizzling.
-    2. An integer `numModes` represents the number of modes we do swizzling,
-       default `numModes` is 1, which means no swizzling.
-
-    The complete logic to get the offset after swizzling contains three steps:
-    1) Input memref indices to the map and get the `offset` before swizzling.
-    2) Compute `modeId = (offset * bitWidth) / (32 * 32)`, where `bitWidth` is
-       the element bit-width of this memref. Here the first 32 is the bit-width
-       of a bank word (4 bytes), the second 32 is the number of banks.
-    3) Compute `offset = offset ^ modeId` to get the offset after swizzling.
-
-    Since swizzling won't affect the way we do vectorization, so we can only do
-    the step 1) when we analyze the contiguity for vectorization.
+    SliceAxisLayout is build from a layout `$parent` by slicing `$parent` along
+    `$axis` and get several layouts.
+    For example, we have a layout:
+    ```
+    [ 0,  1,  2,  3]
+    [ 4,  5,  6,  7]
+    [ 8,  9, 10, 11]
+    [12, 13, 14, 15]
+    ```
+    slice it along axis 0 will get four layouts:
+    ```
+    [ 0]  [ 1]  [ 2]  [ 3]
+    [ 4]  [ 5]  [ 6]  [ 7]
+    [ 8]  [ 9]  [10]  [11]
+    [12], [13], [14], [15]
+    ```
   }];
 
-  let mnemonic = "smem";
+  let mnemonic = "slice";
+  let parameters = (ins "Attribute":$parent, "unsigned":$axis);
+
+  let assemblyFormat = "`<` $parent `,` $axis `>`";
+
+  let extraClassDeclaration = [{
+    unsigned getRank() const;
+
+    SmallVector<int64_t, 4> unsqueeze(ArrayRef<int64_t> shape) const;
+  }];
+}
+
+def Kgpu_NvidiaMmaLayoutAttr : Kgpu_AttrDef<"NvidiaMmaLayout", "nvmma"> {
+  let mnemonic = "nvmma";
   let parameters = (ins
-    "AffineMap":$map, DefaultValuedParameter<"int", "1">:$num_modes
+    ArrayRefParameter<"int64_t">:$shape_of_warps_ref,
+    ArrayRefParameter<"int64_t">:$loops_per_warp_ref
   );
 
-  let assemblyFormat = "`<` struct(params) `>`";
-}
-
-def Kgpu_NvidiaMmaLayout : Kgpu_AttrDef<"NvidiaMmaLayout", "nvmma"> {
-  let mnemonic = "nvmma";
-  let parameters = (ins ArrayRefParameter<"int">:$warpPerCTARef);
-
-  let assemblyFormat = "`<` `warp_per_cta` `=` `[` $warpPerCTARef `]` `>`";
+  let assemblyFormat = [{
+    `<` `[` $shape_of_warps_ref `]` `,` `[` $loops_per_warp_ref `]` `>`
+  }];
 
   let extraClassDeclaration = [{
-    int getRank() const { return getWarpPerCTARef().size(); }
-    RegistersLayoutAttr toRegistersLayout(ArrayRef<int64_t> shape) const;
+    unsigned getRank() const { return getShapeOfWarpsRef().size(); }
 
-    SmallVector<int, 4> getTilePerLane() const;
-    SmallVector<int, 4> getLanePerWarp() const;
-    SmallVector<int, 4> getWarpPerCTA() const;
-    SmallVector<int, 4> getReplication(ArrayRef<int64_t> shape) const;
+    SmallVector<unsigned, 4> getOrder() const;
 
-    SmallVector<int, 4> getTilePerLaneForChild(int bitWidth) const;
-    SmallVector<int, 4> getLanePerWarpForChild() const;
-    SmallVector<int, 4> getReplicationForChild(
-        int index, int bitWidth, ArrayRef<int64_t> shape) const;
+    SmallVector<int64_t, 4> getShapeOfWarps() const {
+      return llvm::to_vector<4>(getShapeOfWarpsRef());
+    }
+
+    SmallVector<int64_t, 4> getLoopsPerWarp() const {
+      return llvm::to_vector<4>(getLoopsPerWarpRef());
+    }
+
+    SmallVector<int64_t, 4> getShapeOfLanes() const;
+
+    SmallVector<int64_t, 4> getLoopsPerLane() const;
+
+    RegistersLayoutAttr toRegistersLayout() const;
   }];
 }
 
-def Kgpu_DotOpLoadLayout : Kgpu_AttrDef<"DotOpLoadLayout", "dotld"> {
-  let mnemonic = "dotld";
+def Kgpu_MmOperandLayoutAttr : Kgpu_AttrDef<"MmOperandLayout", "mmopd"> {
+  let mnemonic = "mmopd";
   let parameters = (ins
-    "Attribute":$parent, "int":$operand_index, "int":$bit_width
+    "Attribute":$parent, "unsigned":$operand_index, "unsigned":$bit_width
   );
 
   let builders = [
     AttrBuilder<
-      (ins "Attribute":$parent, "int":$index, "Type":$elementType),
+      (ins "Attribute":$parent, "unsigned":$index, "Type":$elementType),
       "return get(context, parent, index, getIntOrFloatBitWidth(elementType));"
     >
   ];
 
-  let assemblyFormat = "`<` struct(params) `>`";
+  let assemblyFormat = "`<` $parent `,` $operand_index `,` $bit_width `>`";
 
   let extraClassDeclaration = [{
-    int getRank() const;
-    RegistersLayoutAttr toRegistersLayout(ArrayRef<int64_t> shape) const;
+    unsigned getRank() const;
   }];
 }
 

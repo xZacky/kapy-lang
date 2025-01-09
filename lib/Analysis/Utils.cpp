@@ -46,6 +46,7 @@ bool kapy::hasSingleValue(Value value) {
 }
 
 namespace {
+
 /// A structure similar to SetVector but maintains a deque instead of a vector
 /// to allow for efficient push_back and pop_front operations.
 /// Using SetVector doesn't suffice our needs because it only pushes and pops
@@ -121,6 +122,7 @@ struct DFSState {
       readyOps.push_back(op);
   }
 };
+
 } // namespace
 
 static void postOrderDFS(Operation *rootOp, DFSState &state) {
@@ -168,7 +170,7 @@ SetVector<Operation *> kapy::multiRootGetSlice(Operation *op,
                                                TransitiveFilter fwFilter) {
   SetVector<Operation *> slice;
   slice.insert(op);
-  auto i = 0;
+  unsigned i = 0;
   SetVector<Operation *> bwSlice, fwSlice;
   while (i != slice.size()) {
     auto *opI = slice[i];
@@ -212,6 +214,7 @@ bool kapy::hasRestrictedPath(Operation *srcOp, Operation *dstOp,
 }
 
 namespace {
+
 /// Copied from TestDeadCodeAnalysis.cpp, because some dead code analysis
 /// interacts with constant propagation, but SparseConstantPropagation doesn't
 /// seem to be sufficient.
@@ -257,6 +260,7 @@ private:
     }
   }
 };
+
 } // namespace
 
 std::unique_ptr<DataFlowSolver> kapy::createDataFlowSolver() {

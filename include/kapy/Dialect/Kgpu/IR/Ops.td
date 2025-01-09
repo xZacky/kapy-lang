@@ -36,6 +36,7 @@ include "kapy/Dialect/Kapy/IR/Enums.td"
 include "kapy/Dialect/Kapy/IR/OpTraits.td"
 include "kapy/Dialect/Kapy/IR/Types.td"
 include "kapy/Dialect/Kgpu/IR/Dialect.td"
+include "kapy/Dialect/Kgpu/IR/Attrs.td"
 include "kapy/Dialect/Kgpu/IR/Types.td"
 
 def SharedMemory : Resource<"mlir::kapy::SharedMemory">;
@@ -46,8 +47,8 @@ class Kgpu_Op<string keyword, list<Trait> traits = []>
 def Kgpu_ChangeOp : Kgpu_Op<
   "change", [Pure, SameOperandsAndResultShape, SameOperandsAndResultElementType]
 > {
-  let arguments = (ins Kapy_IntOrFPTensor:$operand);
-  let results = (outs Kapy_IntOrFPTensor:$result);
+  let arguments = (ins Kapy_IntFpTensor:$operand);
+  let results = (outs Kapy_IntFpTensor:$result);
 
   let assemblyFormat = [{
     $operand attr-dict `:` type($operand) `to` type($result)
@@ -105,18 +106,17 @@ def Kgpu_AsyncCopyOp : Kgpu_Op<
   "async_copy", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]
 > {
   let description = [{
-    For each element, performs async copy from global memref `$source` to shared
-    memref `$target` if `$mask` is true, otherwise set `$target` to zero.
+    For each element, copies asynchronously from global memref `$source` to
+    shared memref `$target`, for memory access out of range, pad `$target` with
+    zero.
   }];
 
   let arguments = (ins
-    Kapy_IntOrFPMemRef:$source,
-    Kapy_IntOrFPMemRef:$target,
-    Kapy_I1Tensor:$mask,
-    DefaultValuedAttr<Kapy_CacheModifierAttr,
-                      "CacheModifier::None">:$cache_modifier,
-    DefaultValuedAttr<Kapy_EvictPriorityAttr,
-                      "EvictPriority::Normal">:$evict_priority,
+    Kapy_IntFpMemRef:$source,
+    Kapy_IntFpMemRef:$target,
+    Kgpu_RegistersLayoutAttr:$layout,
+    Kapy_DefaultValuedCacheModifierAttr:$cache_modifier,
+    Kapy_DefaultValuedEvictPriorityAttr:$evict_priority,
     DefaultValuedAttr<BoolAttr, "false">:$is_volatile
   );
   let results = (outs Kgpu_Tok:$token);
@@ -126,21 +126,21 @@ def Kgpu_AsyncCopyOp : Kgpu_Op<
       (ins
         "Value":$source,
         "Value":$target,
-        "Value":$mask,
+        "RegistersLayoutAttr":$layout,
         "CacheModifier":$cacheModifier,
         "EvictPriority":$evictPriority,
         "bool":$isVolatile
       ),
       [{
         auto tokenType = KgpuTokenType::get($_builder.getContext(), 0);
-        build($_builder, $_state, tokenType, source, target, mask,
+        build($_builder, $_state, tokenType, source, target, layout,
               cacheModifier, evictPriority, isVolatile);
       }]
     >
   ];
 
   let assemblyFormat = [{
-    $source `,` $target `,` $mask attr-dict `:` functional-type(operands,$token)
+    $source `,` $target attr-dict `:` functional-type(operands, $token)
   }];
 
   let hasVerifier = 1;
@@ -149,8 +149,8 @@ def Kgpu_AsyncCopyOp : Kgpu_Op<
 def Kgpu_LocalAllocOp : Kgpu_Op<
   "local_alloc", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]
 > {
-  let arguments = (ins Optional<Kapy_IntOrFPTensor>:$operand);
-  let results = (outs Kapy_IntOrFPMemRef:$result);
+  let arguments = (ins Optional<Kapy_IntFpTensor>:$operand);
+  let results = (outs Kapy_IntFpMemRef:$result);
 
   let builders = [
     OpBuilder<(ins "Type":$type),
@@ -167,7 +167,7 @@ def Kgpu_LocalAllocOp : Kgpu_Op<
 def Kgpu_LocalFreeOp : Kgpu_Op<
   "local_free", [MemoryEffects<[MemFree<SharedMemory>]>]
 > {
-  let arguments = (ins Kapy_IntOrFPMemRef:$operand);
+  let arguments = (ins Kapy_IntFpMemRef:$operand);
 
   let assemblyFormat = "$operand attr-dict `:` qualified(type($operand))";
 
@@ -178,9 +178,9 @@ def Kgpu_LocalLoadOp : Kgpu_Op<
   "local_load", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]
 > {
   let arguments = (ins
-    Kapy_IntOrFPMemRef:$source, Optional<Kgpu_Tok>:$input_token
+    Kapy_IntFpMemRef:$source, Optional<Kgpu_Tok>:$input_token
   );
-  let results = (outs Kapy_IntOrFPTensor:$result);
+  let results = (outs Kapy_IntFpTensor:$result);
 
   let builders = [
     OpBuilder<(ins "Type":$type, "Value":$source),
@@ -188,7 +188,7 @@ def Kgpu_LocalLoadOp : Kgpu_Op<
   ];
 
   let assemblyFormat = [{
-    $source (`,` $input_token^)? attr-dict `:` functional-type(operands,$result)
+    $source(`,` $input_token^)? attr-dict `:` functional-type(operands, $result)
   }];
 
   let hasVerifier = 1;

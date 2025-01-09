@@ -37,11 +37,11 @@ class Kgpu_TypeDef<string name, string keyword, list<Trait> traits = []>
     : TypeDef<Kgpu_Dialect, name, traits> { let mnemonic = keyword; }
 
 def Kgpu_TokenType : Kgpu_TypeDef<"KgpuToken", "tok"> {
-  let parameters = (ins "int":$kind);
+  let parameters = (ins "unsigned":$kind);
 
   let skipDefaultBuilders = 1;
   let builders = [
-    TypeBuilder<(ins "int":$kind), "return $_get($_ctxt, kind);">
+    TypeBuilder<(ins "unsigned":$kind), "return $_get($_ctxt, kind);">
   ];
 
   let assemblyFormat = "`<` $kind `>`";

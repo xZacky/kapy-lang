@@ -36,52 +36,52 @@ include "mlir/IR/PatternBase.td"
 
 include "kapy/Dialect/Kapy/IR/Ops.td"
 
-def CombineDotOpAsAddIOpLhs : Pat<
+def CombineMatmulOpAsAddIOpLhs : Pat<
   (Arith_AddIOp
-    (Kapy_DotOp:$result $lhs, $rhs, $zero, $precision),
+    (Kapy_MatmulOp:$result $lhs, $rhs, $zero, $format),
     $accum,
     $overflow
   ),
-  (Kapy_DotOp $lhs, $rhs, $accum, $precision, (location $result)),
+  (Kapy_MatmulOp $lhs, $rhs, $accum, $format, (location $result)),
   [
     (Constraint<CPred<"isZero($0)">> $zero),
     (Constraint<CPred<"$0.hasOneUse()">> $result)
   ]
 >;
 
-def CombineDotOpAsAddIOpRhs : Pat<
+def CombineMatmulOpAsAddIOpRhs : Pat<
   (Arith_AddIOp
     $accum,
-    (Kapy_DotOp:$result $lhs, $rhs, $zero, $precision),
+    (Kapy_MatmulOp:$result $lhs, $rhs, $zero, $format),
     $overflow
   ),
-  (Kapy_DotOp $lhs, $rhs, $accum, $precision, (location $result)),
+  (Kapy_MatmulOp $lhs, $rhs, $accum, $format, (location $result)),
   [
     (Constraint<CPred<"isZero($0)">> $zero),
     (Constraint<CPred<"$0.hasOneUse()">> $result)
   ]
 >;
 
-def CombineDotOpAsAddFOpLhs : Pat<
+def CombineMatmulOpAsAddFOpLhs : Pat<
   (Arith_AddFOp
-    (Kapy_DotOp:$result $lhs, $rhs, $zero, $precision),
+    (Kapy_MatmulOp:$result $lhs, $rhs, $zero, $format),
     $accum,
     $fastmath
   ),
-  (Kapy_DotOp $lhs, $rhs, $accum, $precision, (location $result)),
+  (Kapy_MatmulOp $lhs, $rhs, $accum, $format, (location $result)),
   [
     (Constraint<CPred<"isZero($0)">> $zero),
     (Constraint<CPred<"$0.hasOneUse()">> $result)
   ]
 >;
 
-def CombineDotOpAsAddFOpRhs : Pat<
+def CombineMatmulOpAsAddFOpRhs : Pat<
   (Arith_AddFOp
     $accum,
-    (Kapy_DotOp:$result $lhs, $rhs, $zero, $precision),
+    (Kapy_MatmulOp:$result $lhs, $rhs, $zero, $format),
     $fastmath
   ),
-  (Kapy_DotOp $lhs, $rhs, $accum, $precision, (location $result)),
+  (Kapy_MatmulOp $lhs, $rhs, $accum, $format, (location $result)),
   [
     (Constraint<CPred<"isZero($0)">> $zero),
     (Constraint<CPred<"$0.hasOneUse()">> $result)
@@ -89,8 +89,15 @@ def CombineDotOpAsAddFOpRhs : Pat<
 >;
 
 def CombineTwoMovMemRefOps : Pat<
-  (Kapy_MovMemRefOp (Kapy_MovMemRefOp $source, $offset0), $offset1),
-  (Kapy_MovMemRefOp $source, (Arith_AddIOp $offset0, $offset1, Arith_IOFnone)),
+  (Kapy_MovMemRefOp:$result1
+    (Kapy_MovMemRefOp:$result0 $source, $offset0),
+    $offset1
+  ),
+  (Kapy_MovMemRefOp
+    $source,
+    (Arith_AddIOp $offset0, $offset1, Arith_IOFnone, (location $result0)),
+    (location $result1)
+  ),
   [
     (Constraint<CPred<"isCombinable($0, $1)">> $offset0, $offset1)
   ]

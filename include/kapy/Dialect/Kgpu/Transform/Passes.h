@@ -35,13 +35,15 @@
 
 namespace mlir {
 namespace kapy {
-std::unique_ptr<Pass> createKgpuAccelerateMatmulPass();
-std::unique_ptr<Pass> createKgpuOptimizeDotOperandPass();
+
+std::unique_ptr<Pass> createKgpuOptimizeMatmulPass();
 std::unique_ptr<Pass> createKgpuReorderInstructionPass();
+
 } // namespace kapy
 
 #define GEN_PASS_REGISTRATION
 #include "kapy/Dialect/Kgpu/Transform/Passes.h.inc"
+
 } // namespace mlir
 
 #endif // KAPY_DIALECT_KGPU_TRANSFORM_PASSES_H

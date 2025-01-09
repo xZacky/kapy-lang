@@ -48,7 +48,7 @@ void AllocationAnalysis::addExplicit(Operation *op) {
   if (auto localAllocOp = dyn_cast<LocalAllocOp>(op)) {
     auto memrefType = localAllocOp.getType();
     auto numElems = product(memrefType.getShape());
-    auto size = numElems * ceilDiv(getIntOrFloatBitWidth(memrefType), 8);
+    auto size = numElems * ceilDiv(getIntOrFloatBitWidth(memrefType), 8U);
     Value result = localAllocOp.getResult();
     allocation->addBuffer<Buffer::BufferKind::Explicit>(result, size, 128);
   }
@@ -57,11 +57,6 @@ void AllocationAnalysis::addExplicit(Operation *op) {
 void AllocationAnalysis::addScratch(Operation *op) {
   if (auto reduceOp = dyn_cast<ReduceOp>(op)) {
     ReduceOpHelper helper(reduceOp);
-    auto size = helper.getScratchSizeInBytes();
-    if (size > 0)
-      allocation->addBuffer<Buffer::BufferKind::Scratch>(op, size, 128);
-  } else if (auto scanOp = dyn_cast<ScanOp>(op)) {
-    ScanOpHelper helper(scanOp);
     auto size = helper.getScratchSizeInBytes();
     if (size > 0)
       allocation->addBuffer<Buffer::BufferKind::Scratch>(op, size, 128);
@@ -224,7 +219,7 @@ void AllocationAnalysis::allocate(
   //   color2: [8, 12) -> [18, 18 + 12 - 8) -> [18, 22)
   //
   for (auto *buffer0 : buffers) {
-    auto newOffset = 0;
+    int64_t newOffset = 0;
     for (auto *buffer1 : interference.lookup(buffer0))
       newOffset = std::max(newOffset, buffer1->offset + buffer1->size);
     if (colors.lookup(buffer0) != 0)

@@ -33,14 +33,8 @@
 
 include "mlir/Pass/PassBase.td"
 
-def KgpuAccelerateMatmul : Pass<"kgpu-accelerate-matmul", "ModuleOp"> {
-  let constructor = "kapy::createKgpuAccelerateMatmulPass()";
-
-  let dependentDialects = ["kapy::KapyDialect", "kapy::KgpuDialect"];
-}
-
-def KgpuOptimizeDotOperand : Pass<"kgpu-optimize-dot-operand", "ModuleOp"> {
-  let constructor = "kapy::createKgpuOptimizeDotOperandPass()";
+def KgpuOptimizeMatmul : Pass<"kgpu-optimize-matmul", "ModuleOp"> {
+  let constructor = "kapy::createKgpuOptimizeMatmulPass()";
 
   let dependentDialects = ["kapy::KapyDialect", "kapy::KgpuDialect"];
 }

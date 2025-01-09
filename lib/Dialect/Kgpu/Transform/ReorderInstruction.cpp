@@ -37,7 +37,31 @@
 using namespace mlir;
 using namespace mlir::kapy;
 
+static Operation *getFirstUser(Operation *op) {
+  std::vector<Operation *> useOps;
+  for (auto *useOp : op->getUsers())
+    if (auto *ancestor = op->getBlock()->findAncestorOpInBlock(*useOp))
+      useOps.push_back(ancestor);
+  auto isBefore = [](Operation *op0, Operation *op1) {
+    return op0->isBeforeInBlock(op1);
+  };
+  auto minOpIt = std::min_element(useOps.begin(), useOps.end(), isBefore);
+  return minOpIt != useOps.end() ? *minOpIt : nullptr;
+}
+
+static bool willIncreaseRegisterPressure(Operation *op) {
+  if (isa<LocalLoadOp>(op))
+    return true;
+  auto changeOp = dyn_cast<ChangeOp>(op);
+  if (!changeOp)
+    return false;
+  if (isa<MmOperandLayoutAttr>(changeOp.getType().getEncoding()))
+    return true;
+  return false;
+}
+
 namespace {
+
 #define GEN_PASS_DEF_KGPUREORDERINSTRUCTION
 #include "kapy/Dialect/Kgpu/Transform/Passes.h.inc"
 
@@ -46,12 +70,12 @@ class KgpuReorderInstructionPass
 public:
   virtual void runOnOperation() override {
     auto module = getOperation();
-    DominanceInfo domInfo(module);
-    // Sink changes after the last free before the first use ancestor in its
-    // block.
+
+    // Sink changes after the last local_free before the first use ancestor in
+    // its block.
     module.walk([&](ChangeOp changeOp) {
-      auto *firstUseOp = getFirstUse(changeOp);
-      for (auto it = Block::iterator(changeOp); &*it != firstUseOp; ++it)
+      auto *firstUser = getFirstUser(changeOp);
+      for (auto it = Block::iterator(changeOp); &*it != firstUser; ++it)
         if (isa<LocalFreeOp>(&*it))
           changeOp->moveAfter(&*it);
     });
@@ -61,72 +85,63 @@ public:
     module.walk([&](Operation *op) {
       if (!willIncreaseRegisterPressure(op))
         return;
-      if (op->getUsers().begin()->getParentOfType<scf::ForOp>() ==
+      auto userBegin = op->user_begin();
+      auto userEnd = op->user_end();
+      if (std::distance(userBegin, userEnd) != 1)
+        return;
+      if (userBegin->getParentOfType<scf::ForOp>() ==
           op->getParentOfType<scf::ForOp>())
         return;
-      opsToMove.insert({op, *op->getUsers().begin()});
+      opsToMove.insert({op, *userBegin});
     });
     for (auto it : opsToMove)
       it.first->moveBefore(it.second);
+    opsToMove.clear();
 
     // Move local_alloc(load) immediately after dependent load.
-    module.walk([&](LocalAllocOp localAllocOp) {
-      if (!localAllocOp.getOperand())
+    module.walk([&](LocalAllocOp allocOp) {
+      if (!allocOp.getOperand())
         return;
-      auto *defOp = localAllocOp.getOperand().getDefiningOp();
+      auto *defOp = allocOp.getOperand().getDefiningOp();
       if (!defOp)
         return;
-      localAllocOp->moveAfter(defOp);
+      allocOp->moveAfter(defOp);
     });
 
-    // Move dot op load lhs after dot op load rhs.
-    module.walk([&](LocalLoadOp localLoadOp) {
-      auto dotldLayout =
-          dyn_cast<DotOpLoadLayoutAttr>(localLoadOp.getType().getEncoding());
-      if (!dotldLayout)
+    // Move permute just after their defining operation.
+    module.walk([&](PermuteOp permuteOp) {
+      auto *defOp = permuteOp.getOperand().getDefiningOp();
+      if (!defOp)
         return;
-      auto index = dotldLayout.getOperandIndex();
-      if (index != 1)
-        return;
-      if (!localLoadOp->hasOneUse())
-        return;
-      auto dotOp = dyn_cast<DotOp>(*localLoadOp->getUsers().begin());
-      if (!dotOp)
-        return;
-      auto lhsLocalLoadOp = dotOp.getLhs().getDefiningOp<LocalLoadOp>();
-      if (!lhsLocalLoadOp)
-        return;
-      if (!domInfo.dominates(localLoadOp.getOperation(),
-                             lhsLocalLoadOp.getOperation()))
-        return;
-      localLoadOp->moveAfter(lhsLocalLoadOp);
+      permuteOp->moveAfter(defOp);
     });
-  }
 
-private:
-  static Operation *getFirstUse(Operation *op) {
-    std::vector<Operation *> useOps;
-    for (auto *useOp : op->getUsers())
-      if (auto *ancestor = op->getBlock()->findAncestorOpInBlock(*useOp))
-        useOps.push_back(ancestor);
-    auto minOpIt = std::min_element(useOps.begin(), useOps.end(),
-                                    [](Operation *op0, Operation *op1) {
-                                      return op0->isBeforeInBlock(op1);
-                                    });
-    return minOpIt != useOps.end() ? *minOpIt : nullptr;
-  }
-
-  static bool willIncreaseRegisterPressure(Operation *op) {
-    if (isa<LocalLoadOp>(op))
-      return true;
-    auto changeOp = dyn_cast<ChangeOp>(op);
-    if (!changeOp)
-      return false;
-    if (isa<DotOpLoadLayoutAttr>(changeOp.getType().getEncoding()))
-      return true;
-    return false;
+    // Move matmul lhs load after rhs load.
+    DominanceInfo domInfo(module);
+    module.walk([&](LocalLoadOp loadOp) {
+      auto mmopdLayout =
+          dyn_cast<MmOperandLayoutAttr>(loadOp.getType().getEncoding());
+      if (!mmopdLayout)
+        return;
+      if (mmopdLayout.getOperandIndex() != 1)
+        return;
+      auto rhsLoadOp = loadOp;
+      if (!rhsLoadOp->hasOneUse())
+        return;
+      auto matmulOp = dyn_cast<MatmulOp>(*loadOp->getUsers().begin());
+      if (!matmulOp)
+        return;
+      auto lhsLoadOp = matmulOp.getLhs().getDefiningOp<LocalLoadOp>();
+      if (!lhsLoadOp)
+        return;
+      if (!domInfo.dominates(rhsLoadOp.getOperation(),
+                             lhsLoadOp.getOperation()))
+        return;
+      rhsLoadOp->moveAfter(lhsLoadOp);
+    });
   }
 };
+
 } // namespace
 
 std::unique_ptr<Pass> kapy::createKgpuReorderInstructionPass() {

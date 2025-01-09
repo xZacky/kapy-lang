@@ -35,16 +35,18 @@
 
 namespace mlir {
 namespace kapy {
+
 class KgpuTypeConverter : public TypeConverter {
 public:
-  KgpuTypeConverter(MLIRContext *context, int numWarps);
+  KgpuTypeConverter(MLIRContext *context, int64_t numWarps);
 
-  int getNumWarps() const { return numWarps; }
+  int64_t getNumWarps() const { return numWarps; }
 
 private:
   MLIRContext *context;
-  int numWarps;
+  int64_t numWarps;
 };
+
 } // namespace kapy
 } // namespace mlir
 

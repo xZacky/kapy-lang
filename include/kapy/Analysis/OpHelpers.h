@@ -35,36 +35,19 @@
 
 namespace mlir {
 namespace kapy {
+
 class ReduceOpHelper {
 public:
   explicit ReduceOpHelper(Operation *op) : operation(op) {}
 
-  int getAxis() const;
+  unsigned getAxis() const;
   RankedTensorType getOperandType() const;
 
   bool isSupportedLayout() const;
   bool isWarpSynchronous() const;
 
-  SmallVector<int, 4> getScratchShape() const;
-  int getScratchSizeInBytes() const;
-
-private:
-  Operation *operation;
-};
-
-class ScanOpHelper {
-public:
-  explicit ScanOpHelper(Operation *op) : operation(op) {}
-
-  int getAxis() const;
-  bool getReverse() const;
-  RankedTensorType getOperandType() const;
-
-  bool isSupportedLayout() const;
-  bool isWarpSynchronous() const;
-
-  SmallVector<int, 4> getScratchShape() const;
-  int getScratchSizeInBytes() const;
+  SmallVector<int64_t, 4> getScratchShape() const;
+  int64_t getScratchSizeInBytes() const;
 
 private:
   Operation *operation;
@@ -79,12 +62,13 @@ public:
 
   bool isWarpSynchronous() const;
 
-  SmallVector<int, 4> getScratchShape() const;
-  int getScratchSizeInBytes() const;
+  SmallVector<int64_t, 4> getScratchShape() const;
+  int64_t getScratchSizeInBytes() const;
 
 private:
   Operation *operation;
 };
+
 } // namespace kapy
 } // namespace mlir
 

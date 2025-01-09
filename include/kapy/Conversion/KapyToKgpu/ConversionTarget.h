@@ -35,11 +35,13 @@
 
 namespace mlir {
 namespace kapy {
+
 class KgpuConversionTarget : public ConversionTarget {
 public:
   explicit KgpuConversionTarget(MLIRContext *context,
                                 KgpuTypeConverter &typeConverter);
 };
+
 } // namespace kapy
 } // namespace mlir
 

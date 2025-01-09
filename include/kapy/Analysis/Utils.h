@@ -37,11 +37,12 @@
 
 namespace mlir {
 namespace kapy {
+
 template <typename DialectT> bool fromDialect(Operation *op) {
   return op->getDialect()->getTypeID() == TypeID::get<DialectT>();
 }
 
-/// Return true if the given value is not tensor type or is tensor with only 1
+/// Return true if the given value is not tensor type or is tensor with only one
 /// element.
 bool hasSingleValue(Value value);
 
@@ -69,6 +70,7 @@ bool hasRestrictedPath(Operation *srcOp, Operation *dstOp,
 /// Create a basic DataFlowSolver that contains DeadCodeAnalysis and
 /// ConstantAnalysis.
 std::unique_ptr<DataFlowSolver> createDataFlowSolver();
+
 } // namespace kapy
 } // namespace mlir
 

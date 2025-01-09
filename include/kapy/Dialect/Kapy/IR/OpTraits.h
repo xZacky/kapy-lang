@@ -35,10 +35,8 @@
 
 namespace mlir {
 namespace OpTrait {
-/// These functions are out-of-line implementations of the methods in the
-/// corresponding trait calsses. This avoids them being template
-/// instantiated/duplicated.
 namespace impl {
+
 /// The rationale for this trait is to prevent users from creating programs
 /// that would have catastorphic register pressure and cause the compiler to
 /// hang.
@@ -48,11 +46,13 @@ namespace impl {
 /// keep specs simple.
 constexpr int64_t maxElements = 1048576;
 
+/// These functions are out-of-line implementations of the methods in the
+/// corresponding trait calsses. This avoids them being template
+/// instantiated/duplicated.
 LogicalResult verifyTensorShape(Operation *op);
-
 LogicalResult verifySameOperandsLayout(Operation *op);
-
 LogicalResult verifySameOperandsAndResultLayout(Operation *op);
+
 } // namespace impl
 
 template <typename ConcreteT>
@@ -79,6 +79,7 @@ public:
     return impl::verifySameOperandsAndResultLayout(op);
   }
 };
+
 } // namespace OpTrait
 } // namespace mlir
 

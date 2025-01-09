@@ -48,6 +48,7 @@ static bool isSplat(Operation *op, DenseElementsAttr &denseAttr) {
 }
 
 namespace {
+
 class MoveSplatOpAfterElementwiseOp
     : public OpTraitRewritePattern<OpTrait::Elementwise> {
 public:
@@ -71,7 +72,7 @@ public:
     auto operands = op->getOperands();
 
     SmallVector<Value> newOperands(operands.size());
-    for (int i = 0; i < operands.size(); ++i) {
+    for (unsigned i = 0; i < operands.size(); ++i) {
       auto *defOp = operands[i].getDefiningOp();
       DenseElementsAttr denseAttr;
       if (auto splatOp = dyn_cast<SplatOp>(defOp))
@@ -89,7 +90,7 @@ public:
 
     auto *newOp = rewriter.create(loc, op->getName().getIdentifier(),
                                   newOperands, newTypes, op->getAttrs());
-    for (int i = 0; i < types.size(); ++i)
+    for (unsigned i = 0; i < types.size(); ++i)
       rewriter.replaceAllUsesWith(
           op->getResult(i),
           rewriter.create<SplatOp>(loc, types[i], newOp->getResult(i)));
@@ -182,11 +183,10 @@ public:
 
     auto *newOp = rewriter.create(loc, op->getName().getIdentifier(),
                                   newOperands, newTypes, op->getAttrs());
-    for (int i = 0; i < newTypes.size(); ++i)
+    for (unsigned i = 0; i < newTypes.size(); ++i)
       rewriter.replaceAllUsesWith(
           op->getResult(i),
-          rewriter.create<BroadcastOp>(loc, newOp->getResult(i),
-                                       cast<ShapedType>(types[i]).getShape()));
+          rewriter.create<BroadcastOp>(loc, types[i], newOp->getResult(i)));
   }
 };
 
@@ -198,8 +198,8 @@ class KapyReorderBroadcastPass
 public:
   virtual void runOnOperation() override {
     auto module = getOperation();
-    auto *context = &getContext();
 
+    auto *context = &getContext();
     RewritePatternSet patterns(context);
     UnsqueezeOp::getCanonicalizationPatterns(patterns, context);
     BroadcastOp::getCanonicalizationPatterns(patterns, context);
@@ -210,6 +210,7 @@ public:
       signalPassFailure();
   }
 };
+
 } // namespace
 
 std::unique_ptr<Pass> kapy::createKapyReorderBroadcastPass() {

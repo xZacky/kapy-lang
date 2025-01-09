@@ -29,13 +29,14 @@
 //===----------------------------------------------------------------------===//
 
 #include "kapy/Conversion/KapyToKgpu/TypeConverter.h"
+#include "kapy/Analysis/Layout.h"
 #include "kapy/Dialect/Kapy/IR/Kapy.h"
 #include "kapy/Dialect/Kgpu/IR/Kgpu.h"
 
 using namespace mlir;
 using namespace mlir::kapy;
 
-KgpuTypeConverter::KgpuTypeConverter(MLIRContext *context, int numWarps)
+KgpuTypeConverter::KgpuTypeConverter(MLIRContext *context, int64_t numWarps)
     : context(context), numWarps(numWarps) {
   addConversion([](Type type) { return type; });
 
@@ -44,11 +45,9 @@ KgpuTypeConverter::KgpuTypeConverter(MLIRContext *context, int numWarps)
     if (tensorType.getEncoding())
       return tensorType;
     auto shape = tensorType.getShape();
-    // Default tile is 1 element per lane.
-    SmallVector<int, 4> tilePerLane(shape.size(), 1);
-    auto regsLayout = RegistersLayoutAttr::get(this->context, shape,
-                                               tilePerLane, this->numWarps);
-    return cloneWith(tensorType, regsLayout);
+    SmallVector<int64_t, 4> loops(shape.size(), 1);
+    auto regisLayout = getRegistersLayout(this->context, shape, this->numWarps);
+    return cloneWith(tensorType, regisLayout);
   });
 
   addTargetMaterialization([](OpBuilder &builder, RankedTensorType tensorType,

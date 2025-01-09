@@ -12,9 +12,12 @@
 #include <numeric>
 
 namespace mlir {
+
 using llvm::ArrayRef;
 using llvm::SmallVector;
+
 namespace kapy {
+
 template <typename I> I ceilDiv(I a, I b) {
   static_assert(std::is_integral_v<I>);
   return (a + b - 1) / b;
@@ -107,6 +110,7 @@ template <typename T, typename I> SmallVector<T, 4> convert(ArrayRef<I> array) {
 template <typename T, typename ArrayT> auto convert(const ArrayT &array) {
   return convert<T>(ArrayRef(array));
 }
+
 } // namespace kapy
 } // namespace mlir
 

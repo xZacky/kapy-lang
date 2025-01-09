@@ -54,6 +54,7 @@
 
 namespace mlir {
 namespace kapy {
+
 class GlobalMemory : public SideEffects::Resource::Base<GlobalMemory> {
 public:
   virtual StringRef getName() override { return "<GlobalMemory>"; }
@@ -64,31 +65,21 @@ public:
   KapyLayoutInterface(Dialect *dialect) : Base(dialect) {}
 
   virtual FailureOr<Attribute>
-  inferReduceOpLayout(Value operand, int axis,
+  inferReduceOpLayout(Attribute operandLayout, unsigned axis,
                       std::optional<Location> loc) const = 0;
 
   virtual FailureOr<Attribute>
-  inferUnsqueezeOpLayout(Value operand, int axis,
+  inferUnsqueezeOpLayout(Attribute operandLayout, unsigned axis,
                          std::optional<Location> loc) const = 0;
 
   virtual FailureOr<Attribute>
-  inferBroadcastOpLayout(Value operand, ArrayRef<int64_t> shape,
-                         std::optional<Location> loc) const = 0;
-
-  virtual FailureOr<Attribute>
-  inferPermuteOpLayout(Value operand, ArrayRef<int32_t> order,
+  inferPermuteOpLayout(Attribute operandLayout, ArrayRef<int32_t> order,
                        std::optional<Location> loc) const = 0;
 
-  virtual FailureOr<Attribute>
-  inferReshapeOpLayout(Value operand, ArrayRef<int64_t> shape,
-                       std::optional<Location> loc) const = 0;
-
-  virtual LogicalResult verifyDotOpLayouts(DotOp op) const = 0;
+  virtual LogicalResult verifyMatmulOpLayouts(MatmulOp op) const = 0;
 };
 
-int getIntOrFloatBitWidth(Type type);
-
-Type getI1TypeWithSameShape(Type type);
+unsigned getIntOrFloatBitWidth(Type type);
 
 RankedTensorType cloneWith(RankedTensorType type, Type elementType);
 RankedTensorType cloneWith(RankedTensorType type, Attribute layout);
@@ -107,6 +98,7 @@ template <typename LayoutT> bool hasLayout(Type type) {
   }
   return false;
 }
+
 } // namespace kapy
 } // namespace mlir
 

@@ -46,20 +46,19 @@
 
 namespace mlir {
 namespace kapy {
+
 class SharedMemory : public SideEffects::Resource::Base<SharedMemory> {
 public:
   virtual StringRef getName() override { return "<SharedMemory>"; }
 };
 
-constexpr int numLanes = 32;
+constexpr int64_t numLanes = 32;
 
-ModuleOp getModule(Operation *op);
-ModuleOp getModule(Value value);
-
-bool supportNvidiaMma(DotOp dotOp);
+bool supportNvidiaMma(MatmulOp op);
 bool supportNvidiaMma(Type elementType);
 
-std::string getLayoutString(RankedTensorType type, int numWarps);
+std::string getLayoutString(RankedTensorType type, int64_t numWarps);
+
 } // namespace kapy
 } // namespace mlir
 

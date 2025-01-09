@@ -35,12 +35,16 @@
 
 namespace mlir {
 namespace kapy {
+
 std::unique_ptr<Pass> createKapyCombinePass();
 std::unique_ptr<Pass> createKapyReorderBroadcastPass();
+std::unique_ptr<Pass> createKapyUpdateMemRefTypePass();
+
 } // namespace kapy
 
 #define GEN_PASS_REGISTRATION
 #include "kapy/Dialect/Kapy/Transform/Passes.h.inc"
+
 } // namespace mlir
 
 #endif // KAPY_DIALECT_KAPY_TRANSFORM_PASSES_H

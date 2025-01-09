@@ -80,47 +80,95 @@ static bool isCombinable(Value offset0, Value offset1) {
   return false;
 }
 
+static void combineSelectOpAndIfOp(ModuleOp module) {
+  DominanceInfo domInfo(module);
+  auto dominanceRequires = [&](arith::SelectOp selectOp, scf::IfOp ifOp) {
+    // IfOp needs to be dominated by the SelectOp.
+    if (!domInfo.dominates(selectOp.getOperation(), ifOp.getOperation()))
+      return false;
+    // IfOp needs to dominate all the SelectOp's users.
+    for (auto *useOp : selectOp.getResult().getUsers())
+      if (!domInfo.dominates(ifOp.getOperation(), useOp))
+        return false;
+    return true;
+  };
+
+  // Go over the SelectOps, look if there is an IfOp with the same condition.
+  MapVector<scf::IfOp, SmallVector<arith::SelectOp>> ifToSelectOps;
+  module.walk([&](arith::SelectOp selectOp) {
+    auto *block = selectOp->getBlock();
+    auto condition = selectOp.getCondition();
+    SetVector<Operation *> useOps(condition.getUsers().begin(),
+                                  condition.getUsers().end());
+    // Sort the users in topological order.
+    useOps = multiRootTopoSort(useOps);
+    for (auto *useOp : useOps) {
+      auto ifOp = dyn_cast<scf::IfOp>(useOp);
+      if (!ifOp || ifOp->getBlock() != block)
+        continue;
+      if (dominanceRequires(selectOp, ifOp)) {
+        ifToSelectOps[ifOp].push_back(selectOp);
+        break;
+      }
+    }
+  });
+
+  auto updateYieldOp = [](OpBuilder &builder, Location loc,
+                          scf::YieldOp yieldOp,
+                          SmallVectorImpl<Value> &operands) {
+    builder.setInsertionPoint(yieldOp);
+    (void)builder.create<scf::YieldOp>(loc, operands);
+    yieldOp.erase();
+  };
+
+  for (auto [ifOp, selectOps] : ifToSelectOps) {
+    // Add new return value to the IfOp (and create else block if necessary),
+    // then yield the select value in the then block and the else block.
+    OpBuilder builder(ifOp);
+    auto loc = ifOp.getLoc();
+    SmallVector<Type> newTypes(ifOp.getResultTypes());
+    for (auto selectOp : selectOps)
+      newTypes.push_back(selectOp.getResult().getType());
+    auto newIfOp =
+        builder.create<scf::IfOp>(loc, newTypes, ifOp.getCondition(), true);
+    newIfOp.getThenRegion().takeBody(ifOp.getThenRegion());
+    if (ifOp.elseBlock())
+      newIfOp.getElseRegion().takeBody(ifOp.getElseRegion());
+    else
+      (void)newIfOp.getElseBodyBuilder().create<scf::YieldOp>(loc);
+
+    SmallVector<Value> thenOperands(newIfOp.thenYield().getOperands());
+    SmallVector<Value> elseOperands(newIfOp.elseYield().getOperands());
+    for (auto selectOp : selectOps) {
+      auto thenValue = selectOp.getTrueValue();
+      auto elseValue = selectOp.getFalseValue();
+      thenOperands.push_back(thenValue);
+      elseOperands.push_back(elseValue);
+    }
+    updateYieldOp(builder, loc, newIfOp.thenYield(), thenOperands);
+    updateYieldOp(builder, loc, newIfOp.elseYield(), elseOperands);
+
+    unsigned i = 0;
+    for (auto result : ifOp.getResults())
+      result.replaceAllUsesWith(newIfOp->getResult(i++));
+    for (auto selectOp : selectOps) {
+      selectOp.replaceAllUsesWith(newIfOp->getResult(i++));
+      selectOp.erase();
+    }
+
+    ifOp.erase();
+  }
+}
+
 namespace {
+
 #include "kapy/Dialect/Kapy/Transform/Combine.cpp.inc"
 
-class CombineSelectOpAndLoadOp : public RewritePattern {
+class CombineOpsEqualToMatmulOp : public RewritePattern {
 public:
-  CombineSelectOpAndLoadOp(MLIRContext *context)
-      : RewritePattern(arith::SelectOp::getOperationName(), 2, context,
-                       {LoadOp::getOperationName()}) {}
-
-  virtual LogicalResult
-  matchAndRewrite(Operation *op, PatternRewriter &rewriter) const override {
-    auto selectOp = cast<arith::SelectOp>(op);
-    auto condition = selectOp.getCondition();
-    auto trueValue = selectOp.getTrueValue();
-    auto falseValue = selectOp.getFalseValue();
-
-    auto loadOp = trueValue.getDefiningOp<LoadOp>();
-    if (!loadOp)
-      return failure();
-    auto mask = loadOp.getMask();
-    if (!mask)
-      return failure();
-    auto splatOp = mask.getDefiningOp<SplatOp>();
-    if (!splatOp)
-      return failure();
-    if (splatOp.getOperand() != condition)
-      return failure();
-
-    rewriter.replaceOpWithNewOp<LoadOp>(
-        op, loadOp.getType(), loadOp.getSource(), mask, falseValue,
-        loadOp.getCacheModifier(), loadOp.getEvictPriority(),
-        loadOp.getIsVolatile());
-    return success();
-  }
-};
-
-class CombineOpsEqualToDotOp : public RewritePattern {
-public:
-  CombineOpsEqualToDotOp(MLIRContext *context)
+  CombineOpsEqualToMatmulOp(MLIRContext *context)
       : RewritePattern(ReduceOp::getOperationName(), 1, context,
-                       {DotOp::getOperationName()}) {}
+                       {MatmulOp::getOperationName()}) {}
 
   virtual LogicalResult
   matchAndRewrite(Operation *op, PatternRewriter &rewriter) const override {
@@ -168,7 +216,7 @@ public:
     auto accum = rewriter.create<SplatOp>(op->getLoc(), accumType, zero);
     auto lhs = lhsUnsqueezeOp.getOperand();
     auto rhs = rhsUnsqueezeOp.getOperand();
-    rewriter.replaceOpWithNewOp<DotOp>(op, lhs, rhs, accum);
+    rewriter.replaceOpWithNewOp<MatmulOp>(op, lhs, rhs, accum);
     return success();
   }
 
@@ -186,106 +234,23 @@ class KapyCombinePass : public impl::KapyCombineBase<KapyCombinePass> {
 public:
   virtual void runOnOperation() override {
     auto module = getOperation();
+
     auto *context = &getContext();
-
-    combineSelectOpAndIfOp();
-
     RewritePatternSet patterns(context);
-    patterns.add<CombineDotOpAsAddIOpLhs>(context);
-    patterns.add<CombineDotOpAsAddIOpRhs>(context);
-    patterns.add<CombineDotOpAsAddFOpLhs>(context);
-    patterns.add<CombineDotOpAsAddFOpRhs>(context);
+    patterns.add<CombineMatmulOpAsAddIOpLhs>(context);
+    patterns.add<CombineMatmulOpAsAddIOpRhs>(context);
+    patterns.add<CombineMatmulOpAsAddFOpLhs>(context);
+    patterns.add<CombineMatmulOpAsAddFOpRhs>(context);
     patterns.add<CombineTwoMovMemRefOps>(context);
-    patterns.add<CombineSelectOpAndLoadOp>(context);
-    patterns.add<CombineOpsEqualToDotOp>(context);
+    patterns.add<CombineOpsEqualToMatmulOp>(context);
 
     if (failed(applyPatternsAndFoldGreedily(module, std::move(patterns))))
       signalPassFailure();
-  }
 
-private:
-  void combineSelectOpAndIfOp() {
-    auto module = getOperation();
-
-    DominanceInfo domInfo(module);
-    auto dominanceRequires = [&](arith::SelectOp selectOp, scf::IfOp ifOp) {
-      // IfOp needs to be dominated by the SelectOp.
-      if (!domInfo.dominates(selectOp.getOperation(), ifOp.getOperation()))
-        return false;
-      // IfOp needs to dominate all the SelectOp's users.
-      for (auto *useOp : selectOp.getResult().getUsers())
-        if (!domInfo.dominates(ifOp.getOperation(), useOp))
-          return false;
-      return true;
-    };
-
-    // Go over the SelectOps, look if there is an IfOp with the same condition.
-    MapVector<scf::IfOp, SmallVector<arith::SelectOp>> ifToSelectOps;
-    module.walk([&](arith::SelectOp selectOp) {
-      auto *block = selectOp->getBlock();
-      auto condition = selectOp.getCondition();
-      SetVector<Operation *> useOps(condition.getUsers().begin(),
-                                    condition.getUsers().end());
-      // Sort the users in topological order.
-      useOps = multiRootTopoSort(useOps);
-      for (auto *useOp : useOps) {
-        auto ifOp = dyn_cast<scf::IfOp>(useOp);
-        if (!ifOp || ifOp->getBlock() != block)
-          continue;
-        if (dominanceRequires(selectOp, ifOp)) {
-          ifToSelectOps[ifOp].push_back(selectOp);
-          break;
-        }
-      }
-    });
-
-    auto updateYieldOp = [](OpBuilder &builder, Location loc,
-                            scf::YieldOp yieldOp,
-                            SmallVectorImpl<Value> &operands) {
-      builder.setInsertionPoint(yieldOp);
-      (void)builder.create<scf::YieldOp>(loc, operands);
-      yieldOp.erase();
-    };
-
-    for (auto [ifOp, selectOps] : ifToSelectOps) {
-      // Add new return value to the IfOp (and create else block if necessary),
-      // then yield the select value in the then block and the else block.
-      OpBuilder builder(ifOp);
-      auto loc = ifOp.getLoc();
-      SmallVector<Type> newTypes(ifOp.getResultTypes());
-      for (auto selectOp : selectOps)
-        newTypes.push_back(selectOp.getResult().getType());
-      auto newIfOp =
-          builder.create<scf::IfOp>(loc, newTypes, ifOp.getCondition(), true);
-      newIfOp.getThenRegion().takeBody(ifOp.getThenRegion());
-      if (ifOp.elseBlock())
-        newIfOp.getElseRegion().takeBody(ifOp.getElseRegion());
-      else
-        (void)newIfOp.getElseBodyBuilder().create<scf::YieldOp>(loc);
-
-      SmallVector<Value> thenOperands(newIfOp.thenYield().getOperands());
-      SmallVector<Value> elseOperands(newIfOp.elseYield().getOperands());
-      for (auto selectOp : selectOps) {
-        auto thenValue = selectOp.getTrueValue();
-        auto elseValue = selectOp.getFalseValue();
-        thenOperands.push_back(thenValue);
-        elseOperands.push_back(elseValue);
-      }
-      updateYieldOp(builder, loc, newIfOp.thenYield(), thenOperands);
-      updateYieldOp(builder, loc, newIfOp.elseYield(), elseOperands);
-
-      auto i = 0;
-      for (auto result : ifOp.getResults())
-        result.replaceAllUsesWith(newIfOp->getResult(i++));
-      for (auto selectOp : selectOps) {
-        selectOp.replaceAllUsesWith(newIfOp->getResult(i++));
-        selectOp.erase();
-      }
-
-      ifOp.erase();
-    }
+    combineSelectOpAndIfOp(module);
   }
 };
+
 } // namespace
 
 std::unique_ptr<Pass> kapy::createKapyCombinePass() {

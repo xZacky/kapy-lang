@@ -28,6 +28,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "kapy/Analysis/Layout.h"
 #include "kapy/Conversion/KapyToKgpu/ConversionTarget.h"
 #include "kapy/Conversion/KapyToKgpu/Passes.h"
 #include "kapy/Conversion/KapyToKgpu/TypeConverter.h"
@@ -46,6 +47,7 @@ static void addNamedAttributes(Operation *op, DictionaryAttr attrs) {
 }
 
 namespace {
+
 template <typename OpT>
 class GenericOpConversion : public OpConversionPattern<OpT> {
 public:
@@ -56,8 +58,8 @@ public:
   matchAndRewrite(OpT op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     SmallVector<Type> newTypes;
-    if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(),
-                                                      newTypes)))
+    const TypeConverter *typeConverter = this->getTypeConverter();
+    if (failed(typeConverter->convertTypes(op->getResultTypes(), newTypes)))
       return failure();
     rewriter.replaceOpWithNewOp<OpT>(op, newTypes, adaptor.getOperands(),
                                      op->getAttrs());
@@ -95,11 +97,34 @@ class UnsqueezeOpConversion : public OpConversionPattern<UnsqueezeOp> {
 public:
   using OpConversionPattern::OpConversionPattern;
 
-  virtual LogicalResult
+  LogicalResult
   matchAndRewrite(UnsqueezeOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    auto newOp = rewriter.replaceOpWithNewOp<UnsqueezeOp>(
-        op, adaptor.getOperand(), op.getAxis());
+    auto operand = adaptor.getOperand();
+    auto operandType = cast<RankedTensorType>(operand.getType());
+    if (!operandType.getEncoding())
+      return failure();
+    auto operandLayout = cast<RegistersLayoutAttr>(operandType.getEncoding());
+    auto axis = op.getAxis();
+
+    auto shapeOfWarps = operandLayout.getShapeOfWarps();
+    shapeOfWarps.insert(shapeOfWarps.begin() + axis, 1);
+    auto loopsPerWarp = operandLayout.getLoopsPerWarp();
+    loopsPerWarp.insert(loopsPerWarp.begin() + axis, 1);
+    auto shapeOfLanes = operandLayout.getShapeOfLanes();
+    shapeOfLanes.insert(shapeOfLanes.begin() + axis, 1);
+    auto loopsPerLane = operandLayout.getLoopsPerLane();
+    loopsPerLane.insert(loopsPerLane.begin() + axis, 1);
+
+    auto regisLayout =
+        RegistersLayoutAttr::get(op.getContext(), shapeOfWarps, loopsPerWarp,
+                                 shapeOfLanes, loopsPerLane);
+    auto sliceLayout =
+        SliceAxisLayoutAttr::get(op.getContext(), regisLayout, axis);
+
+    operandType = cloneWith(operandType, sliceLayout);
+    operand = rewriter.create<ChangeOp>(operand.getLoc(), operandType, operand);
+    auto newOp = rewriter.replaceOpWithNewOp<UnsqueezeOp>(op, operand, axis);
     addNamedAttributes(newOp, adaptor.getAttributes());
     return success();
   }
@@ -112,8 +137,13 @@ public:
   virtual LogicalResult
   matchAndRewrite(BroadcastOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    auto newOp = rewriter.replaceOpWithNewOp<BroadcastOp>(
-        op, adaptor.getOperand(), op.getShape());
+    auto operand = adaptor.getOperand();
+    auto operandType = cast<RankedTensorType>(operand.getType());
+    auto operandLayout = operandType.getEncoding();
+    if (!operandLayout)
+      return failure();
+    auto newType = cloneWith(op.getType(), operandLayout);
+    auto newOp = rewriter.replaceOpWithNewOp<BroadcastOp>(op, newType, operand);
     addNamedAttributes(newOp, adaptor.getAttributes());
     return success();
   }
@@ -126,74 +156,61 @@ public:
   virtual LogicalResult
   matchAndRewrite(PermuteOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    auto newOp = rewriter.replaceOpWithNewOp<PermuteOp>(
-        op, adaptor.getOperand(), op.getOrder());
+    auto operand = adaptor.getOperand();
+    auto newOp =
+        rewriter.replaceOpWithNewOp<PermuteOp>(op, operand, op.getOrder());
     addNamedAttributes(newOp, adaptor.getAttributes());
     return success();
   }
 };
 
-class ReshapeOpConversion : public OpConversionPattern<ReshapeOp> {
+class MatmulOpConversion : public OpConversionPattern<MatmulOp> {
 public:
   using OpConversionPattern::OpConversionPattern;
 
   virtual LogicalResult
-  matchAndRewrite(ReshapeOp op, OpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    auto newOp = rewriter.replaceOpWithNewOp<ReshapeOp>(
-        op, adaptor.getOperand(), op.getShape());
-    addNamedAttributes(newOp, adaptor.getAttributes());
-    return success();
-  }
-};
-
-class DotOpConversion : public OpConversionPattern<DotOp> {
-public:
-  using OpConversionPattern::OpConversionPattern;
-
-  virtual LogicalResult
-  matchAndRewrite(DotOp op, OpAdaptor adaptor,
+  matchAndRewrite(MatmulOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     auto numWarps = getTypeConverter<KgpuTypeConverter>()->getNumWarps();
     auto numThreads = numLanes * numWarps;
-
-    auto resultType = op.getType();
-    auto rank = resultType.getRank();
-    auto shape = resultType.getShape();
+    auto type = op.getType();
+    auto rank = type.getRank();
+    auto shape = type.getShape();
     auto numElems = product(shape);
 
-    SmallVector<int, 4> tilePerLane(rank, 1);
+    SmallVector<int64_t, 4> loopsPerWarp(rank, 1);
+    SmallVector<int64_t, 4> loopsPerLane(rank, 1);
     if (shape[rank - 1] >= 32 && shape[rank - 2] >= 32 &&
         numElems / numThreads >= 16) {
-      tilePerLane[rank - 1] = 4;
-      tilePerLane[rank - 2] = 4;
+      loopsPerLane[rank - 1] = 4;
+      loopsPerLane[rank - 2] = 4;
     } else {
-      tilePerLane[rank - 1] = 2;
-      tilePerLane[rank - 2] = 2;
+      loopsPerLane[rank - 1] = 2;
+      loopsPerLane[rank - 2] = 2;
     }
 
-    auto accumLayout =
-        RegistersLayoutAttr::get(getContext(), shape, tilePerLane, numWarps);
-    auto accumType = cloneWith(resultType, accumLayout);
+    auto accumLayout = getRegistersLayout(op.getContext(), loopsPerWarp,
+                                          loopsPerLane, shape, numWarps);
+    auto accumType = cloneWith(type, accumLayout);
     auto accum = adaptor.getAccum();
     accum = rewriter.create<ChangeOp>(accum.getLoc(), accumType, accum);
 
     auto lhs = adaptor.getLhs();
     auto lhsType = cast<RankedTensorType>(lhs.getType());
-    auto lhsLayout = DotOpLoadLayoutAttr::get(getContext(), accumLayout, 0,
+    auto lhsLayout = MmOperandLayoutAttr::get(op.getContext(), accumLayout, 0,
                                               lhsType.getElementType());
     lhsType = cloneWith(lhsType, lhsLayout);
     lhs = rewriter.create<ChangeOp>(lhs.getLoc(), lhsType, lhs);
 
     auto rhs = adaptor.getRhs();
     auto rhsType = cast<RankedTensorType>(rhs.getType());
-    auto rhsLayout = DotOpLoadLayoutAttr::get(getContext(), accumLayout, 1,
+    auto rhsLayout = MmOperandLayoutAttr::get(op.getContext(), accumLayout, 1,
                                               rhsType.getElementType());
     rhsType = cloneWith(rhsType, rhsLayout);
     rhs = rewriter.create<ChangeOp>(rhs.getLoc(), rhsType, rhs);
 
-    auto newOp = rewriter.replaceOpWithNewOp<DotOp>(op, lhs, rhs, accum,
-                                                    op.getDotPrecision());
+    auto newOp = rewriter.replaceOpWithNewOp<MatmulOp>(op, lhs, rhs, accum,
+                                                       op.getMatmulFormat());
     addNamedAttributes(newOp, adaptor.getAttributes());
     return success();
   }
@@ -208,23 +225,6 @@ public:
                   ConversionPatternRewriter &rewriter) const override {
     auto newOp = rewriter.create<ReduceOp>(op.getLoc(), adaptor.getOperand(),
                                            op.getAxis());
-    addNamedAttributes(newOp, adaptor.getAttributes());
-    auto &newRegion = newOp.getRegion();
-    rewriter.inlineRegionBefore(op.getRegion(), newRegion, newRegion.end());
-    rewriter.replaceOp(op, newOp.getResult());
-    return success();
-  }
-};
-
-class ScanOpConversion : public OpConversionPattern<ScanOp> {
-public:
-  using OpConversionPattern::OpConversionPattern;
-
-  virtual LogicalResult
-  matchAndRewrite(ScanOp op, OpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    auto newOp = rewriter.create<ScanOp>(op.getLoc(), adaptor.getOperand(),
-                                         op.getAxis(), op.getReverse());
     addNamedAttributes(newOp, adaptor.getAttributes());
     auto &newRegion = newOp.getRegion();
     rewriter.inlineRegionBefore(op.getRegion(), newRegion, newRegion.end());
@@ -462,7 +462,7 @@ static void populateMathOpsConversionPatterns(KgpuTypeConverter &typeConverter,
 static void populateKapyOpsConversionPatterns(KgpuTypeConverter &typeConverter,
                                               RewritePatternSet &patterns) {
   auto *context = patterns.getContext();
-  patterns.add<GenericOpConversion<FPToFPOp>>(typeConverter, context);
+  patterns.add<GenericOpConversion<FpToFpOp>>(typeConverter, context);
   patterns.add<GenericOpConversion<ClampFOp>>(typeConverter, context);
   patterns.add<GenericOpConversion<MulhiUIOp>>(typeConverter, context);
   patterns.add<GenericOpConversion<ArangeOp>>(typeConverter, context);
@@ -474,14 +474,12 @@ static void populateKapyOpsConversionPatterns(KgpuTypeConverter &typeConverter,
   patterns.add<UnsqueezeOpConversion>(typeConverter, context);
   patterns.add<BroadcastOpConversion>(typeConverter, context);
   patterns.add<PermuteOpConversion>(typeConverter, context);
-  patterns.add<ReshapeOpConversion>(typeConverter, context);
-  patterns.add<DotOpConversion>(typeConverter, context);
+  patterns.add<MatmulOpConversion>(typeConverter, context);
   patterns.add<ReduceOpConversion>(typeConverter, context);
-  patterns.add<ScanOpConversion>(typeConverter, context);
   patterns.add<GenericOpConversion<ElementwiseExternOp>>(typeConverter,
                                                          context);
-  patterns.add<GenericOpConversion<ElementwiseInlineAsmOp>>(typeConverter,
-                                                            context);
+  patterns.add<GenericOpConversion<ElementwiseInlineOp>>(typeConverter,
+                                                         context);
   patterns.add<GenericOpConversion<CallOp>>(typeConverter, context);
   patterns.add<FuncOpConversion>(typeConverter, context);
   patterns.add<GenericOpConversion<ReturnOp>>(typeConverter, context);
@@ -505,6 +503,7 @@ static void populateCFOpsConversionPatterns(KgpuTypeConverter &typeConverter,
 }
 
 namespace {
+
 #define GEN_PASS_DECL_CONVERTKAPYTOKGPU
 #define GEN_PASS_DEF_CONVERTKAPYTOKGPU
 #include "kapy/Conversion/KapyToKgpu/Passes.h.inc"
@@ -513,7 +512,7 @@ class ConvertKapyToKgpuPass
     : public impl::ConvertKapyToKgpuBase<ConvertKapyToKgpuPass> {
 public:
   ConvertKapyToKgpuPass() = default;
-  ConvertKapyToKgpuPass(int nvidiaCC, int numWarps) {
+  ConvertKapyToKgpuPass(int64_t nvidiaCC, int64_t numWarps) {
     this->nvidiaCC = nvidiaCC;
     this->numWarps = numWarps;
   }
@@ -531,23 +530,24 @@ public:
     populateSCFOpsConversionPatterns(typeConverter, patterns);
     populateCFOpsConversionPatterns(typeConverter, patterns);
 
-    auto i32Type = IntegerType::get(context, 32);
+    auto i64Type = IntegerType::get(context, 64);
     module->setAttr("kgpu.nvidia_cc",
-                    IntegerAttr::get(i32Type, APInt(32, nvidiaCC.getValue())));
+                    IntegerAttr::get(i64Type, APInt(64, nvidiaCC.getValue())));
     module->setAttr("kgpu.num_warps",
-                    IntegerAttr::get(i32Type, APInt(32, numWarps.getValue())));
+                    IntegerAttr::get(i64Type, APInt(64, numWarps.getValue())));
 
     if (failed(applyPartialConversion(module, convTarget, std::move(patterns))))
       return signalPassFailure();
   }
 };
+
 } // namespace
 
 std::unique_ptr<Pass> kapy::createConvertKapyToKgpuPass() {
   return std::make_unique<ConvertKapyToKgpuPass>();
 }
 
-std::unique_ptr<Pass> kapy::createConvertKapyToKgpuPass(int nvidiaCC,
-                                                        int numWarps) {
+std::unique_ptr<Pass> kapy::createConvertKapyToKgpuPass(int64_t nvidiaCC,
+                                                        int64_t numWarps) {
   return std::make_unique<ConvertKapyToKgpuPass>(nvidiaCC, numWarps);
 }

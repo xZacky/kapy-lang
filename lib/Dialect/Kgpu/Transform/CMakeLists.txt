@@ -1,6 +1,5 @@
 add_mlir_dialect_library(KgpuTransform
-  AccelerateMatmul.cpp
-  OptimizeDotOperand.cpp
+  OptimizeMatmul.cpp
   ReorderInstruction.cpp
 
   DEPENDS

@@ -35,12 +35,16 @@
 
 namespace mlir {
 namespace kapy {
+
 std::unique_ptr<Pass> createConvertKapyToKgpuPass();
-std::unique_ptr<Pass> createConvertKapyToKgpuPass(int nvidiaCC, int numWarps);
+std::unique_ptr<Pass> createConvertKapyToKgpuPass(int64_t nvidiaCC,
+                                                  int64_t numWarps);
+
 } // namespace kapy
 
 #define GEN_PASS_REGISTRATION
 #include "kapy/Conversion/KapyToKgpu/Passes.h.inc"
+
 } // namespace mlir
 
 #endif // KAPY_CONVERSION_KAPYTOKGPU_PASSES_H

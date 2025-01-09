@@ -1,6 +1,6 @@
 //===- Attrs.td --------------------------------------------*- tablegen -*-===//
 //
-// This file defines the attributes used by the kapy dialect.
+// This file defines the attributes used by the Kapy dialect.
 //
 //===----------------------------------------------------------------------===//
 
@@ -14,17 +14,17 @@ class Kapy_AttrDef<string name, string keyword, list<Trait> traits = []>
   let attrName = "kapy." # keyword;
 }
 
-def Kapy_GlobalMemLayout : Kapy_AttrDef<"GlobalMemLayout", "gmem"> {
-  let description = [{
-    GlobalMemLayout is an AffineMap that maps from memref indices and captured
-    symbols to `offset`, where `offset` is the element offset from the base
-    pointer.
+def Kapy_GlobalMemLayoutAttr : Kapy_AttrDef<"GlobalMemLayout", "glmem"> {
+  let mnemonic = "glmem";
+  let parameters = (ins ArrayRefParameter<"int64_t">:$strides);
+
+  let hasCustomAssemblyFormat = 1;
+
+  let extraClassDeclaration = [{
+    /// Get an AffineMap from memref indices to the relative offset from the
+    /// first element in memory. Use symbols for dynamic strides.
+    AffineMap getMemRefMap() const;
   }];
-
-  let mnemonic = "gmem";
-  let parameters = (ins "AffineMap":$map);
-
-  let assemblyFormat = "`<` struct(params) `>`";
 }
 
 #endif // KAPY_DIALECT_KAPY_IR_ATTRS

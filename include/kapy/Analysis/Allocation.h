@@ -37,6 +37,7 @@
 
 namespace mlir {
 namespace kapy {
+
 class AllocationAnalysis;
 
 /// Modified from llvm-15.0: llvm/ADT/AddressRanges.h
@@ -84,9 +85,9 @@ public:
 
   Operation *getOperation() { return operation; }
 
-  int getOffset(BufferId id) const { return buffers.at(id).offset; }
-  int getSize(BufferId id) const { return buffers.at(id).size; }
-  Interval<int> getInterval(BufferId id) const {
+  int64_t getOffset(BufferId id) const { return buffers.at(id).offset; }
+  int64_t getSize(BufferId id) const { return buffers.at(id).size; }
+  Interval<int64_t> getInterval(BufferId id) const {
     const auto &buffer = buffers.at(id);
     return Interval(buffer.offset, buffer.offset + buffer.size);
   }
@@ -116,7 +117,7 @@ public:
     return buffers.at(id).kind == Buffer::BufferKind::Virtual;
   }
 
-  int getAllocatedSize() const { return allocatedSize; }
+  int64_t getAllocatedSize() const { return allocatedSize; }
 
 private:
   struct Buffer {
@@ -130,18 +131,19 @@ private:
 
     BufferKind kind;
     BufferId id;
-    int size;
-    int alignment;
-    int offset;
+    int64_t size;
+    int64_t alignment;
+    int64_t offset;
 
     Buffer() : Buffer(BufferKind::Explicit, 0) {}
-    Buffer(BufferKind kind, int size, int alignment = 4, int offset = 0)
+    Buffer(BufferKind kind, int64_t size, int64_t alignment = 4,
+           int64_t offset = 0)
         : kind(kind), id(nextId++), size(size), alignment(alignment),
           offset(offset) {}
 
     bool operator==(const Buffer &other) const { return id == other.id; }
 
-    void setOffsetAligned(int newOffset) {
+    void setOffsetAligned(int64_t newOffset) {
       offset = llvm::alignTo(newOffset, alignment);
     }
   };
@@ -151,7 +153,7 @@ private:
   DenseMap<Operation *, Buffer *> scratchs;
   DenseMap<Operation *, Buffer *> virtuals;
   std::map<BufferId, Buffer> buffers;
-  int allocatedSize = 0;
+  int64_t allocatedSize = 0;
 
   template <Buffer::BufferKind Kind, typename T, typename... Ts>
   void addBuffer(T &key, Ts &&...args) {
@@ -223,17 +225,18 @@ public:
         });
   }
 
-  int getAllocatedSize(FunctionOpInterface funcOp) {
+  int64_t getAllocatedSize(FunctionOpInterface funcOp) {
     return getData(funcOp)->getAllocatedSize();
   }
 
-  int getAllocatedSize() {
-    int size = 0;
+  int64_t getAllocatedSize() {
+    int64_t size = 0;
     for (auto funcOp : getRoots())
       size = std::max(size, getAllocatedSize(funcOp));
     return size;
   }
 };
+
 } // namespace kapy
 } // namespace mlir
 

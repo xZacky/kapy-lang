@@ -39,8 +39,8 @@ def ConvertKapyToKgpu : Pass<"convert-kapy-to-kgpu", "ModuleOp"> {
   let dependentDialects = ["kapy::KapyDialect", "kapy::KgpuDialect"];
 
   let options = [
-    Option<"nvidiaCC", "nvidia-cc", "int", "80", "">,
-    Option<"numWarps", "num-warps", "int", "4", "">
+    Option<"nvidiaCC", "nvidia-cc", "int64_t", "80", "">,
+    Option<"numWarps", "num-warps", "int64_t", "4", "">
   ];
 }
 

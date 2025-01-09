@@ -43,13 +43,13 @@ def Kgpu_Dialect : Dialect {
   let useDefaultTypePrinterParser = 1;
 
   let extraClassDeclaration = [{
-    static int getNvidiaCC(ModuleOp module) {
+    static int64_t getNvidiaCC(ModuleOp module) {
       if (!module->hasAttr("kgpu.nvidia_cc"))
         return 80;
       return cast<IntegerAttr>(module->getAttr("kgpu.nvidia_cc")).getInt();
     }
 
-    static int getNumWarps(ModuleOp module) {
+    static int64_t getNumWarps(ModuleOp module) {
       if (!module->hasAttr("kgpu.num_warps"))
         return 4;
       return cast<IntegerAttr>(module->getAttr("kgpu.num_warps")).getInt();

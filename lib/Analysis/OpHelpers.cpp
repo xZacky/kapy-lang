@@ -36,7 +36,7 @@
 using namespace mlir;
 using namespace mlir::kapy;
 
-int ReduceOpHelper::getAxis() const {
+unsigned ReduceOpHelper::getAxis() const {
   return cast<ReduceOp>(operation).getAxis();
 }
 
@@ -54,20 +54,20 @@ bool ReduceOpHelper::isWarpSynchronous() const {
   return false;
 }
 
-SmallVector<int, 4> ReduceOpHelper::getScratchShape() const {
+SmallVector<int64_t, 4> ReduceOpHelper::getScratchShape() const {
   if (isWarpSynchronous())
     // Return empty scratch shape.
-    return SmallVector<int, 4>();
+    return SmallVector<int64_t, 4>();
 
   auto operandShape = getOperandType().getShape();
-  auto scratchShape = convert<int>(operandShape);
+  auto scratchShape = llvm::to_vector<4>(operandShape);
   // TODO: Compute inter-warp data size.
   return scratchShape;
 }
 
-int ReduceOpHelper::getScratchSizeInBytes() const {
+int64_t ReduceOpHelper::getScratchSizeInBytes() const {
   auto bitWidth = getIntOrFloatBitWidth(getOperandType());
-  return ceilDiv(bitWidth, 8) * product(getScratchShape());
+  return ceilDiv(bitWidth, 8U) * product(getScratchShape());
 }
 
 RankedTensorType ChangeOpHelper::getOperandType() const {
@@ -78,59 +78,18 @@ RankedTensorType ChangeOpHelper::getResultType() const {
   return cast<ChangeOp>(operation).getType();
 }
 
-int ScanOpHelper::getAxis() const { return cast<ScanOp>(operation).getAxis(); }
-
-bool ScanOpHelper::getReverse() const {
-  return cast<ScanOp>(operation).getReverse();
-}
-
-RankedTensorType ScanOpHelper::getOperandType() const {
-  return cast<ScanOp>(operation).getOperand().getType();
-}
-
-bool ScanOpHelper::isSupportedLayout() const {
-  auto operandLayout = getOperandType().getEncoding();
-  return isa<RegistersLayoutAttr, NvidiaMmaLayoutAttr>(operandLayout);
-}
-
-bool ScanOpHelper::isWarpSynchronous() const {
-  // TODO: Implement this.
-  return false;
-}
-
-SmallVector<int, 4> ScanOpHelper::getScratchShape() const {
+SmallVector<int64_t, 4> ChangeOpHelper::getScratchShape() const {
   if (isWarpSynchronous())
     // Return empty scratch shape.
-    return SmallVector<int, 4>();
+    return SmallVector<int64_t, 4>();
 
   auto operandShape = getOperandType().getShape();
-  auto scratchShape = convert<int>(operandShape);
+  auto scratchShape = llvm::to_vector<4>(operandShape);
   // TODO: Compute inter-warp data size.
   return scratchShape;
 }
 
-int ScanOpHelper::getScratchSizeInBytes() const {
+int64_t ChangeOpHelper::getScratchSizeInBytes() const {
   auto bitWidth = getIntOrFloatBitWidth(getOperandType());
-  return ceilDiv(bitWidth, 8) * product(getScratchShape());
-}
-
-bool ChangeOpHelper::isWarpSynchronous() const {
-  // TODO: Implement this.
-  return false;
-}
-
-SmallVector<int, 4> ChangeOpHelper::getScratchShape() const {
-  if (isWarpSynchronous())
-    // Return empty scratch shape.
-    return SmallVector<int, 4>();
-
-  auto operandShape = getOperandType().getShape();
-  auto scratchShape = convert<int>(operandShape);
-  // TODO: Compute inter-warp data size.
-  return scratchShape;
-}
-
-int ChangeOpHelper::getScratchSizeInBytes() const {
-  auto bitWidth = getIntOrFloatBitWidth(getOperandType());
-  return ceilDiv(bitWidth, 8) * product(getScratchShape());
+  return ceilDiv(bitWidth, 8U) * product(getScratchShape());
 }
