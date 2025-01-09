@@ -5,7 +5,7 @@
 #regis1 = #kgpu.regis<[4, 1], [1, 1], [1, 32], [1, 4], (0, 1)>
 #regis2 = #kgpu.regis<[4], [1], [32], [1], (0)>
 #regis3 = #kgpu.regis<[4], [1], [32], [4], (0)>
-#shmem = #kgpu.shmem<[128, 1], 32, 4, 4>
+#shmem = #kgpu.shmem<[128, 1], 32, 4>
 module {
   // CHECK-LABEL: canonicalize_change_op
   kapy.func @canonicalize_change_op(%arg0: tensor<32x128xf32, #regis>) -> tensor<32x128xf32, #regis> {

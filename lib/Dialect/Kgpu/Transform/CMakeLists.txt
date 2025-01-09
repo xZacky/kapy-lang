@@ -1,4 +1,5 @@
 add_mlir_dialect_library(KgpuTransform
+  CacheMatmulOperand.cpp
   OptimizeMatmul.cpp
   ReorderInstruction.cpp
 

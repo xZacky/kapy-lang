@@ -17,6 +17,7 @@ using llvm::ArrayRef;
 namespace kapy {
 
 class MatmulOp;
+class SharedMemLayoutAttr;
 class RegistersLayoutAttr;
 class NvidiaMmaLayoutAttr;
 class MmOperandLayoutAttr;
@@ -34,6 +35,11 @@ bool isNvidiaMmaToMmOperandShortcut(NvidiaMmaLayoutAttr nvmmaLayout,
                                     MmOperandLayoutAttr mmopdLayout);
 
 NvidiaMmaLayoutAttr getNvidiaMmaLayout(MatmulOp matmulOp, int64_t numWarps);
+
+SharedMemLayoutAttr getSharedMemLayout(MLIRContext *context,
+                                       MmOperandLayoutAttr mmopdLayout,
+                                       ArrayRef<int64_t> shape,
+                                       ArrayRef<unsigned> order);
 
 } // namespace kapy
 } // namespace mlir

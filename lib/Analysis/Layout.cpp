@@ -7,7 +7,9 @@
 #include "kapy/Analysis/Layout.h"
 #include "kapy/Analysis/Utils.h"
 #include "kapy/Dialect/Kapy/IR/Kapy.h"
+#include "kapy/Dialect/Kapy/IR/Utils.h"
 #include "kapy/Dialect/Kgpu/IR/Kgpu.h"
+#include "kapy/Dialect/Kgpu/IR/Utils.h"
 
 using namespace mlir;
 using namespace kapy;
@@ -109,4 +111,27 @@ NvidiaMmaLayoutAttr kapy::getNvidiaMmaLayout(MatmulOp matmulOp,
     shapeOfWarps[1] *= 2;
   }
   return NvidiaMmaLayoutAttr::get(context, shapeOfWarps, loopsPerWarp);
+}
+
+SharedMemLayoutAttr kapy::getSharedMemLayout(MLIRContext *context,
+                                             MmOperandLayoutAttr mmopdLayout,
+                                             ArrayRef<int64_t> shape,
+                                             ArrayRef<unsigned> order) {
+  auto rank = shape.size();
+  auto shmemShape = permute(shape, order);
+  auto strides = permute(computeStrides(shmemShape), inverse(order));
+  auto bitWidth = mmopdLayout.getBitWidth();
+  auto nvmmaLayout = dyn_cast<NvidiaMmaLayoutAttr>(mmopdLayout.getParent());
+  if (!nvmmaLayout)
+    return SharedMemLayoutAttr::get(context, strides, bitWidth, 1);
+  auto rowsPerMode = std::max(1024 / (shmemShape[rank - 1] * bitWidth), 1L);
+  if (mmopdLayout.getOperandIndex() == 0) {
+    bool kMajor = order[rank - 1] == rank - 1;
+    auto numModes = (kMajor ? 8 : 128 / bitWidth) / rowsPerMode;
+    return SharedMemLayoutAttr::get(context, strides, bitWidth, numModes);
+  } else {
+    bool nMajor = order[rank - 1] == rank - 1;
+    auto numModes = (nMajor ? 128 / bitWidth : 8) / rowsPerMode;
+    return SharedMemLayoutAttr::get(context, strides, bitWidth, numModes);
+  }
 }

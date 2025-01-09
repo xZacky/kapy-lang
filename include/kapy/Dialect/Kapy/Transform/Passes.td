@@ -45,7 +45,7 @@ def KapyReorderBroadcast : Pass<"kapy-reorder-broadcast", "ModuleOp"> {
   let dependentDialects = ["kapy::KapyDialect"];
 }
 
-def KapyUpdateMemRefType : Pass<"kapy-update-memreftype", "ModuleOp"> {
+def KapyUpdateMemRefType : Pass<"kapy-update-memref-type", "ModuleOp"> {
   let constructor = "kapy::createKapyUpdateMemRefTypePass()";
 
   let dependentDialects = ["kapy::KapyDialect"];

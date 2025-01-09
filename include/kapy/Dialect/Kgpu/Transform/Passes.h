@@ -38,6 +38,7 @@ namespace kapy {
 
 std::unique_ptr<Pass> createKgpuOptimizeMatmulPass();
 std::unique_ptr<Pass> createKgpuReorderInstructionPass();
+std::unique_ptr<Pass> createKgpuCacheMatmulOperandPass();
 
 } // namespace kapy
 

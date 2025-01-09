@@ -45,4 +45,10 @@ def KgpuReorderInstruction : Pass<"kgpu-reorder-instruction", "ModuleOp"> {
   let dependentDialects = ["kapy::KapyDialect", "kapy::KgpuDialect"];
 }
 
+def KgpuCacheMatmulOperand : Pass<"kgpu-cache-matmul-operand", "ModuleOp"> {
+  let constructor = "kapy::createKgpuCacheMatmulOperandPass()";
+
+  let dependentDialects = ["kapy::KapyDialect", "kapy::KgpuDialect"];
+}
+
 #endif // KAPY_DIALECT_KGPU_TRANSFORM_PASSES

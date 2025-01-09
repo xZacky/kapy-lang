@@ -384,8 +384,6 @@ LogicalResult LocalLoadOp::verify() {
   if (!hasLayout<SharedMemLayoutAttr>(sourceType))
     return emitOpError("source must have shared memory layout");
   auto resultType = getType();
-  if (!hasLayout<RegistersLayoutAttr>(resultType))
-    return emitOpError("result must have registers layout");
   if (sourceType.getShape() != resultType.getShape())
     return emitOpError("source and result must have same shape");
   if (sourceType.getElementType() != resultType.getElementType())

@@ -18,13 +18,12 @@ def Kgpu_SharedMemLayoutAttr : Kgpu_AttrDef<"SharedMemLayout", "shmem"> {
   let mnemonic = "shmem";
   let parameters = (ins
     ArrayRefParameter<"int64_t">:$strides,
-    "unsigned":$bit_width,
-    "unsigned":$num_modes,
-    "unsigned":$mode_step
+    "unsigned":$bitWidth,
+    "unsigned":$numModes
   );
 
   let assemblyFormat = [{
-    `<` `[` $strides `]` `,` $bit_width `,` $num_modes `,` $mode_step `>`
+    `<` `[` $strides `]` `,` $bitWidth `,` $numModes `>`
   }];
 }
 
@@ -89,11 +88,11 @@ def Kgpu_RegistersLayoutAttr : Kgpu_AttrDef<"RegistersLayout", "regis"> {
 
   let mnemonic = "regis";
   let parameters = (ins
-    ArrayRefParameter<"int64_t">:$shape_of_warps_ref,
-    ArrayRefParameter<"int64_t">:$loops_per_warp_ref,
-    ArrayRefParameter<"int64_t">:$shape_of_lanes_ref,
-    ArrayRefParameter<"int64_t">:$loops_per_lane_ref,
-    ArrayRefParameter<"unsigned">:$order_ref
+    ArrayRefParameter<"int64_t">:$shapeOfWarpsRef,
+    ArrayRefParameter<"int64_t">:$loopsPerWarpRef,
+    ArrayRefParameter<"int64_t">:$shapeOfLanesRef,
+    ArrayRefParameter<"int64_t">:$loopsPerLaneRef,
+    ArrayRefParameter<"unsigned">:$orderRef
   );
 
   let builders = [
@@ -108,9 +107,9 @@ def Kgpu_RegistersLayoutAttr : Kgpu_AttrDef<"RegistersLayout", "regis"> {
   ];
 
   let assemblyFormat = [{
-    `<` `[` $shape_of_warps_ref `]` `,` `[` $loops_per_warp_ref `]` `,`
-        `[` $shape_of_lanes_ref `]` `,` `[` $loops_per_lane_ref `]` `,`
-        `(` $order_ref `)` `>`
+    `<` `[` $shapeOfWarpsRef `]` `,` `[` $loopsPerWarpRef `]` `,`
+        `[` $shapeOfLanesRef `]` `,` `[` $loopsPerLaneRef `]` `,`
+        `(` $orderRef `)` `>`
   }];
 
   let extraClassDeclaration = [{
@@ -175,12 +174,12 @@ def Kgpu_SliceAxisLayoutAttr : Kgpu_AttrDef<"SliceAxisLayout", "slice"> {
 def Kgpu_NvidiaMmaLayoutAttr : Kgpu_AttrDef<"NvidiaMmaLayout", "nvmma"> {
   let mnemonic = "nvmma";
   let parameters = (ins
-    ArrayRefParameter<"int64_t">:$shape_of_warps_ref,
-    ArrayRefParameter<"int64_t">:$loops_per_warp_ref
+    ArrayRefParameter<"int64_t">:$shapeOfWarpsRef,
+    ArrayRefParameter<"int64_t">:$loopsPerWarpRef
   );
 
   let assemblyFormat = [{
-    `<` `[` $shape_of_warps_ref `]` `,` `[` $loops_per_warp_ref `]` `>`
+    `<` `[` $shapeOfWarpsRef `]` `,` `[` $loopsPerWarpRef `]` `>`
   }];
 
   let extraClassDeclaration = [{
@@ -207,7 +206,7 @@ def Kgpu_NvidiaMmaLayoutAttr : Kgpu_AttrDef<"NvidiaMmaLayout", "nvmma"> {
 def Kgpu_MmOperandLayoutAttr : Kgpu_AttrDef<"MmOperandLayout", "mmopd"> {
   let mnemonic = "mmopd";
   let parameters = (ins
-    "Attribute":$parent, "unsigned":$operand_index, "unsigned":$bit_width
+    "Attribute":$parent, "unsigned":$operandIndex, "unsigned":$bitWidth
   );
 
   let builders = [
@@ -217,7 +216,7 @@ def Kgpu_MmOperandLayoutAttr : Kgpu_AttrDef<"MmOperandLayout", "mmopd"> {
     >
   ];
 
-  let assemblyFormat = "`<` $parent `,` $operand_index `,` $bit_width `>`";
+  let assemblyFormat = "`<` $parent `,` $operandIndex `,` $bitWidth `>`";
 
   let extraClassDeclaration = [{
     unsigned getRank() const;
