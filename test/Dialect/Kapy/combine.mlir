@@ -38,15 +38,15 @@ module {
     %2 = arith.addf %0, %cst_3 : tensor<128x128xf32>
     kapy.return %1, %2 : tensor<128x128xf32>, tensor<128x128xf32>
   }
-  // CHECK-LABEL: combine_two_mov_memref_ops
-  kapy.func @combine_two_mov_memref_ops(%arg0: !kapy.memref<128xf32, #glmem>) -> !kapy.memref<128xf32, #glmem> {
+  // CHECK-LABEL: combine_two_move_memref_ops
+  kapy.func @combine_two_move_memref_ops(%arg0: !kapy.memref<128xf32, #glmem>) -> !kapy.memref<128xf32, #glmem> {
     // CHECK: arith.constant 80
     %c16_i32 = arith.constant 16 : i32
     %c64_i32 = arith.constant 64 : i32
-    // CHECK: kapy.mov_memref
-    %0 = kapy.mov_memref %arg0, %c16_i32 : !kapy.memref<128xf32, #glmem>
-    // CHECK-NOT: kapy.mov_memref
-    %1 = kapy.mov_memref %0, %c64_i32 : !kapy.memref<128xf32, #glmem>
+    // CHECK: kapy.move_memref
+    %0 = kapy.move_memref %arg0, %c16_i32 : !kapy.memref<128xf32, #glmem>
+    // CHECK-NOT: kapy.move_memref
+    %1 = kapy.move_memref %0, %c64_i32 : !kapy.memref<128xf32, #glmem>
     kapy.return %1 : !kapy.memref<128xf32, #glmem>
   }
   // CHECK-LABEL: combine_select_op_and_if_op

@@ -54,8 +54,8 @@ static void propagateNewType(Value value, Type newType, DenseSet<Value> &seen) {
       propagateNewType(result, newType, seen);
       continue;
     }
-    if (auto movOp = dyn_cast<MovMemRefOp>(useOp)) {
-      propagateNewType(movOp.getResult(), newType, seen);
+    if (auto moveOp = dyn_cast<MoveMemRefOp>(useOp)) {
+      propagateNewType(moveOp.getResult(), newType, seen);
       continue;
     }
   }
@@ -72,15 +72,15 @@ public:
   virtual void runOnOperation() override {
     auto module = getOperation();
 
-    SmallVector<GetMemRefOp> getOps;
-    module.walk([&](GetMemRefOp getOp) { getOps.push_back(getOp); });
+    SmallVector<MakeMemRefOp> makeOps;
+    module.walk([&](MakeMemRefOp getOp) { makeOps.push_back(getOp); });
 
-    for (auto getOp : getOps) {
-      auto memrefType = getOp.getType();
+    for (auto makeOp : makeOps) {
+      auto memrefType = makeOp.getType();
       auto glmemLayout = cast<GlobalMemLayoutAttr>(memrefType.getEncoding());
       auto strides = llvm::to_vector<4>(glmemLayout.getStrides());
       bool modified = false;
-      for (auto it : llvm::enumerate(getOp.getStrides())) {
+      for (auto it : llvm::enumerate(makeOp.getStrides())) {
         if (!ShapedType::isDynamic(strides[it.index()]))
           continue;
         auto constantOp = it.value().getDefiningOp<arith::ConstantOp>();
@@ -93,10 +93,10 @@ public:
         modified = true;
       }
       if (modified) {
-        glmemLayout = GlobalMemLayoutAttr::get(getOp.getContext(), strides);
+        glmemLayout = GlobalMemLayoutAttr::get(makeOp.getContext(), strides);
         memrefType = cloneWith(memrefType, glmemLayout);
         DenseSet<Value> seen;
-        propagateNewType(getOp.getResult(), memrefType, seen);
+        propagateNewType(makeOp.getResult(), memrefType, seen);
       }
     }
   }

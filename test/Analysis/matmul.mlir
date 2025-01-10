@@ -1,15 +1,8 @@
-// RUN: kapy-opt %s -convert-kapy-to-kgpu | FileCheck %s
+// RUN: kapy-opt %s -kapy-test-integer | FileCheck %s
 
 #glmem = #kapy.glmem<[?, ?]>
-// CHECK: #[[REGIS0:.*]] = #kgpu.regis<[2, 2], [1, 1], [1, 32], [1, 1], (0, 1)>
-// CHECK: #[[REGIS1:.*]] = #kgpu.regis<[4, 1], [1, 1], [2, 16], [4, 4], (0, 1)>
-// CHECK: #[[MMOPD0:.*]] = #kgpu.mmopd<#regis1, 0, 16>
-// CHECK: #[[MMOPD1:.*]] = #kgpu.mmopd<#regis1, 1, 16>
-// CHECK: module attributes
-// CHECK-SAME: kgpu.num_warps = 4
-// CHECK-SAME: kgpu.nvidia_cc = 80
 module {
-  kapy.func @matmul_kernel(%arg0: !kapy.ptr<1>, %arg1: !kapy.ptr<1>, %arg2: !kapy.ptr<1>) {
+  kapy.func @matmul_kernel(%arg0: !kapy.ptr<1> {kapy.divisibility = 128 : i64}, %arg1: !kapy.ptr<1> {kapy.divisibility = 128 : i64}, %arg2: !kapy.ptr<1> {kapy.divisibility = 128 : i64}) {
     %c0_i32 = arith.constant 0 : i32
     %c1_i32 = arith.constant 1 : i32
     %c2_i32 = arith.constant 2 : i32
@@ -28,10 +21,6 @@ module {
     %8:3 = scf.for %arg3 = %c0_i32 to %c2_i32 step %c1_i32 iter_args(%arg4 = %cst, %arg5 = %4, %arg6 = %7) -> (tensor<64x64xf32>, !kapy.memref<64x64xf16, #glmem>, !kapy.memref<64x64xf16, #glmem>) : i32 {
       %15 = kapy.load %arg5 : !kapy.memref<64x64xf16, #glmem> -> tensor<64x64xf16>
       %16 = kapy.load %arg6 : !kapy.memref<64x64xf16, #glmem> -> tensor<64x64xf16>
-      // CHECK: kapy.matmul
-      // CHECK-SAME: #[[MMOPD0]]
-      // CHECK-SAME: #[[MMOPD1]]
-      // CHECK-SAME: #[[REGIS1]]
       %17 = kapy.matmul %15, %16, %arg4 : tensor<64x64xf16>, tensor<64x64xf16> -> tensor<64x64xf32>
       %18 = kapy.move_memref %arg5, %c64_i32 : !kapy.memref<64x64xf16, #glmem>
       %19 = kapy.move_memref %arg6, %c8192_i32 : !kapy.memref<64x64xf16, #glmem>

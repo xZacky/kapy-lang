@@ -241,7 +241,7 @@ public:
     patterns.add<CombineMatmulOpAsAddIOpRhs>(context);
     patterns.add<CombineMatmulOpAsAddFOpLhs>(context);
     patterns.add<CombineMatmulOpAsAddFOpRhs>(context);
-    patterns.add<CombineTwoMovMemRefOps>(context);
+    patterns.add<CombineTwoMoveMemRefOps>(context);
     patterns.add<CombineOpsEqualToMatmulOp>(context);
 
     if (failed(applyPatternsAndFoldGreedily(module, std::move(patterns))))

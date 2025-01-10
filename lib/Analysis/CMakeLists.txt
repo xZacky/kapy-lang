@@ -1,5 +1,6 @@
 add_mlir_library(KapyAnalysis
   Allocation.cpp
+  Integer.cpp
   Layout.cpp
   MemBar.cpp
   OpHelpers.cpp

@@ -132,7 +132,7 @@ public:
     if (!supportNvidiaMma(op))
       return failure();
 
-    auto numWarps = KgpuDialect::getNumWarps(op->getParentOfType<ModuleOp>());
+    auto numWarps = getNumWarps(op->getParentOfType<ModuleOp>());
     auto accumLayout = getNvidiaMmaLayout(op, numWarps);
     auto accumType = cloneWith(resultType, accumLayout);
     auto accum = op.getAccum();
@@ -263,7 +263,7 @@ public:
     if (failed(applyPatternsAndFoldGreedily(module, std::move(patterns))))
       signalPassFailure();
 
-    decomposeMixedModeMatmulOp(module, KgpuDialect::getNvidiaCC(module));
+    decomposeMixedModeMatmulOp(module, getNvidiaCC(module));
   }
 };
 

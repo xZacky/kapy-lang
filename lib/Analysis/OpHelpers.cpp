@@ -67,7 +67,7 @@ SmallVector<int64_t, 4> ReduceOpHelper::getScratchShape() const {
 
 int64_t ReduceOpHelper::getScratchSizeInBytes() const {
   auto bitWidth = getIntOrFloatBitWidth(getOperandType());
-  return ceilDiv(bitWidth, 8U) * product(getScratchShape());
+  return ceilDiv<unsigned>(bitWidth, 8) * product(getScratchShape());
 }
 
 RankedTensorType ChangeOpHelper::getOperandType() const {
@@ -91,5 +91,5 @@ SmallVector<int64_t, 4> ChangeOpHelper::getScratchShape() const {
 
 int64_t ChangeOpHelper::getScratchSizeInBytes() const {
   auto bitWidth = getIntOrFloatBitWidth(getOperandType());
-  return ceilDiv(bitWidth, 8U) * product(getScratchShape());
+  return ceilDiv<unsigned>(bitWidth, 8) * product(getScratchShape());
 }

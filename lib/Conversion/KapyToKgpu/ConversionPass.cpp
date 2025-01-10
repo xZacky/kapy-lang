@@ -531,9 +531,9 @@ public:
     populateCFOpsConversionPatterns(typeConverter, patterns);
 
     auto i64Type = IntegerType::get(context, 64);
-    module->setAttr("kgpu.nvidia_cc",
+    module->setAttr(nvidiaCCAttrName,
                     IntegerAttr::get(i64Type, APInt(64, nvidiaCC.getValue())));
-    module->setAttr("kgpu.num_warps",
+    module->setAttr(numWarpsAttrName,
                     IntegerAttr::get(i64Type, APInt(64, numWarps.getValue())));
 
     if (failed(applyPartialConversion(module, convTarget, std::move(patterns))))

@@ -391,6 +391,18 @@ LogicalResult LocalLoadOp::verify() {
   return success();
 }
 
+int64_t kapy::getNvidiaCC(ModuleOp module) {
+  if (!module->hasAttr(nvidiaCCAttrName))
+    return 80;
+  return cast<IntegerAttr>(module->getAttr(nvidiaCCAttrName)).getInt();
+}
+
+int64_t kapy::getNumWarps(ModuleOp module) {
+  if (!module->hasAttr(numWarpsAttrName))
+    return 4;
+  return cast<IntegerAttr>(module->getAttr(numWarpsAttrName)).getInt();
+}
+
 bool kapy::supportNvidiaMma(MatmulOp op) {
   auto lhsElementType = op.getLhs().getType().getElementType();
   auto rhsElementType = op.getRhs().getType().getElementType();
@@ -452,14 +464,14 @@ static std::string getLineSuffixString(int64_t index, int64_t numElems,
 }
 
 static std::string getLayoutStringImpl(RegistersLayoutAttr regisLayout,
-                                       ArrayRef<int64_t> shape,
-                                       int64_t numWarps) {
+                                       ArrayRef<int64_t> shape) {
   auto rank = shape.size();
   auto numElems = product(shape);
-  auto tensorMap = regisLayout.getTensorMap(shape);
-  std::string layoutStr = "";
-  auto maxIdStrWidth = getIdStrWidth(numLanes * numWarps - 1);
   auto strides = computeStrides(shape);
+  auto tensorMap = regisLayout.getTensorMap(shape);
+  auto numWarps = product(regisLayout.getShapeOfWarpsRef());
+  auto maxIdStrWidth = getIdStrWidth(numLanes * numWarps - 1);
+  std::string layoutStr = "";
   for (int64_t index = 0; index < numElems; ++index) {
     auto indices = delinearize(index, shape);
     auto threadId = tensorMap.compose(indices)[0];
@@ -478,12 +490,12 @@ static std::string getLayoutStringImpl(RegistersLayoutAttr regisLayout,
   return layoutStr;
 }
 
-std::string kapy::getLayoutString(RankedTensorType type, int64_t numWarps) {
+std::string kapy::getLayoutString(RankedTensorType type) {
   if (auto regisLayout = dyn_cast<RegistersLayoutAttr>(type.getEncoding()))
-    return getLayoutStringImpl(regisLayout, type.getShape(), numWarps);
+    return getLayoutStringImpl(regisLayout, type.getShape());
   if (auto nvmmaLayout = dyn_cast<NvidiaMmaLayoutAttr>(type.getEncoding())) {
     auto regisLayout = nvmmaLayout.toRegistersLayout();
-    return getLayoutStringImpl(regisLayout, type.getShape(), numWarps);
+    return getLayoutStringImpl(regisLayout, type.getShape());
   }
   llvm_unreachable("unsupported layout");
 }

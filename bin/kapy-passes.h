@@ -7,6 +7,14 @@
 
 #include "mlir/InitAllPasses.h"
 
+namespace mlir {
+namespace test {
+
+void registerKapyTestIntegerPass();
+
+} // namespace test
+} // namespace mlir
+
 using namespace mlir;
 
 inline void registerAllKapyPasses() {
@@ -14,6 +22,8 @@ inline void registerAllKapyPasses() {
   registerKapyTransformPasses();
   registerKapyToKgpuPasses();
   registerKgpuTransformPasses();
+
+  test::registerKapyTestIntegerPass();
 }
 
 #endif // KAPY_PASSES_H

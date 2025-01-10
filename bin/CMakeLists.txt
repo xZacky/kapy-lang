@@ -8,6 +8,8 @@ target_link_libraries(kapy-opt
   PRIVATE
   ${dialect_libs}
   ${conversion_libs}
+  KapyAnalysis
+  KapyTestAnalysis
   MLIROptLib
   MLIRPass
   MLIRTransforms

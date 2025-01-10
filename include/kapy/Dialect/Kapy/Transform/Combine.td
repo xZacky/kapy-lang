@@ -88,12 +88,12 @@ def CombineMatmulOpAsAddFOpRhs : Pat<
   ]
 >;
 
-def CombineTwoMovMemRefOps : Pat<
-  (Kapy_MovMemRefOp:$result1
-    (Kapy_MovMemRefOp:$result0 $source, $offset0),
+def CombineTwoMoveMemRefOps : Pat<
+  (Kapy_MoveMemRefOp:$result1
+    (Kapy_MoveMemRefOp:$result0 $source, $offset0),
     $offset1
   ),
-  (Kapy_MovMemRefOp
+  (Kapy_MoveMemRefOp
     $source,
     (Arith_AddIOp $offset0, $offset1, Arith_IOFnone, (location $result0)),
     (location $result1)

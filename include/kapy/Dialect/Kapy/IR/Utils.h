@@ -36,13 +36,21 @@ template <typename ArrayT> auto product(const ArrayT &array) {
 
 template <typename I> bool isIota(ArrayRef<I> order) {
   static_assert(std::is_integral_v<I>);
-  for (int i = 0; i < order.size(); ++i)
+  for (unsigned i = 0; i < order.size(); ++i)
     if (order[i] != i)
       return false;
   return true;
 }
 template <typename OrderT> bool isIota(const OrderT &order) {
   return isIota(ArrayRef(order));
+}
+
+template <typename I> SmallVector<I, 4> makeIota(unsigned rank) {
+  static_assert(std::is_integral_v<I>);
+  SmallVector<I, 4> result(rank);
+  for (unsigned i = 0; i < rank; ++i)
+    result[i] = i;
+  return result;
 }
 
 template <typename T, typename I>
@@ -61,54 +69,14 @@ auto permute(const ArrayT &array, const OrderT &order) {
 
 template <typename I> SmallVector<I, 4> inverse(ArrayRef<I> order) {
   static_assert(std::is_integral_v<I>);
-  SmallVector<I, 4> result(order.size());
-  for (I i = 0; i < order.size(); ++i)
+  auto rank = order.size();
+  SmallVector<I, 4> result(rank);
+  for (I i = 0; i < rank; ++i)
     result[order[i]] = i;
   return result;
 }
 template <typename ArrayT> auto inverse(const ArrayT &order) {
   return inverse(ArrayRef(order));
-}
-
-template <typename I, typename T>
-SmallVector<I, 4> getAscendingOrder(ArrayRef<T> array) {
-  static_assert(std::is_integral_v<I> && std::is_integral_v<T>);
-  SmallVector<I, 4> order(array.size());
-  for (I i = 0; i < order.size(); ++i)
-    order[i] = i;
-  std::stable_sort(order.begin(), order.end(),
-                   [&](I a, I b) { return array[a] < array[b]; });
-  return order;
-}
-template <typename I, typename ArrayT>
-auto getAscendingOrder(const ArrayT &array) {
-  return getAscendingOrder<I>(ArrayRef(array));
-}
-
-template <typename I, typename T>
-SmallVector<I, 4> getDescendingOrder(ArrayRef<T> array) {
-  static_assert(std::is_integral_v<I> && std::is_integral_v<T>);
-  SmallVector<I, 4> order(array.size());
-  for (I i = 0; i < order.size(); ++i)
-    order[i] = i;
-  std::stable_sort(order.begin(), order.end(),
-                   [&](I a, I b) { return array[a] > array[b]; });
-  return order;
-}
-template <typename I, typename ArrayT>
-auto getDescendingOrder(const ArrayT &array) {
-  return getDescendingOrder<I>(ArrayRef(array));
-}
-
-template <typename T, typename I> SmallVector<T, 4> convert(ArrayRef<I> array) {
-  static_assert(std::is_integral_v<I> && std::is_convertible_v<I, T>);
-  SmallVector<T, 4> result;
-  for (int i = 0; i < array.size(); ++i)
-    result.push_back(static_cast<T>(array[i]));
-  return result;
-}
-template <typename T, typename ArrayT> auto convert(const ArrayT &array) {
-  return convert<T>(ArrayRef(array));
 }
 
 } // namespace kapy

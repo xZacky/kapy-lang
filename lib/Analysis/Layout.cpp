@@ -28,9 +28,11 @@ RegistersLayoutAttr kapy::getRegistersLayout(MLIRContext *context,
   auto restWarps = numWarps;
   for (unsigned i = rank - 1; i >= 1; --i) {
     auto numLoopsI = loopsPerLane[i] * loopsPerWarp[i];
-    auto numThreadsI = std::clamp(restThreads, 1L, shape[i] / numLoopsI);
-    shapeOfLanes[i] = std::clamp(numThreadsI, 1L, restLanes);
-    shapeOfWarps[i] = std::clamp(numThreadsI / shapeOfLanes[i], 1L, restWarps);
+    auto numThreadsI =
+        std::clamp<int64_t>(restThreads, 1, shape[i] / numLoopsI);
+    shapeOfLanes[i] = std::clamp<int64_t>(numThreadsI, 1, restLanes);
+    shapeOfWarps[i] =
+        std::clamp<int64_t>(numThreadsI / shapeOfLanes[i], 1, restWarps);
     restThreads /= (shapeOfLanes[i] * shapeOfWarps[i]);
     restLanes /= shapeOfLanes[i];
     restWarps /= shapeOfWarps[i];
@@ -124,7 +126,8 @@ SharedMemLayoutAttr kapy::getSharedMemLayout(MLIRContext *context,
   auto nvmmaLayout = dyn_cast<NvidiaMmaLayoutAttr>(mmopdLayout.getParent());
   if (!nvmmaLayout)
     return SharedMemLayoutAttr::get(context, strides, bitWidth, 1);
-  auto rowsPerMode = std::max(1024 / (shmemShape[rank - 1] * bitWidth), 1L);
+  auto rowsPerMode =
+      std::max<int64_t>(1024 / (shmemShape[rank - 1] * bitWidth), 1);
   if (mmopdLayout.getOperandIndex() == 0) {
     bool kMajor = order[rank - 1] == rank - 1;
     auto numModes = (kMajor ? 8 : 128 / bitWidth) / rowsPerMode;

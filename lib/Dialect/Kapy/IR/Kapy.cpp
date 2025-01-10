@@ -246,7 +246,7 @@ LogicalResult ArangeOp::verify() {
   return success();
 }
 
-LogicalResult GetMemRefOp::verify() {
+LogicalResult MakeMemRefOp::verify() {
   auto type = getType();
   if (type.getRank() != getParentShape().size())
     return emitOpError(
@@ -262,8 +262,8 @@ LogicalResult GetMemRefOp::verify() {
   return success();
 }
 
-LogicalResult MovMemRefOp::canonicalize(MovMemRefOp op,
-                                        PatternRewriter &rewriter) {
+LogicalResult MoveMemRefOp::canonicalize(MoveMemRefOp op,
+                                         PatternRewriter &rewriter) {
   auto constantOp = op.getOffset().getDefiningOp<arith::ConstantOp>();
   if (!constantOp)
     return failure();
@@ -277,7 +277,7 @@ LogicalResult MovMemRefOp::canonicalize(MovMemRefOp op,
   return failure();
 }
 
-LogicalResult MovMemRefOp::verify() {
+LogicalResult MoveMemRefOp::verify() {
   if (!hasLayout<GlobalMemLayoutAttr>(getType()))
     return emitOpError("source must have global memory layout");
   return success();

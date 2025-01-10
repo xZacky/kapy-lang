@@ -1,4 +1,4 @@
-//===- Kgpu.h ---------------------------------------------------*- C++ -*-===//
+//===- TestInteger.cpp ------------------------------------------*- C++ -*-===//
 //
 // Copyright 2018-2020 Philippe Tillet
 // Copyright 2020-2022 OpenAI
@@ -28,43 +28,58 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef KAPY_DIALECT_KGPU_IR_KGPU_H
-#define KAPY_DIALECT_KGPU_IR_KGPU_H
-
+#include "kapy/Analysis/Integer.h"
 #include "kapy/Dialect/Kapy/IR/Kapy.h"
 
-#include "kapy/Dialect/Kgpu/IR/Dialect.h.inc"
+#include "mlir/Pass/Pass.h"
 
-#define GET_ATTRDEF_CLASSES
-#include "kapy/Dialect/Kgpu/IR/Attrs.h.inc"
+using namespace mlir;
+using namespace mlir::kapy;
 
-#define GET_TYPEDEF_CLASSES
-#include "kapy/Dialect/Kgpu/IR/Types.h.inc"
+namespace {
 
-#define GET_OP_CLASSES
-#include "kapy/Dialect/Kgpu/IR/Ops.h.inc"
-
-namespace mlir {
-namespace kapy {
-
-class SharedMemory : public SideEffects::Resource::Base<SharedMemory> {
+class KapyTestIntegerPass
+    : public PassWrapper<KapyTestIntegerPass, OperationPass<ModuleOp>> {
 public:
-  virtual StringRef getName() override { return "<SharedMemory>"; }
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(KapyTestIntegerPass);
+
+  StringRef getArgument() const override { return "kapy-test-integer"; }
+
+  virtual void runOnOperation() override {
+    auto module = getOperation();
+    ModuleIntegerInfoAnalysis analysis(module);
+    auto isIntOrMemRef = [](Type type) {
+      return type.isIntOrIndex() || isa<KapyMemRefType>(type);
+    };
+    module.walk([&](FuncOp funcOp) {
+      auto &os = llvm::outs();
+      auto funcName = SymbolTable::getSymbolName(funcOp).getValue();
+      os << "@" << funcName << "\n";
+      funcOp.walk([&](Operation *op) {
+        if (op->getNumResults() < 1)
+          return;
+        for (auto result : op->getResults()) {
+          if (!isIntOrMemRef(result.getType()))
+            return;
+          auto *info = analysis.getIntegerInfo(result);
+          if (!info || info->isEntryState())
+            return;
+          result.print(os);
+          os << " // ";
+          info->print(os);
+          os << "\n";
+        }
+      });
+    });
+  }
 };
 
-constexpr char nvidiaCCAttrName[] = "kgpu.nvidia_cc";
-constexpr char numWarpsAttrName[] = "kgpu.num_warps";
-constexpr int64_t numLanes = 32;
+} // namespace
 
-int64_t getNvidiaCC(ModuleOp module);
-int64_t getNumWarps(ModuleOp module);
+namespace mlir {
+namespace test {
 
-bool supportNvidiaMma(MatmulOp op);
-bool supportNvidiaMma(Type elementType);
+void registerKapyTestIntegerPass() { PassRegistration<KapyTestIntegerPass>(); }
 
-std::string getLayoutString(RankedTensorType type);
-
-} // namespace kapy
+} // namespace test
 } // namespace mlir
-
-#endif // KAPY_DIALECT_KGPU_IR_KGPU_H

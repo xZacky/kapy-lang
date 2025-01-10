@@ -124,7 +124,8 @@ def Kapy_ArangeOp : Kapy_Op<"arange", [Pure]> {
   let hasVerifier = 1;
 }
 
-def Kapy_GetMemRefOp : Kapy_Op<"get_memref", [Pure, SameVariadicOperandSize]> {
+def Kapy_MakeMemRefOp
+    : Kapy_Op<"make_memref", [Pure, SameVariadicOperandSize]> {
   let description = [{
     Returns a global memref with the given `$pointer`, `$parent_shape` and
     `$strides`.
@@ -143,8 +144,8 @@ def Kapy_GetMemRefOp : Kapy_Op<"get_memref", [Pure, SameVariadicOperandSize]> {
   let hasVerifier = 1;
 }
 
-def Kapy_MovMemRefOp : Kapy_Op<
-  "mov_memref",
+def Kapy_MoveMemRefOp : Kapy_Op<
+  "move_memref",
   [
     Pure,
     TypesMatchWith<"from source type infer result type",

@@ -48,7 +48,8 @@ void AllocationAnalysis::addExplicit(Operation *op) {
   if (auto localAllocOp = dyn_cast<LocalAllocOp>(op)) {
     auto memrefType = localAllocOp.getType();
     auto numElems = product(memrefType.getShape());
-    auto size = numElems * ceilDiv(getIntOrFloatBitWidth(memrefType), 8U);
+    auto bitWidth = getIntOrFloatBitWidth(memrefType);
+    auto size = numElems * ceilDiv<unsigned>(bitWidth, 8);
     Value result = localAllocOp.getResult();
     allocation->addBuffer<Buffer::BufferKind::Explicit>(result, size, 128);
   }
