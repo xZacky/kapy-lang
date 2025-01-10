@@ -33,20 +33,26 @@
 
 include "mlir/Pass/PassBase.td"
 
+def KgpuCoalesce : Pass<"kgpu-coalesce", "ModuleOp"> {
+  let constructor = "kapy::createKgpuCoalescePass()";
+
+  let dependentDialects = ["kapy::KapyDialect", "kapy::KgpuDialect"];
+}
+
 def KgpuOptimizeMatmul : Pass<"kgpu-optimize-matmul", "ModuleOp"> {
   let constructor = "kapy::createKgpuOptimizeMatmulPass()";
 
   let dependentDialects = ["kapy::KapyDialect", "kapy::KgpuDialect"];
 }
 
-def KgpuReorderInstruction : Pass<"kgpu-reorder-instruction", "ModuleOp"> {
-  let constructor = "kapy::createKgpuReorderInstructionPass()";
+def KgpuCacheMatmulOperand : Pass<"kgpu-cache-matmul-operand", "ModuleOp"> {
+  let constructor = "kapy::createKgpuCacheMatmulOperandPass()";
 
   let dependentDialects = ["kapy::KapyDialect", "kapy::KgpuDialect"];
 }
 
-def KgpuCacheMatmulOperand : Pass<"kgpu-cache-matmul-operand", "ModuleOp"> {
-  let constructor = "kapy::createKgpuCacheMatmulOperandPass()";
+def KgpuReorderInstruction : Pass<"kgpu-reorder-instruction", "ModuleOp"> {
+  let constructor = "kapy::createKgpuReorderInstructionPass()";
 
   let dependentDialects = ["kapy::KapyDialect", "kapy::KgpuDialect"];
 }

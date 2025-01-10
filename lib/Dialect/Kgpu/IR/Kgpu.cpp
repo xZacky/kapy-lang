@@ -147,10 +147,7 @@ RegistersLayoutAttr RegistersLayoutAttr::get(MLIRContext *context,
                                              ArrayRef<int64_t> loopsPerWarp,
                                              ArrayRef<int64_t> shapeOfLanes,
                                              ArrayRef<int64_t> loopsPerLane) {
-  auto rank = shapeOfLanes.size();
-  SmallVector<unsigned, 4> order(rank);
-  for (unsigned i = 0; i < rank; ++i)
-    order[i] = i;
+  auto order = makeIota<unsigned>(shapeOfWarps.size());
   return RegistersLayoutAttr::get(context, shapeOfWarps, loopsPerWarp,
                                   shapeOfLanes, loopsPerLane, order);
 }
@@ -235,11 +232,7 @@ SliceAxisLayoutAttr::unsqueeze(ArrayRef<int64_t> shape) const {
 }
 
 SmallVector<unsigned, 4> NvidiaMmaLayoutAttr::getOrder() const {
-  auto rank = getRank();
-  SmallVector<unsigned, 4> order(rank);
-  for (unsigned i = 0; i < rank; ++i)
-    order[i] = i;
-  return order;
+  return makeIota<unsigned>(getRank());
 }
 
 SmallVector<int64_t, 4> NvidiaMmaLayoutAttr::getShapeOfLanes() const {
@@ -260,7 +253,7 @@ SmallVector<int64_t, 4> NvidiaMmaLayoutAttr::getLoopsPerLane() const {
 RegistersLayoutAttr NvidiaMmaLayoutAttr::toRegistersLayout() const {
   return RegistersLayoutAttr::get(getContext(), getShapeOfWarpsRef(),
                                   getLoopsPerWarpRef(), getShapeOfLanes(),
-                                  getLoopsPerLane(), getOrder());
+                                  getLoopsPerLane());
 }
 
 unsigned MmOperandLayoutAttr::getRank() const {

@@ -23,7 +23,11 @@ class NvidiaMmaLayoutAttr;
 class MmOperandLayoutAttr;
 
 RegistersLayoutAttr getRegistersLayout(MLIRContext *context,
-                                       ArrayRef<int64_t> loopsPerWarp,
+                                       ArrayRef<int64_t> loopsPerLane,
+                                       ArrayRef<int64_t> shape,
+                                       ArrayRef<unsigned> order,
+                                       int64_t numWarps);
+RegistersLayoutAttr getRegistersLayout(MLIRContext *context,
                                        ArrayRef<int64_t> loopsPerLane,
                                        ArrayRef<int64_t> shape,
                                        int64_t numWarps);

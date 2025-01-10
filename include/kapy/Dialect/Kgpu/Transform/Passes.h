@@ -36,9 +36,10 @@
 namespace mlir {
 namespace kapy {
 
+std::unique_ptr<Pass> createKgpuCoalescePass();
 std::unique_ptr<Pass> createKgpuOptimizeMatmulPass();
-std::unique_ptr<Pass> createKgpuReorderInstructionPass();
 std::unique_ptr<Pass> createKgpuCacheMatmulOperandPass();
+std::unique_ptr<Pass> createKgpuReorderInstructionPass();
 
 } // namespace kapy
 

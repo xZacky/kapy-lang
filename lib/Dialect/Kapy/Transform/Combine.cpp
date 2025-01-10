@@ -38,7 +38,6 @@
 
 using namespace mlir;
 using namespace mlir::kapy;
-using llvm::MapVector;
 
 static bool isZero(Value value) {
   if (matchPattern(value, m_Zero()) || matchPattern(value, m_AnyZeroFloat()))
@@ -94,7 +93,7 @@ static void combineSelectOpAndIfOp(ModuleOp module) {
   };
 
   // Go over the SelectOps, look if there is an IfOp with the same condition.
-  MapVector<scf::IfOp, SmallVector<arith::SelectOp>> ifToSelectOps;
+  llvm::MapVector<scf::IfOp, SmallVector<arith::SelectOp>> ifToSelectOps;
   module.walk([&](arith::SelectOp selectOp) {
     auto *block = selectOp->getBlock();
     auto condition = selectOp.getCondition();

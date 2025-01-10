@@ -15,40 +15,50 @@ using namespace mlir;
 using namespace kapy;
 
 RegistersLayoutAttr kapy::getRegistersLayout(MLIRContext *context,
-                                             ArrayRef<int64_t> loopsPerWarp,
                                              ArrayRef<int64_t> loopsPerLane,
                                              ArrayRef<int64_t> shape,
+                                             ArrayRef<unsigned> order,
                                              int64_t numWarps) {
   auto rank = shape.size();
   assert(rank != 0);
   SmallVector<int64_t, 4> shapeOfLanes(rank);
   SmallVector<int64_t, 4> shapeOfWarps(rank);
+  SmallVector<int64_t, 4> loopsPerWarp(rank, 1);
   auto restThreads = numLanes * numWarps;
   auto restLanes = numLanes;
   auto restWarps = numWarps;
   for (unsigned i = rank - 1; i >= 1; --i) {
-    auto numLoopsI = loopsPerLane[i] * loopsPerWarp[i];
-    auto numThreadsI =
-        std::clamp<int64_t>(restThreads, 1, shape[i] / numLoopsI);
-    shapeOfLanes[i] = std::clamp<int64_t>(numThreadsI, 1, restLanes);
-    shapeOfWarps[i] =
-        std::clamp<int64_t>(numThreadsI / shapeOfLanes[i], 1, restWarps);
-    restThreads /= (shapeOfLanes[i] * shapeOfWarps[i]);
-    restLanes /= shapeOfLanes[i];
-    restWarps /= shapeOfWarps[i];
+    auto j = order[i];
+    auto numLoopsJ = loopsPerWarp[j] * loopsPerLane[j];
+    auto numThreadsJ =
+        std::clamp<int64_t>(restThreads, 1, shape[j] / numLoopsJ);
+    shapeOfLanes[j] = std::clamp<int64_t>(numThreadsJ, 1, restLanes);
+    shapeOfWarps[j] =
+        std::clamp<int64_t>(numThreadsJ / shapeOfLanes[j], 1, restWarps);
+    restThreads /= (shapeOfLanes[j] * shapeOfWarps[j]);
+    restLanes /= shapeOfLanes[j];
+    restWarps /= shapeOfWarps[j];
   }
-  // Make the axis 0 to fill the rest lanes and warps.
-  shapeOfLanes[0] = restLanes;
-  shapeOfWarps[0] = restWarps;
+  // Make the most minor axis to fill the rest lanes and warps.
+  shapeOfLanes[order[0]] = restLanes;
+  shapeOfWarps[order[0]] = restWarps;
   return RegistersLayoutAttr::get(context, shapeOfWarps, loopsPerWarp,
                                   shapeOfLanes, loopsPerLane);
 }
 
 RegistersLayoutAttr kapy::getRegistersLayout(MLIRContext *context,
+                                             ArrayRef<int64_t> loopsPerLane,
                                              ArrayRef<int64_t> shape,
                                              int64_t numWarps) {
-  SmallVector<int64_t, 4> loops(shape.size(), 1);
-  return getRegistersLayout(context, loops, loops, shape, numWarps);
+  auto order = makeIota<unsigned>(shape.size());
+  return getRegistersLayout(context, loopsPerLane, shape, order, numWarps);
+}
+
+RegistersLayoutAttr kapy::getRegistersLayout(MLIRContext *context,
+                                             ArrayRef<int64_t> shape,
+                                             int64_t numWarps) {
+  SmallVector<int64_t, 4> loopsPerLane(shape.size(), 1);
+  return getRegistersLayout(context, loopsPerLane, shape, numWarps);
 }
 
 bool kapy::isNvidiaMmaToMmOperandShortcut(NvidiaMmaLayoutAttr nvmmaLayout,

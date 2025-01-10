@@ -178,7 +178,6 @@ public:
     auto shape = type.getShape();
     auto numElems = product(shape);
 
-    SmallVector<int64_t, 4> loopsPerWarp(rank, 1);
     SmallVector<int64_t, 4> loopsPerLane(rank, 1);
     if (shape[rank - 1] >= 32 && shape[rank - 2] >= 32 &&
         numElems / numThreads >= 16) {
@@ -189,8 +188,8 @@ public:
       loopsPerLane[rank - 2] = 2;
     }
 
-    auto accumLayout = getRegistersLayout(op.getContext(), loopsPerWarp,
-                                          loopsPerLane, shape, numWarps);
+    auto accumLayout =
+        getRegistersLayout(op.getContext(), loopsPerLane, shape, numWarps);
     auto accumType = cloneWith(type, accumLayout);
     auto accum = adaptor.getAccum();
     accum = rewriter.create<ChangeOp>(accum.getLoc(), accumType, accum);
