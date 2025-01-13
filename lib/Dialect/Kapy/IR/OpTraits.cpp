@@ -30,7 +30,6 @@
 
 #include "kapy/Dialect/Kapy/IR/OpTraits.h"
 #include "kapy/Dialect/Kapy/IR/Utils.h"
-
 #include "mlir/IR/BuiltinTypes.h"
 
 using namespace mlir;

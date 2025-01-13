@@ -29,21 +29,12 @@
 //===----------------------------------------------------------------------===//
 
 #include "kapy/Analysis/Utils.h"
-
 #include "mlir/Analysis/DataFlow//DeadCodeAnalysis.h"
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
 #include "mlir/IR/Matchers.h"
 
 using namespace mlir;
 using namespace mlir::dataflow;
-using namespace mlir::kapy;
-
-bool kapy::hasSingleValue(Value value) {
-  if (auto tensorType = dyn_cast<RankedTensorType>(value.getType()))
-    return tensorType.getNumElements() == 1;
-  // TODO: Handle more cases.
-  return true;
-}
 
 namespace {
 
@@ -101,7 +92,7 @@ struct DFSState {
   /// operation to be scheduled after all its parents to handle correctly cases
   /// with SCF operations.
   void tryToMarkReady(Operation *op, SetQueue &list,
-                      SmallVector<Operation *> &readyOps) {
+                      SmallVectorImpl<Operation *> &readyOps) {
     bool isReady = true;
     for (auto operand : op->getOperands()) {
       auto *defOp = operand.getDefiningOp();
@@ -142,7 +133,7 @@ static void postOrderDFS(Operation *rootOp, DFSState &state) {
       // If we want to sort it, add it to sorted operations.
       if (state.ops.contains(readyOp))
         state.sortedOps.insert(readyOp);
-      // Now it is processed. Try to mark its user and child operations as
+      // Now it is processed. Try to mark all its users and child operations as
       // ready.
       for (auto result : readyOp->getResults())
         for (auto *useOp : result.getUsers())

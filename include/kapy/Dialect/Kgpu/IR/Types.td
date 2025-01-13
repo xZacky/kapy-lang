@@ -23,7 +23,7 @@
 //
 //===----------------------------------------------------------------------===//
 // 
-// This file is copied and modified from the triton project.
+// This file is modified from the triton project.
 // https://github.com/triton-lang/triton
 //
 //===----------------------------------------------------------------------===//

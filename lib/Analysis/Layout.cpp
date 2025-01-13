@@ -15,7 +15,7 @@ using namespace mlir;
 using namespace kapy;
 
 RegistersLayoutAttr kapy::getRegistersLayout(MLIRContext *context,
-                                             ArrayRef<int64_t> loopsPerLane,
+                                             ArrayRef<int64_t> laneLoops,
                                              ArrayRef<int64_t> shape,
                                              ArrayRef<unsigned> order,
                                              int64_t numWarps) {
@@ -23,13 +23,13 @@ RegistersLayoutAttr kapy::getRegistersLayout(MLIRContext *context,
   assert(rank != 0);
   SmallVector<int64_t, 4> shapeOfLanes(rank);
   SmallVector<int64_t, 4> shapeOfWarps(rank);
-  SmallVector<int64_t, 4> loopsPerWarp(rank, 1);
+  SmallVector<int64_t, 4> warpLoops(rank, 1);
   auto restThreads = numLanes * numWarps;
   auto restLanes = numLanes;
   auto restWarps = numWarps;
   for (unsigned i = rank - 1; i >= 1; --i) {
     auto j = order[i];
-    auto numLoopsJ = loopsPerWarp[j] * loopsPerLane[j];
+    auto numLoopsJ = warpLoops[j] * laneLoops[j];
     auto numThreadsJ =
         std::clamp<int64_t>(restThreads, 1, shape[j] / numLoopsJ);
     shapeOfLanes[j] = std::clamp<int64_t>(numThreadsJ, 1, restLanes);
@@ -42,23 +42,23 @@ RegistersLayoutAttr kapy::getRegistersLayout(MLIRContext *context,
   // Make the most minor axis to fill the rest lanes and warps.
   shapeOfLanes[order[0]] = restLanes;
   shapeOfWarps[order[0]] = restWarps;
-  return RegistersLayoutAttr::get(context, shapeOfWarps, loopsPerWarp,
-                                  shapeOfLanes, loopsPerLane);
+  return RegistersLayoutAttr::get(context, shapeOfWarps, warpLoops,
+                                  shapeOfLanes, laneLoops, order);
 }
 
 RegistersLayoutAttr kapy::getRegistersLayout(MLIRContext *context,
-                                             ArrayRef<int64_t> loopsPerLane,
+                                             ArrayRef<int64_t> laneLoops,
                                              ArrayRef<int64_t> shape,
                                              int64_t numWarps) {
   auto order = makeIota<unsigned>(shape.size());
-  return getRegistersLayout(context, loopsPerLane, shape, order, numWarps);
+  return getRegistersLayout(context, laneLoops, shape, order, numWarps);
 }
 
 RegistersLayoutAttr kapy::getRegistersLayout(MLIRContext *context,
                                              ArrayRef<int64_t> shape,
                                              int64_t numWarps) {
-  SmallVector<int64_t, 4> loopsPerLane(shape.size(), 1);
-  return getRegistersLayout(context, loopsPerLane, shape, numWarps);
+  SmallVector<int64_t, 4> laneLoops(shape.size(), 1);
+  return getRegistersLayout(context, laneLoops, shape, numWarps);
 }
 
 bool kapy::isNvidiaMmaToMmOperandShortcut(NvidiaMmaLayoutAttr nvmmaLayout,
@@ -73,19 +73,24 @@ bool kapy::isNvidiaMmaToMmOperandShortcut(NvidiaMmaLayoutAttr nvmmaLayout,
   return true;
 }
 
+bool kapy::isNvidiaMmaToRegistersShortcut(NvidiaMmaLayoutAttr nvmmaLayout,
+                                          RegistersLayoutAttr regisLayout) {
+  return nvmmaLayout.toRegistersLayout() == regisLayout;
+}
+
 NvidiaMmaLayoutAttr kapy::getNvidiaMmaLayout(MatmulOp matmulOp,
                                              int64_t numWarps) {
   auto rank = matmulOp.getType().getRank();
   auto *context = matmulOp.getContext();
   SmallVector<int64_t, 4> shapeOfWarps(rank, 1);
-  SmallVector<int64_t, 4> loopsPerWarp(rank, 1);
-  loopsPerWarp[rank - 2] = 2;
+  SmallVector<int64_t, 4> warpLoops(rank, 1);
+  warpLoops[rank - 2] = 2;
 
   // Early exit for batched matmul case.
   if (rank == 3) {
     // TODO: This may cause waste of warps, we should consider the tensor shape.
     shapeOfWarps[0] = numWarps;
-    return NvidiaMmaLayoutAttr::get(context, shapeOfWarps, loopsPerWarp);
+    return NvidiaMmaLayoutAttr::get(context, shapeOfWarps, warpLoops);
   }
 
   TransitiveFilter inSameRegion = [matmulOp](Operation *op) {
@@ -108,7 +113,7 @@ NvidiaMmaLayoutAttr kapy::getNvidiaMmaLayout(MatmulOp matmulOp,
   if (hasChainedMatmulOps) {
     // TODO: This may cause waste of warps, we should consider the tensor shape.
     shapeOfWarps[0] = numWarps;
-    return NvidiaMmaLayoutAttr::get(context, shapeOfWarps, loopsPerWarp);
+    return NvidiaMmaLayoutAttr::get(context, shapeOfWarps, warpLoops);
   }
 
   auto shape = matmulOp.getType().getShape();
@@ -122,7 +127,7 @@ NvidiaMmaLayoutAttr kapy::getNvidiaMmaLayout(MatmulOp matmulOp,
     }
     shapeOfWarps[1] *= 2;
   }
-  return NvidiaMmaLayoutAttr::get(context, shapeOfWarps, loopsPerWarp);
+  return NvidiaMmaLayoutAttr::get(context, shapeOfWarps, warpLoops);
 }
 
 SharedMemLayoutAttr kapy::getSharedMemLayout(MLIRContext *context,
@@ -136,15 +141,246 @@ SharedMemLayoutAttr kapy::getSharedMemLayout(MLIRContext *context,
   auto nvmmaLayout = dyn_cast<NvidiaMmaLayoutAttr>(mmopdLayout.getParent());
   if (!nvmmaLayout)
     return SharedMemLayoutAttr::get(context, strides, bitWidth, 1);
-  auto rowsPerMode =
-      std::max<int64_t>(1024 / (shmemShape[rank - 1] * bitWidth), 1);
+  auto perPhase =
+      std::max<unsigned>(1024 / (shmemShape[rank - 1] * bitWidth), 1);
   if (mmopdLayout.getOperandIndex() == 0) {
     bool kMajor = order[rank - 1] == rank - 1;
-    auto numModes = (kMajor ? 8 : 128 / bitWidth) / rowsPerMode;
-    return SharedMemLayoutAttr::get(context, strides, bitWidth, numModes);
+    auto maxPhase = (kMajor ? 8 : 128 / bitWidth) / perPhase;
+    return SharedMemLayoutAttr::get(context, strides, bitWidth, maxPhase);
   } else {
     bool nMajor = order[rank - 1] == rank - 1;
-    auto numModes = (nMajor ? 128 / bitWidth : 8) / rowsPerMode;
-    return SharedMemLayoutAttr::get(context, strides, bitWidth, numModes);
+    auto maxPhase = (nMajor ? 128 / bitWidth : 8) / perPhase;
+    return SharedMemLayoutAttr::get(context, strides, bitWidth, maxPhase);
   }
+}
+
+static SetVector<Attribute> getCandidateLayouts1d(MLIRContext *context,
+                                                  RankedTensorType type,
+                                                  int64_t numWarps) {
+  auto shape = type.getShape();
+  auto regisLayout = cast<RegistersLayoutAttr>(type.getEncoding());
+  auto rank = regisLayout.getRank();
+  assert(rank == 1);
+
+  auto numElems = product(shape);
+  auto shapeOfWarps = regisLayout.getShapeOfWarpsRef();
+  auto warpLoops = regisLayout.getWarpLoops();
+  auto shapeOfLanes = regisLayout.getShapeOfLanesRef();
+  auto laneLoops = regisLayout.getLaneLoopsRef();
+
+  auto vecWidth = laneLoops[0];
+  auto restLoop =
+      std::max<int64_t>(numElems / (numWarps * numLanes * vecWidth), 1);
+
+  SetVector<Attribute> layouts;
+  for (int64_t warpLoop = 1; warpLoop <= restLoop; warpLoop *= 2) {
+    warpLoops[0] = warpLoop;
+    layouts.insert(RegistersLayoutAttr::get(context, shapeOfWarps, warpLoops,
+                                            shapeOfLanes, laneLoops));
+  }
+  return layouts;
+}
+
+static SetVector<Attribute> getCandidateLayouts2d(MLIRContext *context,
+                                                  RankedTensorType type,
+                                                  int64_t numWarps) {
+  auto shape = type.getShape();
+  auto regisLayout = cast<RegistersLayoutAttr>(type.getEncoding());
+  auto rank = regisLayout.getRank();
+  assert(rank == 2);
+
+  auto numElems = product(shape);
+  auto shapeOfWarps = regisLayout.getShapeOfWarps();
+  auto warpLoops = regisLayout.getWarpLoops();
+  auto shapeOfLanes = regisLayout.getShapeOfLanes();
+  auto laneLoops = regisLayout.getLaneLoops();
+
+  unsigned majorAxis = rank - 1;
+  int64_t vecWidth = 1;
+  int64_t maxLanesMajor = numLanes;
+  int64_t maxThreadsMajor = numLanes * numWarps;
+  for (unsigned i = 0; i < rank; ++i) {
+    if (laneLoops[i] > 1) {
+      majorAxis = i;
+      vecWidth = laneLoops[i];
+      maxLanesMajor = shapeOfLanes[i];
+      maxThreadsMajor = shapeOfWarps[i] * shapeOfLanes[i];
+      break;
+    }
+  }
+  assert(vecWidth > 1);
+
+  auto restLoops =
+      std::max<int64_t>(numElems / (numWarps * numLanes * vecWidth), 1);
+  // Possibile combinations of `(warpLoopMinor, warpLoopMajor, laneLoopMinor)`.
+  SmallVector<std::array<int64_t, 3>> loopsCombs;
+  for (int64_t warpLoopMinor = 1; warpLoopMinor <= restLoops;
+       warpLoopMinor *= 2) {
+    for (int64_t warpLoopMajor = 1; warpLoopMajor <= restLoops;
+         warpLoopMajor *= 2) {
+      if (warpLoopMinor * warpLoopMajor > restLoops)
+        break;
+      for (int64_t laneLoopMinor = 1; laneLoopMinor <= restLoops;
+           laneLoopMinor *= 2) {
+        if (warpLoopMinor * warpLoopMajor * laneLoopMinor > restLoops)
+          break;
+        loopsCombs.push_back({warpLoopMinor, warpLoopMajor, laneLoopMinor});
+      }
+    }
+  }
+
+  unsigned minorAxis = majorAxis == 1 ? 0 : 1;
+  auto order = ArrayRef{minorAxis, majorAxis};
+  auto bitWidth = getIntOrFloatBitWidth(type);
+  auto minLanesMajor = 1024 / (vecWidth * bitWidth);
+
+  SetVector<Attribute> layouts;
+  for (int64_t numLanesMajor = minLanesMajor; numLanesMajor <= maxLanesMajor;
+       numLanesMajor *= 2) {
+    auto numLanesMinor = numLanes / numLanesMajor;
+    shapeOfLanes[majorAxis] = numLanesMajor;
+    shapeOfLanes[minorAxis] = numLanesMinor;
+    for (int64_t numWarpsMajor = 1;
+         numWarpsMajor * numLanesMajor <= maxThreadsMajor; numWarpsMajor *= 2) {
+      if (numWarpsMajor * numLanesMajor * vecWidth > shape[majorAxis])
+        break;
+      auto numWarpsMinor = numWarps / numWarpsMajor;
+      shapeOfWarps[majorAxis] = numWarpsMajor;
+      shapeOfWarps[minorAxis] = numWarpsMinor;
+      for (auto [warpLoopMinor, warpLoopMajor, laneLoopMinor] : loopsCombs) {
+        if (numWarpsMajor * warpLoopMajor * numLanesMajor * vecWidth >
+            shape[majorAxis])
+          continue;
+        if (numWarpsMinor * warpLoopMinor * numLanesMinor * laneLoopMinor >
+            shape[minorAxis])
+          continue;
+        warpLoops[minorAxis] = warpLoopMinor;
+        warpLoops[majorAxis] = warpLoopMajor;
+        laneLoops[minorAxis] = laneLoopMinor;
+        layouts.insert(RegistersLayoutAttr::get(
+            context, shapeOfWarps, warpLoops, shapeOfLanes, laneLoops, order));
+      }
+    }
+  }
+  return layouts;
+}
+
+static SetVector<Attribute> getCandidateLayouts3d(MLIRContext *context,
+                                                  RankedTensorType type,
+                                                  int64_t numWarps) {
+  // TODO: Implement this.
+  llvm_unreachable("not implemented");
+}
+
+static SetVector<Attribute> getCandidateLayouts(LoadOp loadOp,
+                                                int64_t numWarps) {
+  auto resultType = cast<RankedTensorType>(loadOp.getType());
+  if (resultType.getRank() == 1)
+    return getCandidateLayouts1d(loadOp.getContext(), resultType, numWarps);
+  if (resultType.getRank() == 2)
+    return getCandidateLayouts2d(loadOp.getContext(), resultType, numWarps);
+  if (resultType.getRank() == 3)
+    return getCandidateLayouts3d(loadOp.getContext(), resultType, numWarps);
+  llvm_unreachable("unsupported tensor rank");
+}
+
+static SetVector<Attribute> getCandidateLayouts(StoreOp storeOp,
+                                                int64_t numWarps) {
+  auto valueType = cast<RankedTensorType>(storeOp.getValue().getType());
+  if (valueType.getRank() == 1)
+    return getCandidateLayouts1d(storeOp.getContext(), valueType, numWarps);
+  if (valueType.getRank() == 2)
+    return getCandidateLayouts2d(storeOp.getContext(), valueType, numWarps);
+  if (valueType.getRank() == 3)
+    return getCandidateLayouts3d(storeOp.getContext(), valueType, numWarps);
+  llvm_unreachable("unsupported tensor rank");
+}
+
+static SetVector<Attribute> getCandidateLayouts(AtomicRMWOp rmwOp,
+                                                int64_t numWarps) {
+  auto valueType = cast<RankedTensorType>(rmwOp.getValue().getType());
+  if (valueType.getRank() == 1)
+    return getCandidateLayouts1d(rmwOp.getContext(), valueType, numWarps);
+  if (valueType.getRank() == 2)
+    return getCandidateLayouts2d(rmwOp.getContext(), valueType, numWarps);
+  if (valueType.getRank() == 3)
+    return getCandidateLayouts3d(rmwOp.getContext(), valueType, numWarps);
+  llvm_unreachable("unsupported tensor rank");
+}
+
+static SetVector<Attribute> getCandidateLayouts(AtomicCASOp casOp,
+                                                int64_t numWarps) {
+  auto valueType = cast<RankedTensorType>(casOp.getValue().getType());
+  if (valueType.getRank() == 1)
+    return getCandidateLayouts1d(casOp.getContext(), valueType, numWarps);
+  if (valueType.getRank() == 2)
+    return getCandidateLayouts2d(casOp.getContext(), valueType, numWarps);
+  if (valueType.getRank() == 3)
+    return getCandidateLayouts3d(casOp.getContext(), valueType, numWarps);
+  llvm_unreachable("unsupported tensor rank");
+}
+
+static SetVector<Attribute> getCandidateLayouts(MatmulOp matmulOp,
+                                                int64_t numWarps) {
+  auto resultType = matmulOp.getType();
+  if (isa<RegistersLayoutAttr>(resultType.getEncoding())) {
+    // Currently only support 2d fma matmul.
+    auto layouts =
+        getCandidateLayouts2d(matmulOp.getContext(), resultType, numWarps);
+    for (auto layout : layouts) {
+      auto laneLoops = cast<RegistersLayoutAttr>(layout).getLaneLoopsRef();
+      if (laneLoops[0] != laneLoops[1])
+        layouts.remove(layout);
+    }
+    return layouts;
+  }
+  auto shape = resultType.getShape();
+  auto numElems = product(shape);
+  auto nvmmaLayout = cast<NvidiaMmaLayoutAttr>(resultType.getEncoding());
+  auto shapeOfWarps = nvmmaLayout.getShapeOfWarps();
+  auto warpLoops = nvmmaLayout.getWarpLoops();
+  if (nvmmaLayout.getRank() == 2) {
+    auto restLoop = std::max<int64_t>(numElems / (numWarps * 64), 1);
+    SetVector<Attribute> layouts;
+    for (int64_t numWarpsMinor = 1; numWarpsMinor <= numWarps;
+         numWarpsMinor *= 2) {
+      auto numWarpsMajor = numWarps / numWarpsMinor;
+      shapeOfWarps[0] = numWarpsMinor;
+      shapeOfWarps[1] = numWarpsMajor;
+      // Warp loop minor is at least 2.
+      for (int64_t warpLoopMinor = 2; warpLoopMinor <= restLoop;
+           warpLoopMinor *= 2) {
+        for (int64_t warpLoopMajor = 1; warpLoopMajor <= restLoop;
+             warpLoopMajor *= 2) {
+          if (warpLoopMinor * warpLoopMajor > restLoop)
+            break;
+          if (numWarpsMinor * warpLoopMinor * 8 > shape[0])
+            break;
+          if (numWarpsMajor * warpLoopMajor * 8 > shape[1])
+            break;
+          warpLoops[0] = warpLoopMinor;
+          warpLoops[1] = warpLoopMajor;
+          layouts.insert(NvidiaMmaLayoutAttr::get(matmulOp.getContext(),
+                                                  shapeOfWarps, warpLoops));
+        }
+      }
+    }
+    return layouts;
+  }
+  llvm_unreachable("not implemented");
+}
+
+SetVector<Attribute> kapy::getCandidateLayouts(Operation *op,
+                                               int64_t numWarps) {
+  if (auto loadOp = dyn_cast<LoadOp>(op))
+    return ::getCandidateLayouts(loadOp, numWarps);
+  if (auto storeOp = dyn_cast<StoreOp>(op))
+    return ::getCandidateLayouts(storeOp, numWarps);
+  if (auto rmwOp = dyn_cast<AtomicRMWOp>(op))
+    return ::getCandidateLayouts(rmwOp, numWarps);
+  if (auto casOp = dyn_cast<AtomicCASOp>(op))
+    return ::getCandidateLayouts(casOp, numWarps);
+  if (auto matmulOp = dyn_cast<MatmulOp>(op))
+    return ::getCandidateLayouts(matmulOp, numWarps);
+  llvm_unreachable("unsupported operation");
 }

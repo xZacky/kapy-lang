@@ -32,7 +32,6 @@
 #define KAPY_ANALYSIS_MEMBAR_H
 
 #include "kapy/Analysis/Allocation.h"
-
 #include <set>
 
 namespace mlir {

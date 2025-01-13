@@ -33,7 +33,6 @@
 
 include "mlir/Dialect/Arith/IR/ArithOps.td"
 include "mlir/IR/PatternBase.td"
-
 include "kapy/Dialect/Kapy/IR/Ops.td"
 
 def CombineMatmulOpAsAddIOpLhs : Pat<

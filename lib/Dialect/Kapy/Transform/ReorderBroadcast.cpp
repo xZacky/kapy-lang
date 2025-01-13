@@ -23,14 +23,13 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file is copied and modified from the triton project.
+// This file is modified from the triton project.
 // https://github.com/triton-lang/triton
 //
 //===----------------------------------------------------------------------===//
 
 #include "kapy/Dialect/Kapy/IR/Kapy.h"
 #include "kapy/Dialect/Kapy/Transform/Passes.h"
-
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 using namespace mlir;
@@ -141,12 +140,10 @@ public:
       if (broadcastOp)
         break;
     }
-    auto theType = broadcastOp.getOperand().getType();
-    auto newShape = theType.getShape();
-    auto newLayout = theType.getEncoding();
-    auto getNewType = [newShape, newLayout](Type type) {
-      return RankedTensorType::get(
-          newShape, cast<ShapedType>(type).getElementType(), newLayout);
+    auto tmpType = broadcastOp.getOperand().getType();
+    auto getNewType = [tmpType](Type type) {
+      auto elementType = cast<ShapedType>(type).getElementType();
+      return cloneWith(tmpType, elementType);
     };
 
     SmallVector<Value> newOperands;
@@ -157,7 +154,7 @@ public:
         newOperands.push_back(defOp->getOperand(0));
         continue;
       }
-      // Make other operands the same type with the BroadcastOp's operand.
+      // Make other operands the same shape with the BroadcastOp's operand.
       auto newType = getNewType(operand.getType());
       // Case 2: SplatOp.
       if (auto splatOp = dyn_cast<SplatOp>(defOp)) {

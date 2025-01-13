@@ -1,4 +1,4 @@
-//===- OpTraits.td -----------------------------------------*- tablegen -*-===//
+//===- Utils.h --------------------------------------------------*- C++ -*-===//
 //
 // Copyright 2018-2020 Philippe Tillet
 // Copyright 2020-2022 OpenAI
@@ -22,29 +22,30 @@
 // SOFTWARE.
 //
 //===----------------------------------------------------------------------===//
-// 
+//
 // This file is modified from the triton project.
 // https://github.com/triton-lang/triton
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef KAPY_DIALECT_KAPY_IR_OPTRAITS
-#define KAPY_DIALECT_KAPY_IR_OPTRAITS
+#ifndef KAPY_DIALECT_KGPU_TRANSFORM_LAYOUT_UTILS_H
+#define KAPY_DIALECT_KGPU_TRANSFORM_LAYOUT_UTILS_H
 
-include "mlir/IR/OpBase.td"
+#include "mlir/IR/Attributes.h"
+#include "mlir/IR/Operation.h"
 
-def ValidTensorShape : NativeOpTrait<"ValidTensorShape">;
+namespace mlir {
+namespace kapy {
 
-// Operation with this trait requires all its tensor operands having the same
-// layout.
-def SameOperandsLayout : NativeOpTrait<"SameOperandsLayout">;
+bool isExpensiveMemoryRead(Operation *op);
+bool isExpensiveMemoryWrite(Operation *op);
 
-// Operation with this trait requires all its tensor operands and results having
-// the same layout.
-def SameOperandsAndResultLayout : NativeOpTrait<"SameOperandsAndResultLayout">;
+Attribute inferUseLayout(Operation *op, Attribute defLayout);
+Attribute inferDefLayout(Operation *op, Attribute useLayout);
 
-// Operations with this trait have single block with a kapy::YieldOp as block
-// terminator.
-def KapySingleBlockTerminator : SingleBlockImplicitTerminator<"YieldOp">;
+bool isFreeChangeOp(Operation *op);
 
-#endif // DIALECT_KAPY_IR_OPTRAITS
+} // namespace kapy
+} // namespace mlir
+
+#endif // KAPY_DIALECT_KGPU_TRANSFORM_LAYOUT_UTILS_H

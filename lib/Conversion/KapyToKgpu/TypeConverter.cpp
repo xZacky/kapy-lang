@@ -45,7 +45,6 @@ KgpuTypeConverter::KgpuTypeConverter(MLIRContext *context, int64_t numWarps)
     if (tensorType.getEncoding())
       return tensorType;
     auto shape = tensorType.getShape();
-    SmallVector<int64_t, 4> loops(shape.size(), 1);
     auto regisLayout = getRegistersLayout(this->context, shape, this->numWarps);
     return cloneWith(tensorType, regisLayout);
   });

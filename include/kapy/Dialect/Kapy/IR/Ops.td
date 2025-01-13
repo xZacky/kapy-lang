@@ -38,7 +38,6 @@ include "mlir/Interfaces/ControlFlowInterfaces.td"
 include "mlir/Interfaces/FunctionInterfaces.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
-
 include "kapy/Dialect/Kapy/IR/Dialect.td"
 include "kapy/Dialect/Kapy/IR/Enums.td"
 include "kapy/Dialect/Kapy/IR/OpTraits.td"
@@ -214,6 +213,7 @@ def Kapy_StoreOp : Kapy_Op<"store", [MemoryEffects<[MemWrite<GlobalMemory>]>]> {
 def Kapy_AtomicRMWOp : Kapy_Op<
   "atomic_rmw",
   [
+    SameOperandsAndResultLayout,
     MemoryEffects<[MemRead<GlobalMemory>]>,
     MemoryEffects<[MemWrite<GlobalMemory>]>,
     TypesMatchWith<"from value type infer result type",
@@ -245,6 +245,7 @@ def Kapy_AtomicRMWOp : Kapy_Op<
 def Kapy_AtomicCASOp : Kapy_Op<
   "atomic_cas",
   [
+    SameOperandsAndResultLayout,
     MemoryEffects<[MemRead<GlobalMemory>]>,
     MemoryEffects<[MemWrite<GlobalMemory>]>,
     TypesMatchWith<"from value type infer result type",

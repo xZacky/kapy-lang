@@ -44,48 +44,34 @@ void Allocation::run(
   AllocationAnalysis(operation, this, &funcAllocations);
 }
 
-void AllocationAnalysis::addExplicit(Operation *op) {
-  if (auto localAllocOp = dyn_cast<LocalAllocOp>(op)) {
-    auto memrefType = localAllocOp.getType();
-    auto numElems = product(memrefType.getShape());
-    auto bitWidth = getIntOrFloatBitWidth(memrefType);
-    auto size = numElems * ceilDiv<unsigned>(bitWidth, 8);
-    Value result = localAllocOp.getResult();
-    allocation->addBuffer<Buffer::BufferKind::Explicit>(result, size, 128);
-  }
-}
-
-void AllocationAnalysis::addScratch(Operation *op) {
-  if (auto reduceOp = dyn_cast<ReduceOp>(op)) {
-    ReduceOpHelper helper(reduceOp);
-    auto size = helper.getScratchSizeInBytes();
-    if (size > 0)
-      allocation->addBuffer<Buffer::BufferKind::Scratch>(op, size, 128);
-  } else if (auto changeOp = dyn_cast<ChangeOp>(op)) {
-    ChangeOpHelper helper(changeOp);
-    auto size = helper.getScratchSizeInBytes();
-    if (size > 0)
-      allocation->addBuffer<Buffer::BufferKind::Scratch>(op, size, 128);
-  }
-}
-
-void AllocationAnalysis::addVirtual(Operation *op) {
-  if (auto callOp = dyn_cast<CallOpInterface>(op)) {
-    auto *callable = callOp.resolveCallable();
-    auto funcOp = dyn_cast_or_null<FunctionOpInterface>(callable);
-    if (!funcOp)
-      return;
-    auto size = (*funcAllocations)[funcOp].getAllocatedSize();
-    if (size > 0)
-      allocation->addBuffer<Buffer::BufferKind::Virtual>(op, size, 128);
-  }
-}
-
 void AllocationAnalysis::addBuffers() {
   operation->walk<WalkOrder::PreOrder>([&](Operation *op) {
-    addExplicit(op);
-    addScratch(op);
-    addVirtual(op);
+    if (auto allocOp = dyn_cast<LocalAllocOp>(op)) {
+      auto memrefType = allocOp.getType();
+      auto numElems = product(memrefType.getShape());
+      auto bitWidth = getIntOrFloatBitWidth(memrefType);
+      auto size = numElems * ceilDiv<unsigned>(bitWidth, 8);
+      Value result = allocOp.getResult();
+      allocation->addBuffer<Buffer::BufferKind::Explicit>(result, size);
+    } else if (auto reduceOp = dyn_cast<ReduceOp>(op)) {
+      ReduceOpHelper helper(reduceOp);
+      auto size = helper.getScratchSizeInBytes();
+      if (size > 0)
+        allocation->addBuffer<Buffer::BufferKind::Scratch>(op, size);
+    } else if (auto changeOp = dyn_cast<ChangeOp>(op)) {
+      ChangeOpHelper helper(changeOp);
+      auto size = helper.getScratchSizeInBytes();
+      if (size > 0)
+        allocation->addBuffer<Buffer::BufferKind::Scratch>(op, size);
+    } else if (auto callOp = dyn_cast<CallOpInterface>(op)) {
+      auto *callable = callOp.resolveCallable();
+      auto funcOp = dyn_cast_or_null<FunctionOpInterface>(callable);
+      if (!funcOp)
+        return;
+      auto size = (*funcAllocations)[funcOp].getAllocatedSize();
+      if (size > 0)
+        allocation->addBuffer<Buffer::BufferKind::Virtual>(op, size);
+    }
   });
 }
 
@@ -107,7 +93,7 @@ void AllocationAnalysis::resolveScratchsAndVirtuals(
   processBuffers(allocation->virtuals);
 }
 
-void AllocationAnalysis::resolveLivenesses() {
+void AllocationAnalysis::resolveLiveness() {
   // Assign an id to each operation using post-order traversal.
   // To achieve the correct liveness, the parent operation's id should be larger
   // than each of its child operation's id.
@@ -159,19 +145,18 @@ void AllocationAnalysis::computeAndAllocate() {
   // the interference graph algorithm after bumping so that we regroup the
   // buffers and color them again. Since we always increase the buffer offset
   // and keep reducing conflicts, we will eventually reach a fixed point.
-  DenseMap<Buffer *, DenseSet<Buffer *>> interference;
-  buildInterference(buffers, interference);
+  DenseMap<Buffer *, DenseSet<Buffer *>> graph;
+  buildGraph(buffers, graph);
   do {
-    allocate(buffers, interference);
-    buildInterference(buffers, interference);
-  } while (!interference.empty());
+    allocate(buffers, graph);
+    buildGraph(buffers, graph);
+  } while (!graph.empty());
 }
 
-void AllocationAnalysis::buildInterference(
-    ArrayRef<Buffer *> buffers,
-    DenseMap<Buffer *, DenseSet<Buffer *>> &interference) {
+void AllocationAnalysis::buildGraph(
+    ArrayRef<Buffer *> buffers, DenseMap<Buffer *, DenseSet<Buffer *>> &graph) {
   // Reset interference graph.
-  interference.clear();
+  graph.clear();
   for (auto *buffer0 : buffers) {
     for (auto *buffer1 : buffers) {
       if (buffer0 == buffer1)
@@ -181,14 +166,14 @@ void AllocationAnalysis::buildInterference(
       auto liveness0 = bufferLivenesses.lookup(buffer0);
       auto liveness1 = bufferLivenesses.lookup(buffer1);
       if (liveness0.intersects(liveness1) && memory0.intersects(memory1))
-        interference[buffer0].insert(buffer1);
+        graph[buffer0].insert(buffer1);
     }
   }
 }
 
 void AllocationAnalysis::allocate(
     ArrayRef<Buffer *> buffers,
-    const DenseMap<Buffer *, DenseSet<Buffer *>> &interference) {
+    const DenseMap<Buffer *, DenseSet<Buffer *>> &graph) {
   // Reset allocated size.
   allocation->allocatedSize = 0;
   // First-fit graph coloring.
@@ -203,7 +188,7 @@ void AllocationAnalysis::allocate(
   SmallVector<bool> available(buffers.size());
   for (auto *buffer0 : buffers) {
     std::fill(available.begin(), available.end(), true);
-    for (auto *buffer1 : interference.lookup(buffer0)) {
+    for (auto *buffer1 : graph.lookup(buffer0)) {
       auto color = colors[buffer1];
       if (color >= 0)
         available[color] = false;
@@ -221,7 +206,7 @@ void AllocationAnalysis::allocate(
   //
   for (auto *buffer0 : buffers) {
     int64_t newOffset = 0;
-    for (auto *buffer1 : interference.lookup(buffer0))
+    for (auto *buffer1 : graph.lookup(buffer0))
       newOffset = std::max(newOffset, buffer1->offset + buffer1->size);
     if (colors.lookup(buffer0) != 0)
       buffer0->setOffsetAligned(newOffset);

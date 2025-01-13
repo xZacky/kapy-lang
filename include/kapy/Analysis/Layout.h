@@ -7,7 +7,8 @@
 #ifndef KAPY_ANALYSIS_LAYOUT_H
 #define KAPY_ANALYSIS_LAYOUT_H
 
-#include "mlir/IR/MLIRContext.h"
+#include "mlir/IR/Attributes.h"
+#include "mlir/IR/Operation.h"
 #include "llvm/ADT/ArrayRef.h"
 
 namespace mlir {
@@ -23,12 +24,12 @@ class NvidiaMmaLayoutAttr;
 class MmOperandLayoutAttr;
 
 RegistersLayoutAttr getRegistersLayout(MLIRContext *context,
-                                       ArrayRef<int64_t> loopsPerLane,
+                                       ArrayRef<int64_t> laneLoops,
                                        ArrayRef<int64_t> shape,
                                        ArrayRef<unsigned> order,
                                        int64_t numWarps);
 RegistersLayoutAttr getRegistersLayout(MLIRContext *context,
-                                       ArrayRef<int64_t> loopsPerLane,
+                                       ArrayRef<int64_t> laneLoops,
                                        ArrayRef<int64_t> shape,
                                        int64_t numWarps);
 RegistersLayoutAttr getRegistersLayout(MLIRContext *context,
@@ -38,12 +39,17 @@ RegistersLayoutAttr getRegistersLayout(MLIRContext *context,
 bool isNvidiaMmaToMmOperandShortcut(NvidiaMmaLayoutAttr nvmmaLayout,
                                     MmOperandLayoutAttr mmopdLayout);
 
+bool isNvidiaMmaToRegistersShortcut(NvidiaMmaLayoutAttr nvmmaLayout,
+                                    RegistersLayoutAttr regisLayout);
+
 NvidiaMmaLayoutAttr getNvidiaMmaLayout(MatmulOp matmulOp, int64_t numWarps);
 
 SharedMemLayoutAttr getSharedMemLayout(MLIRContext *context,
                                        MmOperandLayoutAttr mmopdLayout,
                                        ArrayRef<int64_t> shape,
                                        ArrayRef<unsigned> order);
+
+SetVector<Attribute> getCandidateLayouts(Operation *op, int64_t numWarps);
 
 } // namespace kapy
 } // namespace mlir

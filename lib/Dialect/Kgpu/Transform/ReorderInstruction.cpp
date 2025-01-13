@@ -31,7 +31,6 @@
 #include "kapy/Dialect/Kapy/IR/Kapy.h"
 #include "kapy/Dialect/Kgpu/IR/Kgpu.h"
 #include "kapy/Dialect/Kgpu/Transform/Passes.h"
-
 #include "mlir/IR/Dominance.h"
 
 using namespace mlir;

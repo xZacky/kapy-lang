@@ -7,7 +7,6 @@
 #include "kapy/Dialect/Kgpu/IR/Kgpu.h"
 #include "kapy/Dialect/Kapy/IR/Utils.h"
 #include "kapy/Dialect/Kgpu/IR/Utils.h"
-
 #include "mlir/IR/DialectImplementation.h"
 #include "mlir/IR/OpImplementation.h"
 #include "llvm/ADT/TypeSwitch.h"
@@ -86,11 +85,10 @@ public:
     if (!regisLayout)
       return emitOptionalError(loc, "operand must have registers layout");
     return RegistersLayoutAttr::get(
-        getContext(), //
+        getContext(), permute(regisLayout.getShapeOfWarpsRef(), order),
+        permute(regisLayout.getWarpLoopsRef(), order),
         permute(regisLayout.getShapeOfLanesRef(), order),
-        permute(regisLayout.getShapeOfWarpsRef(), order),
-        permute(regisLayout.getLoopsPerLaneRef(), order),
-        permute(regisLayout.getLoopsPerWarpRef(), order),
+        permute(regisLayout.getLaneLoopsRef(), order),
         permute(regisLayout.getOrderRef(), order));
   }
 
@@ -144,12 +142,12 @@ void KgpuDialect::initialize() {
 
 RegistersLayoutAttr RegistersLayoutAttr::get(MLIRContext *context,
                                              ArrayRef<int64_t> shapeOfWarps,
-                                             ArrayRef<int64_t> loopsPerWarp,
+                                             ArrayRef<int64_t> warpLoops,
                                              ArrayRef<int64_t> shapeOfLanes,
-                                             ArrayRef<int64_t> loopsPerLane) {
+                                             ArrayRef<int64_t> laneLoops) {
   auto order = makeIota<unsigned>(shapeOfWarps.size());
-  return RegistersLayoutAttr::get(context, shapeOfWarps, loopsPerWarp,
-                                  shapeOfLanes, loopsPerLane, order);
+  return RegistersLayoutAttr::get(context, shapeOfWarps, warpLoops,
+                                  shapeOfLanes, laneLoops, order);
 }
 
 AffineMap RegistersLayoutAttr::getLayoutMap() const {
@@ -157,17 +155,17 @@ AffineMap RegistersLayoutAttr::getLayoutMap() const {
   auto order = getOrderRef();
 
   auto shapeOfWarps = getShapeOfWarpsRef();
-  auto stridesWarps =
+  auto stridesOfWarps =
       permute(computeStrides(permute(shapeOfWarps, order)), inverse(order));
   for (unsigned i = 0; i < rank; ++i)
-    stridesWarps[i] *= numLanes;
+    stridesOfWarps[i] *= numLanes;
 
   auto shapeOfLanes = getShapeOfLanesRef();
-  auto stridesLanes =
+  auto stridesOfLanes =
       permute(computeStrides(permute(shapeOfLanes, order)), inverse(order));
 
-  auto loopsPerWarp = getLoopsPerWarpRef();
-  auto loopsPerLane = getLoopsPerLaneRef();
+  auto warpLoops = getWarpLoopsRef();
+  auto laneLoops = getLaneLoopsRef();
 
   SmallVector<AffineExpr, 4> indexExprs;
   for (unsigned i = 0; i < rank; ++i)
@@ -175,26 +173,26 @@ AffineMap RegistersLayoutAttr::getLayoutMap() const {
 
   auto threadExpr = getAffineConstantExpr(0, getContext());
   for (unsigned i = 0; i < rank; ++i) {
-    auto tmpExprs =
-        delinearize(indexExprs[i], ArrayRef{shapeOfWarps[i], loopsPerWarp[i],
-                                            shapeOfLanes[i], loopsPerLane[i]});
-    threadExpr = threadExpr + tmpExprs[0] * stridesWarps[i] +
-                 tmpExprs[2] * stridesLanes[i];
+    auto tmpShape =
+        ArrayRef{shapeOfWarps[i], warpLoops[i], shapeOfLanes[i], laneLoops[i]};
+    auto tmpExprs = delinearize(indexExprs[i], tmpShape);
+    threadExpr = threadExpr + (tmpExprs[0] * stridesOfWarps[i] +
+                               tmpExprs[2] * stridesOfLanes[i]);
   }
   return AffineMap::get(rank, 0, threadExpr);
 }
 
 AffineMap RegistersLayoutAttr::getTensorMap(ArrayRef<int64_t> shape) const {
   auto shapeOfWarps = getShapeOfWarpsRef();
-  auto loopsPerWarp = getLoopsPerWarpRef();
+  auto warpLoops = getWarpLoopsRef();
   auto shapeOfLanes = getShapeOfLanesRef();
-  auto loopsPerLane = getLoopsPerLaneRef();
+  auto laneLoops = getLaneLoopsRef();
 
   auto rank = getRank();
   SmallVector<int64_t, 4> layoutShape(rank);
   for (unsigned i = 0; i < rank; ++i)
     layoutShape[i] =
-        shapeOfWarps[i] * loopsPerWarp[i] * shapeOfLanes[i] * loopsPerLane[i];
+        shapeOfWarps[i] * warpLoops[i] * shapeOfLanes[i] * laneLoops[i];
 
   SmallVector<AffineExpr, 4> indexExprs;
   for (unsigned i = 0; i < rank; ++i)
@@ -203,8 +201,9 @@ AffineMap RegistersLayoutAttr::getTensorMap(ArrayRef<int64_t> shape) const {
     if (shape[i] > layoutShape[i])
       indexExprs[i] = indexExprs[i] % layoutShape[i];
 
-  auto threadExpr = getLayoutMap().getResult(0).compose(
-      AffineMap::get(rank, 0, indexExprs, getContext()));
+  auto threadExpr = getLayoutMap().getResult(0);
+  auto indexMap = AffineMap::get(rank, 0, indexExprs, getContext());
+  threadExpr = threadExpr.compose(indexMap);
   return AffineMap::get(rank, 0, threadExpr);
 }
 
@@ -243,7 +242,7 @@ SmallVector<int64_t, 4> NvidiaMmaLayoutAttr::getShapeOfLanes() const {
   return shapeOfLanes;
 }
 
-SmallVector<int64_t, 4> NvidiaMmaLayoutAttr::getLoopsPerLane() const {
+SmallVector<int64_t, 4> NvidiaMmaLayoutAttr::getLaneLoops() const {
   auto rank = getRank();
   SmallVector<int64_t, 4> loopsPerLane(rank, 1);
   loopsPerLane[rank - 1] = 2;
@@ -252,8 +251,8 @@ SmallVector<int64_t, 4> NvidiaMmaLayoutAttr::getLoopsPerLane() const {
 
 RegistersLayoutAttr NvidiaMmaLayoutAttr::toRegistersLayout() const {
   return RegistersLayoutAttr::get(getContext(), getShapeOfWarpsRef(),
-                                  getLoopsPerWarpRef(), getShapeOfLanes(),
-                                  getLoopsPerLane());
+                                  getWarpLoopsRef(), getShapeOfLanes(),
+                                  getLaneLoops());
 }
 
 unsigned MmOperandLayoutAttr::getRank() const {

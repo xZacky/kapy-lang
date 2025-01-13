@@ -32,7 +32,6 @@
 #define KAPY_DIALECT_KAPY_IR_KAPY_H
 
 #include "kapy/Dialect/Kapy/IR/OpTraits.h"
-
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"

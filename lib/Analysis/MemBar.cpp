@@ -32,7 +32,6 @@
 #include "kapy/Analysis/Utils.h"
 #include "kapy/Dialect/Kapy/IR/Kapy.h"
 #include "kapy/Dialect/Kgpu/IR/Kgpu.h"
-
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 
 using namespace mlir;
@@ -150,7 +149,7 @@ void MemBarAnalysis::update(Operation *op, BlockInfo &infoToUpdate,
       for (auto &effect : effects) {
         if (auto value = effect.getValue()) {
           auto id = allocation->getBufferId(value);
-          if (id != Allocation::InvalidId) {
+          if (id != Allocation::invalidId) {
             if (isa<MemoryEffects::Read>(effect.getEffect()))
               info.readIntervals.insert(allocation->getInterval(id));
             if (isa<MemoryEffects::Write>(effect.getEffect()))
@@ -161,7 +160,7 @@ void MemBarAnalysis::update(Operation *op, BlockInfo &infoToUpdate,
     }
     // Scratch buffer read and write.
     auto id = allocation->getBufferId(op);
-    if (id != Allocation::InvalidId) {
+    if (id != Allocation::invalidId) {
       info.readIntervals.insert(allocation->getInterval(id));
       info.writeIntervals.insert(allocation->getInterval(id));
     }

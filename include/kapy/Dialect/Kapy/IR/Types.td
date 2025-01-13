@@ -59,14 +59,14 @@ def Kapy_IntFpTensor : RankedTensorOf<[Kapy_IntFp]>;
 def Kapy_IntFpLike : AnyTypeOf<[Kapy_IntFp, Kapy_IntFpTensor]>;
 
 def Kapy_PointerType : Kapy_TypeDef<"KapyPointer", "ptr"> {
-  let parameters = (ins "unsigned":$address_space);
+  let parameters = (ins "unsigned":$addressSpace);
 
   let skipDefaultBuilders = 1;
   let builders = [
     TypeBuilder<(ins "unsigned":$space), "return $_get($_ctxt, space);">
   ];
 
-  let assemblyFormat = "`<` $address_space `>`";
+  let assemblyFormat = "`<` $addressSpace `>`";
 }
 
 def Kapy_Ptr : DialectType<

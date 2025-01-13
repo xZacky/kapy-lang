@@ -25,17 +25,14 @@ public:
       : divisibility(divisibility), constant(constant) {}
 
   int64_t getDivisibility() const { return divisibility; }
-
   void setDivisibility(int64_t value) { divisibility = value; }
 
   bool hasConstant() const { return constant.has_value(); }
-
   bool hasConstantEqualTo(int64_t value) const {
     if (!hasConstant())
       return false;
     return constant.value() == value;
   }
-
   int64_t getConstant() const { return constant.value(); }
 
   bool isEntryState() const { return divisibility == 0 && !hasConstant(); }

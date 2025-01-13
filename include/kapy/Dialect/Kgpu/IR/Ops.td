@@ -31,7 +31,6 @@
 #define KAPY_DIALECT_KGPU_IR_OPS
 
 include "mlir/Interfaces/SideEffectInterfaces.td"
-
 include "kapy/Dialect/Kapy/IR/Enums.td"
 include "kapy/Dialect/Kapy/IR/OpTraits.td"
 include "kapy/Dialect/Kapy/IR/Types.td"

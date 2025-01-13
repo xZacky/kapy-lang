@@ -39,15 +39,15 @@ class Kapy_EnumAttr<string name, list<I32EnumAttrCase> cases>
 def Kapy_PaddingOptionAttr : Kapy_EnumAttr<
   "PaddingOption",
   [
-    I32EnumAttrCase<"PadZero", 0, "pad_zero">,
-    I32EnumAttrCase<"PadNan", 1, "pad_nan">
+    I32EnumAttrCase<"PAD_ZERO", 0, "pad_zero">,
+    I32EnumAttrCase<"PAD_NAN", 1, "pad_nan">
   ]
 >;
 
 def Kapy_CacheModifierAttr : Kapy_EnumAttr<
   "CacheModifier",
   [
-    I32EnumAttrCase<"None", 0, "none">,
+    I32EnumAttrCase<"NONE", 0, "none">,
     I32EnumAttrCase<"CA", 1, "ca">,
     I32EnumAttrCase<"CG", 2, "cg">,
     I32EnumAttrCase<"WB", 3, "wb">,
@@ -59,35 +59,35 @@ def Kapy_CacheModifierAttr : Kapy_EnumAttr<
 def Kapy_EvictPriorityAttr : Kapy_EnumAttr<
   "EvictPriority",
   [
-    I32EnumAttrCase<"Normal", 0, "normal">,
-    I32EnumAttrCase<"EvictFirst", 1, "evict_first">,
-    I32EnumAttrCase<"EvictLast", 2, "ecict_last">
+    I32EnumAttrCase<"NORMAL", 0, "normal">,
+    I32EnumAttrCase<"EVICT_FIRST", 1, "evict_first">,
+    I32EnumAttrCase<"EVICT_LAST", 2, "ecict_last">
   ]
 >;
 
 def Kapy_AtomicRMWKindAttr : Kapy_EnumAttr<
   "AtomicRMWKind",
   [
-    I32EnumAttrCase<"And", 1, "and">,
-    I32EnumAttrCase<"Or", 2, "or">,
-    I32EnumAttrCase<"Xor", 3, "xor">,
-    I32EnumAttrCase<"Add", 4, "add">,
-    I32EnumAttrCase<"Fadd", 5, "fadd">,
-    I32EnumAttrCase<"Max", 6, "max">,
-    I32EnumAttrCase<"Min", 7, "min">,
-    I32EnumAttrCase<"Umax", 8, "umax">,
-    I32EnumAttrCase<"Umin", 9, "umin">,
-    I32EnumAttrCase<"Xchg", 10, "xchg">
+    I32EnumAttrCase<"AND", 1, "and">,
+    I32EnumAttrCase<"OR", 2, "or">,
+    I32EnumAttrCase<"XOR", 3, "xor">,
+    I32EnumAttrCase<"ADD", 4, "add">,
+    I32EnumAttrCase<"FADD", 5, "fadd">,
+    I32EnumAttrCase<"MAX", 6, "max">,
+    I32EnumAttrCase<"MIN", 7, "min">,
+    I32EnumAttrCase<"UMAX", 8, "umax">,
+    I32EnumAttrCase<"UMIN", 9, "umin">,
+    I32EnumAttrCase<"XCHG", 10, "xchg">
   ]
 >;
 
 def Kapy_MemSemanticAttr : Kapy_EnumAttr<
   "MemSemantic",
   [
-    I32EnumAttrCase<"Relaxed", 1, "relaxed">,
-    I32EnumAttrCase<"Acquire", 2, "acquire">,
-    I32EnumAttrCase<"Release", 3, "release">,
-    I32EnumAttrCase<"AcquireRelease", 4, "acquire_release">
+    I32EnumAttrCase<"RELAXED", 1, "relaxed">,
+    I32EnumAttrCase<"ACQUIRE", 2, "acquire">,
+    I32EnumAttrCase<"RELEASE", 3, "release">,
+    I32EnumAttrCase<"ACQUIRE_RELEASE", 4, "acquire_release">
   ]
 >;
 
@@ -111,8 +111,8 @@ def Kapy_RoundingModeAttr : Kapy_EnumAttr<
 def Kapy_PropagateNanAttr : Kapy_EnumAttr<
   "PropagateNan",
   [
-    I32EnumAttrCase<"None", 0, "none">,
-    I32EnumAttrCase<"All", 1, "all">
+    I32EnumAttrCase<"NONE", 0, "none">,
+    I32EnumAttrCase<"ALL", 1, "all">
   ]
 >;
 
@@ -121,18 +121,18 @@ def Kapy_MatmulFormatAttr : Kapy_EnumAttr<
   [
     I32EnumAttrCase<"IEEE", 0, "ieee">,
     I32EnumAttrCase<"TF32", 1, "tf32">,
-    I32EnumAttrCase<"TF32x3", 2, "tf32x3">
+    I32EnumAttrCase<"TF32X3", 2, "tf32x3">
   ]
 >;
 
 def Kapy_DefaultValuedPaddingOptionAttr
-    : DefaultValuedAttr<Kapy_PaddingOptionAttr, "PaddingOption::PadZero">;
+    : DefaultValuedAttr<Kapy_PaddingOptionAttr, "PaddingOption::PAD_ZERO">;
 
 def Kapy_DefaultValuedCacheModifierAttr
-    : DefaultValuedAttr<Kapy_CacheModifierAttr, "CacheModifier::None">;
+    : DefaultValuedAttr<Kapy_CacheModifierAttr, "CacheModifier::NONE">;
 
 def Kapy_DefaultValuedEvictPriorityAttr
-    : DefaultValuedAttr<Kapy_EvictPriorityAttr, "EvictPriority::Normal">;
+    : DefaultValuedAttr<Kapy_EvictPriorityAttr, "EvictPriority::NORMAL">;
 
 def Kapy_DefaultValuedMatmulFormatAttr
     : DefaultValuedAttr<Kapy_MatmulFormatAttr, "MatmulFormat::TF32">;

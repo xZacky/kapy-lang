@@ -32,7 +32,6 @@
 #define KAPY_ANALYSIS_ALLOCATION_H
 
 #include "kapy/Analysis/CallGraph.h"
-
 #include <atomic>
 
 namespace mlir {
@@ -77,7 +76,7 @@ template <typename T> Interval(T, T) -> Interval<T>;
 class Allocation {
 public:
   using BufferId = int64_t;
-  static constexpr BufferId InvalidId = -1;
+  static constexpr BufferId invalidId = -1;
   Allocation() = default;
   explicit Allocation(Operation *op) : operation(op) {}
 
@@ -96,7 +95,7 @@ public:
   BufferId getBufferId(Value value) const {
     if (explicits.contains(value))
       return explicits.lookup(value)->id;
-    return InvalidId;
+    return invalidId;
   }
   /// This method only return the scratch or virtual buffer id.
   BufferId getBufferId(Operation *op) const {
@@ -104,7 +103,7 @@ public:
       return scratchs.lookup(op)->id;
     if (virtuals.contains(op))
       return virtuals.lookup(op)->id;
-    return InvalidId;
+    return invalidId;
   }
 
   bool isExplicit(BufferId id) const {
@@ -121,12 +120,12 @@ public:
 
 private:
   struct Buffer {
-    /// Explicit: LocalAllocOp
-    /// Scratch: ReduceOp, ChangeOp
-    /// Virtual: CallOp
+    // Explicit: LocalAllocOp
+    // Scratch: ReduceOp, ChangeOp
+    // Virtual: CallOp
     enum class BufferKind { Explicit, Scratch, Virtual };
 
-    /// MT: thread safe
+    // MT: thread safe
     inline static std::atomic<BufferId> nextId = 0;
 
     BufferKind kind;
@@ -136,10 +135,8 @@ private:
     int64_t offset;
 
     Buffer() : Buffer(BufferKind::Explicit, 0) {}
-    Buffer(BufferKind kind, int64_t size, int64_t alignment = 4,
-           int64_t offset = 0)
-        : kind(kind), id(nextId++), size(size), alignment(alignment),
-          offset(offset) {}
+    Buffer(BufferKind kind, int64_t size)
+        : kind(kind), id(nextId++), size(size), alignment(128), offset(0) {}
 
     bool operator==(const Buffer &other) const { return id == other.id; }
 
@@ -185,16 +182,11 @@ private:
   DenseMap<FunctionOpInterface, Allocation> *funcAllocations;
   llvm::MapVector<Buffer *, Interval<OpId>> bufferLivenesses;
 
-  void addExplicit(Operation *op);
-  void addScratch(Operation *op);
-  void addVirtual(Operation *op);
-
   void addBuffers();
 
   void resolveExplicits(function_ref<Interval<OpId>(Value)> getLiveness);
   void resolveScratchsAndVirtuals(const DenseMap<Operation *, OpId> &opIds);
-
-  void resolveLivenesses();
+  void resolveLiveness();
 
   // Compute the shared memory offsets and allocate for all related buffers
   // while considering interference.
@@ -204,12 +196,12 @@ private:
 
   // Build a graph of all shared memory values. Edges are created between shared
   // memory values that are overlapping.
-  void buildInterference(ArrayRef<Buffer *> buffers,
-                         DenseMap<Buffer *, DenseSet<Buffer *>> &interference);
+  void buildGraph(ArrayRef<Buffer *> buffers,
+                  DenseMap<Buffer *, DenseSet<Buffer *>> &graph);
 
   // Finalize shared memory offsets while considering interference.
   void allocate(ArrayRef<Buffer *> buffers,
-                const DenseMap<Buffer *, DenseSet<Buffer *>> &interference);
+                const DenseMap<Buffer *, DenseSet<Buffer *>> &graph);
 };
 
 class ModuleAllocationAnalysis : public CallGraph<Allocation> {

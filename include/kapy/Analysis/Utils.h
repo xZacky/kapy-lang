@@ -42,10 +42,6 @@ template <typename DialectT> bool fromDialect(Operation *op) {
   return op->getDialect()->getTypeID() == TypeID::get<DialectT>();
 }
 
-/// Return true if the given value is not tensor type or is tensor with only one
-/// element.
-bool hasSingleValue(Value value);
-
 /// Multi-root DAG topological sort.
 /// Perform a topological sort of operations in the `ops` SetVector and return a
 /// topologically sorted SetVector.
@@ -60,7 +56,7 @@ SetVector<Operation *> multiRootGetSlice(Operation *op,
                                          TransitiveFilter fwFilter = nullptr);
 
 /// Return true if there is a path from `srcOp` to `dstOp` in `slice`, and all
-/// the operations meet with `filter`.
+/// the operations on this path meet with `filter`.
 ///
 /// Note that all the operations in `slice` can't have region(s).
 bool hasRestrictedPath(Operation *srcOp, Operation *dstOp,

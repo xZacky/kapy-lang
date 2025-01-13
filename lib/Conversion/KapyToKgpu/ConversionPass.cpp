@@ -109,16 +109,15 @@ public:
 
     auto shapeOfWarps = operandLayout.getShapeOfWarps();
     shapeOfWarps.insert(shapeOfWarps.begin() + axis, 1);
-    auto loopsPerWarp = operandLayout.getLoopsPerWarp();
-    loopsPerWarp.insert(loopsPerWarp.begin() + axis, 1);
+    auto warpLoops = operandLayout.getWarpLoops();
+    warpLoops.insert(warpLoops.begin() + axis, 1);
     auto shapeOfLanes = operandLayout.getShapeOfLanes();
     shapeOfLanes.insert(shapeOfLanes.begin() + axis, 1);
-    auto loopsPerLane = operandLayout.getLoopsPerLane();
-    loopsPerLane.insert(loopsPerLane.begin() + axis, 1);
+    auto laneLoops = operandLayout.getLaneLoops();
+    laneLoops.insert(laneLoops.begin() + axis, 1);
 
-    auto regisLayout =
-        RegistersLayoutAttr::get(op.getContext(), shapeOfWarps, loopsPerWarp,
-                                 shapeOfLanes, loopsPerLane);
+    auto regisLayout = RegistersLayoutAttr::get(
+        op.getContext(), shapeOfWarps, warpLoops, shapeOfLanes, laneLoops);
     auto sliceLayout =
         SliceAxisLayoutAttr::get(op.getContext(), regisLayout, axis);
 
@@ -178,18 +177,18 @@ public:
     auto shape = type.getShape();
     auto numElems = product(shape);
 
-    SmallVector<int64_t, 4> loopsPerLane(rank, 1);
+    SmallVector<int64_t, 4> laneLoops(rank, 1);
     if (shape[rank - 1] >= 32 && shape[rank - 2] >= 32 &&
         numElems / numThreads >= 16) {
-      loopsPerLane[rank - 1] = 4;
-      loopsPerLane[rank - 2] = 4;
+      laneLoops[rank - 1] = 4;
+      laneLoops[rank - 2] = 4;
     } else {
-      loopsPerLane[rank - 1] = 2;
-      loopsPerLane[rank - 2] = 2;
+      laneLoops[rank - 1] = 2;
+      laneLoops[rank - 2] = 2;
     }
 
     auto accumLayout =
-        getRegistersLayout(op.getContext(), loopsPerLane, shape, numWarps);
+        getRegistersLayout(op.getContext(), laneLoops, shape, numWarps);
     auto accumType = cloneWith(type, accumLayout);
     auto accum = adaptor.getAccum();
     accum = rewriter.create<ChangeOp>(accum.getLoc(), accumType, accum);
@@ -328,7 +327,7 @@ public:
     auto newOp = rewriter.create<scf::WhileOp>(op.getLoc(), newTypes,
                                                adaptor.getOperands());
     addNamedAttributes(newOp, adaptor.getAttributes());
-    for (auto i : {0, 1}) {
+    for (unsigned i : {0, 1}) {
       auto &newRegion = newOp.getRegion(i);
       rewriter.inlineRegionBefore(op.getRegion(i), newRegion, newRegion.end());
       if (failed(rewriter.convertRegionTypes(&newRegion, *typeConverter)))
@@ -518,8 +517,8 @@ public:
 
   virtual void runOnOperation() override {
     auto module = getOperation();
-    auto *context = &getContext();
 
+    auto *context = &getContext();
     RewritePatternSet patterns(context);
     KgpuTypeConverter typeConverter(context, numWarps);
     KgpuConversionTarget convTarget(context, typeConverter);

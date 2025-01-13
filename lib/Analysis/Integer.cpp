@@ -10,7 +10,6 @@
 #include "kapy/Dialect/Kapy/IR/Kapy.h"
 #include "kapy/Dialect/Kapy/IR/Utils.h"
 #include "kapy/Dialect/Kgpu/IR/Kgpu.h"
-
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
 
 using namespace mlir;
@@ -18,14 +17,14 @@ using namespace mlir::kapy;
 using namespace mlir::dataflow;
 
 /// Implementation of euclidean algorithm.
-template <typename T> static T gcdImpl(T a, T b, T &x, T &y) {
+template <typename I> static I gcdImpl(I a, I b, I &x, I &y) {
   if (a == 0) {
     x = 0;
     y = 1;
     return b;
   }
-  T x1, y1; // to store results of recursive call
-  T g = gcdImpl(b % a, a, x1, y1);
+  I x1, y1; // to store results of recursive call
+  I g = gcdImpl(b % a, a, x1, y1);
   // update `x` and `y` using results of recursive call
   x = y1 - (b / a) * x1;
   y = x1;
@@ -33,29 +32,29 @@ template <typename T> static T gcdImpl(T a, T b, T &x, T &y) {
 }
 
 /// Greatest common divisor.
-template <typename T> static T gcd(T a, T b) {
-  static_assert(std::is_integral_v<T>);
+template <typename I> static I gcd(I a, I b) {
+  static_assert(std::is_integral_v<I>);
   if (a == 0)
     return b;
   if (b == 0)
     return a;
-  T x, y;
+  I x, y;
   return gcdImpl(a, b, x, y);
 }
 
 /// Greatest power of two divisor. If `x == 0`, return the greatest power of two
-/// for type `T`.
-template <typename T> static T gpd(T x) {
-  static_assert(std::is_integral_v<T>);
+/// for type `I`.
+template <typename I> static I gpd(I x) {
+  static_assert(std::is_integral_v<I>);
   if (x == 0)
-    return static_cast<T>(1) << (sizeof(T) * 8 - 2);
+    return static_cast<I>(1) << (sizeof(I) * 8 - 2);
   return x & (~(x - 1));
 }
 
-/// If `a * b` overflows, return greatest the power of two for type `T`.
-template <typename T> static T mul(T a, T b) {
-  static_assert(std::is_integral_v<T>);
-  T g = gpd<T>(0);
+/// If `a * b` overflows, return greatest the power of two for type `I`.
+template <typename I> static I mul(I a, I b) {
+  static_assert(std::is_integral_v<I>);
+  I g = gpd<I>(0);
   return a > g / b ? g : a * b;
 }
 
@@ -92,8 +91,7 @@ private:
   std::vector<std::unique_ptr<IntegerInfoVisitor>> visitors;
 };
 
-template <typename OpT> //
-class OpIntegerInfoVisitor : public IntegerInfoVisitor {
+template <typename OpT> class OpIntegerInfoVisitor : public IntegerInfoVisitor {
 public:
   using IntegerInfoVisitor::IntegerInfoVisitor;
 
@@ -377,6 +375,15 @@ public:
 template <typename OpT>
 class BitOpIntegerInfoVisitor : public BinOpIntegerInfoVisitor<OpT> {
 public:
+  virtual int64_t getDivisibility(OpT op, //
+                                  const IntegerInfo &lhs,
+                                  const IntegerInfo &rhs) override {
+    std::optional<int64_t> constant = getConstant(op, lhs, rhs);
+    if (constant.has_value())
+      return constant.value() == 0 ? gpd<int64_t>(0) : 1;
+    return 1;
+  }
+
   virtual std::optional<int64_t> getConstant(OpT op, //
                                              const IntegerInfo &lhs,
                                              const IntegerInfo &rhs) override {
@@ -607,9 +614,10 @@ IntegerInfo IntegerInfo::getPessimisticState(Value value) {
       info.setDivisibility(gpd<int64_t>(0));
     // Other operations are conservatively initialized with the lowest possible
     // divisibility, unless been specified.
-    if (auto attr = op->getDiscardableAttr(divisibilityAttrName))
+    else if (auto attr = op->getDiscardableAttr(divisibilityAttrName))
       info.setDivisibility(cast<IntegerAttr>(attr).getInt());
   }
+  info.setDivisibility(1);
   return info;
 }
 
@@ -657,12 +665,11 @@ void ModuleIntegerInfoAnalysis::update(CallOpInterface caller,
   for (auto it : llvm::enumerate(caller->getOperands())) {
     auto updateAttr = [&](StringRef name, int64_t newValue) {
       auto curValue = gpd<int64_t>(0);
-      if (auto intAttr = callee.getArgAttrOfType<IntegerAttr>(it.index(), name))
-        curValue = intAttr.getInt();
-      auto newAttr = IntegerAttr::get(i64Type, gcd(newValue, curValue));
+      if (auto curAttr = callee.getArgAttrOfType<IntegerAttr>(it.index(), name))
+        curValue = curAttr.getInt();
+      auto newAttr = IntegerAttr::get(i64Type, gcd(curValue, newValue));
       callee.setArgAttr(it.index(), name, newAttr);
     };
-
     auto info = infos->lookup(it.value());
     updateAttr(divisibilityAttrName, info.getDivisibility());
   }

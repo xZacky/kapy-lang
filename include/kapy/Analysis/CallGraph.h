@@ -45,14 +45,13 @@ public:
 
   /// Walk the call graph and apply the provided update callbacks to the edges
   /// and nodes.
-  template <WalkOrder EdgeUpdateOrder = WalkOrder::PreOrder,
-            WalkOrder NodeUpdateOrder = WalkOrder::PreOrder,
+  template <WalkOrder EdgeOrder = WalkOrder::PreOrder, //
+            WalkOrder NodeOrder = WalkOrder::PreOrder, //
             typename EdgeUpdaterT, typename NodeUpdaterT>
   void walk(EdgeUpdaterT edgeUpdater, NodeUpdaterT nodeUpdater) {
     DenseSet<FunctionOpInterface> seen;
     for (auto funcOp : roots)
-      doWalk<EdgeUpdateOrder, NodeUpdateOrder>(funcOp, seen, edgeUpdater,
-                                               nodeUpdater);
+      doWalk<EdgeOrder, NodeOrder>(funcOp, seen, edgeUpdater, nodeUpdater);
   }
 
   /// Retrieve the data associated with a function.
@@ -99,7 +98,7 @@ private:
     });
   }
 
-  template <WalkOrder EdgeOrder = WalkOrder::PreOrder,
+  template <WalkOrder EdgeOrder = WalkOrder::PreOrder, //
             WalkOrder NodeOrder = WalkOrder::PreOrder, //
             typename EdgeUpdaterT, typename NodeUpdaterT>
   void doWalk(FunctionOpInterface funcOp, DenseSet<FunctionOpInterface> &seen,

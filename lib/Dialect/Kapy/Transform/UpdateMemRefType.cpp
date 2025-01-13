@@ -28,6 +28,8 @@ static void propagateNewType(Value value, Type newType, DenseSet<Value> &seen) {
     if (auto whileOp = dyn_cast<scf::WhileOp>(useOp)) {
       auto beforeArg = whileOp.getBeforeArguments()[useIndex];
       propagateNewType(beforeArg, newType, seen);
+      auto result = whileOp.getResult(useIndex);
+      propagateNewType(result, newType, seen);
       continue;
     }
     if (auto yieldOp = dyn_cast<scf::YieldOp>(useOp)) {
@@ -46,7 +48,7 @@ static void propagateNewType(Value value, Type newType, DenseSet<Value> &seen) {
     }
     if (auto conditionOp = dyn_cast<scf::ConditionOp>(useOp)) {
       auto whileOp = cast<scf::WhileOp>(conditionOp->getParentOp());
-      // Skip argument 0 as it is the condition.
+      // Skip first operand as it is the condition.
       auto argIndex = useIndex - 1;
       auto afterArg = whileOp.getAfterArguments()[argIndex];
       propagateNewType(afterArg, newType, seen);
