@@ -9,7 +9,6 @@
 #include "kapy/Analysis/Utils.h"
 #include "kapy/Dialect/Kapy/IR/Kapy.h"
 #include "kapy/Dialect/Kapy/IR/Utils.h"
-#include "kapy/Dialect/Kgpu/IR/Kgpu.h"
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
 
 using namespace mlir;
@@ -509,7 +508,6 @@ public:
                     CastOpIntegerInfoVisitor<arith::ExtUIOp>,
                     CastOpIntegerInfoVisitor<arith::TruncIOp>,
                     CastOpIntegerInfoVisitor<arith::BitcastOp>,
-                    CastOpIntegerInfoVisitor<ChangeOp>,
                     CastOpIntegerInfoVisitor<UnrealizedConversionCastOp>>();
     visitors.append<ConstantOpIntegerInfoVisitor>();
     visitors.append<AddSubOpIntegerInfoVisitor<arith::AddIOp>,
@@ -640,12 +638,12 @@ void ModuleIntegerInfoAnalysis::initialize(FunctionOpInterface funcOp) {
   if (failed(solver->initializeAndRun(funcOp)))
     return;
 
-  auto *infos = getData(funcOp);
+  auto *valueToInfo = getData(funcOp);
   auto updateInfo = [&](Value value) {
     auto info = analysis->getLatticeElement(value)->getValue();
-    if (infos->contains(value))
-      info = IntegerInfo::join(info, infos->lookup(value));
-    (*infos)[value] = info;
+    if (valueToInfo->contains(value))
+      info = IntegerInfo::join(info, valueToInfo->lookup(value));
+    (*valueToInfo)[value] = info;
   };
 
   funcOp.walk([&](Operation *op) {
@@ -661,7 +659,7 @@ void ModuleIntegerInfoAnalysis::initialize(FunctionOpInterface funcOp) {
 void ModuleIntegerInfoAnalysis::update(CallOpInterface caller,
                                        FunctionOpInterface callee) {
   auto i64Type = IntegerType::get(callee.getContext(), 64);
-  auto *infos = getData(caller->getParentOfType<FunctionOpInterface>());
+  auto *valueToInfo = getData(caller->getParentOfType<FunctionOpInterface>());
   for (auto it : llvm::enumerate(caller->getOperands())) {
     auto updateAttr = [&](StringRef name, int64_t newValue) {
       auto curValue = gpd<int64_t>(0);
@@ -670,7 +668,7 @@ void ModuleIntegerInfoAnalysis::update(CallOpInterface caller,
       auto newAttr = IntegerAttr::get(i64Type, gcd(curValue, newValue));
       callee.setArgAttr(it.index(), name, newAttr);
     };
-    auto info = infos->lookup(it.value());
+    auto info = valueToInfo->lookup(it.value());
     updateAttr(divisibilityAttrName, info.getDivisibility());
   }
 }

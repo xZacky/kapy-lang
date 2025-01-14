@@ -25,20 +25,27 @@ def Kgpu_SharedMemLayoutAttr : Kgpu_AttrDef<"SharedMemLayout", "shmem"> {
   let assemblyFormat = [{
     `<` `[` $strides `]` `,` $bitWidth `,` $maxPhase `>`
   }];
+
+  let extraClassDeclaration = [{
+    /// Get an AffineMap from memref indices to the relative offset from the
+    /// first element of this memref before swizzling.
+    AffineMap getMemRefMap() const;
+  }];
 }
 
-def Kgpu_RegistersLayoutAttr : Kgpu_AttrDef<"RegistersLayout", "regis"> {
+def Kgpu_FragmentsLayoutAttr : Kgpu_AttrDef<"FragmentsLayout", "frags"> {
   let description = [{
-    RegistersLayout has five parameters:
+    FragmentsLayout has five parameters:
     1. `$shape_of_warps`: Shape of warps.
     3. `$warp_loops`: Loops executed by each warp.
     2. `$shape_of_lanes`: Shape of lanes.
     4. `$lane_loops`: Loops executed by each lane.
     5. `$order`: Order of axes from minor to major.
+
     We will build a layout from these parameters.
     For example:
     ```
-    #regis<[2, 2], [2, 1], [2, 4], [1, 2], (0, 1)>
+    #frags<[2, 2], [2, 1], [2, 4], [1, 2], (0, 1)>
     ```
     We first compute the layout of threads from `$order`, `$shape_of_lanes` and
     `$shape_of_warps`:
@@ -86,7 +93,7 @@ def Kgpu_RegistersLayoutAttr : Kgpu_AttrDef<"RegistersLayout", "regis"> {
     ```
   }];
 
-  let mnemonic = "regis";
+  let mnemonic = "frags";
   let parameters = (ins
     ArrayRefParameter<"int64_t">:$shapeOfWarpsRef,
     ArrayRefParameter<"int64_t">:$warpLoopsRef,
@@ -118,17 +125,17 @@ def Kgpu_RegistersLayoutAttr : Kgpu_AttrDef<"RegistersLayout", "regis"> {
     SmallVector<int64_t, 4> getShapeOfWarps() const {
       return llvm::to_vector<4>(getShapeOfWarpsRef());
     }
-
     SmallVector<int64_t, 4> getWarpLoops() const {
       return llvm::to_vector<4>(getWarpLoopsRef());
     }
-
     SmallVector<int64_t, 4> getShapeOfLanes() const {
       return llvm::to_vector<4>(getShapeOfLanesRef());
     }
-
     SmallVector<int64_t, 4> getLaneLoops() const {
       return llvm::to_vector<4>(getLaneLoopsRef());
+    }
+    SmallVector<unsigned, 4> getOrder() const {
+      return llvm::to_vector<4>(getOrderRef());
     }
 
     /// Get an AffineMap from layout indices to the thread id for this layout.
@@ -139,10 +146,9 @@ def Kgpu_RegistersLayoutAttr : Kgpu_AttrDef<"RegistersLayout", "regis"> {
   }];
 }
 
-def Kgpu_SliceAxisLayoutAttr : Kgpu_AttrDef<"SliceAxisLayout", "slice"> {
+def Kgpu_AxisSliceLayoutAttr : Kgpu_AttrDef<"AxisSliceLayout", "slice"> {
   let description = [{
-    SliceAxisLayout is build from a layout `$parent` by slicing `$parent` along
-    `$axis` and get several layouts.
+    AxisSliceLayout is build from slicing a layout `$parent` along `$axis`.
     For example, we have a layout:
     ```
     [ 0,  1,  2,  3]
@@ -185,21 +191,17 @@ def Kgpu_NvidiaMmaLayoutAttr : Kgpu_AttrDef<"NvidiaMmaLayout", "nvmma"> {
   let extraClassDeclaration = [{
     unsigned getRank() const { return getShapeOfWarpsRef().size(); }
 
-    SmallVector<unsigned, 4> getOrder() const;
-
     SmallVector<int64_t, 4> getShapeOfWarps() const {
       return llvm::to_vector<4>(getShapeOfWarpsRef());
     }
-
     SmallVector<int64_t, 4> getWarpLoops() const {
       return llvm::to_vector<4>(getWarpLoopsRef());
     }
-
     SmallVector<int64_t, 4> getShapeOfLanes() const;
-
     SmallVector<int64_t, 4> getLaneLoops() const;
+    SmallVector<unsigned, 4> getOrder() const;
 
-    RegistersLayoutAttr toRegistersLayout() const;
+    FragmentsLayoutAttr toFragmentsLayout() const;
   }];
 }
 

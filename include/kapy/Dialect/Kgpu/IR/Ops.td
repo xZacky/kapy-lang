@@ -113,7 +113,7 @@ def Kgpu_AsyncCopyOp : Kgpu_Op<
   let arguments = (ins
     Kapy_IntFpMemRef:$source,
     Kapy_IntFpMemRef:$target,
-    Kgpu_RegistersLayoutAttr:$layout,
+    Kgpu_FragmentsLayoutAttr:$layout,
     Kapy_DefaultValuedCacheModifierAttr:$cache_modifier,
     Kapy_DefaultValuedEvictPriorityAttr:$evict_priority,
     DefaultValuedAttr<BoolAttr, "false">:$is_volatile
@@ -125,7 +125,7 @@ def Kgpu_AsyncCopyOp : Kgpu_Op<
       (ins
         "Value":$source,
         "Value":$target,
-        "RegistersLayoutAttr":$layout,
+        "FragmentsLayoutAttr":$layout,
         "CacheModifier":$cacheModifier,
         "EvictPriority":$evictPriority,
         "bool":$isVolatile

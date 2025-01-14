@@ -17,42 +17,34 @@ static void propagateNewType(Value value, Type newType, DenseSet<Value> &seen) {
   value.setType(newType);
   for (auto &use : value.getUses()) {
     auto *useOp = use.getOwner();
-    auto useIndex = use.getOperandNumber();
+    auto index = use.getOperandNumber();
     if (auto forOp = dyn_cast<scf::ForOp>(useOp)) {
       auto iterArg = forOp.getTiedLoopRegionIterArg(&use);
       propagateNewType(iterArg, newType, seen);
-      auto result = forOp.getTiedLoopResult(&use);
-      propagateNewType(result, newType, seen);
       continue;
     }
     if (auto whileOp = dyn_cast<scf::WhileOp>(useOp)) {
-      auto beforeArg = whileOp.getBeforeArguments()[useIndex];
+      auto beforeArg = whileOp.getBeforeArguments()[index];
       propagateNewType(beforeArg, newType, seen);
-      auto result = whileOp.getResult(useIndex);
-      propagateNewType(result, newType, seen);
       continue;
     }
     if (auto yieldOp = dyn_cast<scf::YieldOp>(useOp)) {
       auto *parentOp = yieldOp->getParentOp();
       SmallVector<Value> values;
       if (isa<scf::ForOp, scf::IfOp>(parentOp))
-        values.push_back(parentOp->getResult(useIndex));
+        values.push_back(parentOp->getResult(index));
       if (auto forOp = dyn_cast<scf::ForOp>(parentOp))
-        values.push_back(forOp.getRegionIterArg(useIndex));
-      if (auto whileOp = dyn_cast<scf::WhileOp>(parentOp)) {
-        values.push_back(whileOp.getBeforeArguments()[useIndex]);
-        values.push_back(whileOp->getOperand(useIndex));
-      }
+        values.push_back(forOp.getRegionIterArg(index));
+      if (auto whileOp = dyn_cast<scf::WhileOp>(parentOp))
+        values.push_back(whileOp.getBeforeArguments()[index]);
       for (auto value : values)
         propagateNewType(value, newType, seen);
     }
     if (auto conditionOp = dyn_cast<scf::ConditionOp>(useOp)) {
       auto whileOp = cast<scf::WhileOp>(conditionOp->getParentOp());
-      // Skip first operand as it is the condition.
-      auto argIndex = useIndex - 1;
-      auto afterArg = whileOp.getAfterArguments()[argIndex];
+      auto afterArg = whileOp.getAfterArguments()[index - 1];
       propagateNewType(afterArg, newType, seen);
-      auto result = whileOp->getResult(argIndex);
+      auto result = whileOp->getResult(index - 1);
       propagateNewType(result, newType, seen);
       continue;
     }
@@ -75,7 +67,7 @@ public:
     auto module = getOperation();
 
     SmallVector<MakeMemRefOp> makeOps;
-    module.walk([&](MakeMemRefOp getOp) { makeOps.push_back(getOp); });
+    module.walk([&](MakeMemRefOp makeOp) { makeOps.push_back(makeOp); });
 
     for (auto makeOp : makeOps) {
       auto memrefType = makeOp.getType();

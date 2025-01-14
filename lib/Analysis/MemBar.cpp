@@ -38,16 +38,8 @@ using namespace mlir;
 using namespace mlir::kapy;
 
 void MemBarAnalysis::run(
-    DenseMap<FunctionOpInterface, BlockInfo> &funcInfos) const {
+    DenseMap<FunctionOpInterface, BlockInfo> &funcToInfo) const {
   auto funcOp = cast<FunctionOpInterface>(allocation->getOperation());
-  OpBuilder builder(funcOp.getContext());
-  resolve(funcOp, funcInfos, builder);
-}
-
-void MemBarAnalysis::resolve(
-    FunctionOpInterface funcOp,
-    DenseMap<FunctionOpInterface, BlockInfo> &funcInfos,
-    OpBuilder &builder) const {
   std::deque<Block *> list;
   funcOp.walk<WalkOrder::PreOrder>([&](Block *block) {
     for (auto &op : block->getOperations()) {
@@ -61,43 +53,44 @@ void MemBarAnalysis::resolve(
       list.push_back(block);
   });
 
-  DenseMap<Block *, BlockInfo> succInfos;
-  DenseMap<Block *, BlockInfo> thisInfos;
+  DenseMap<Block *, BlockInfo> oldBlockToInfo;
+  DenseMap<Block *, BlockInfo> newBlockToInfo;
   // A fixed point algorithm.
   while (!list.empty()) {
     auto *block = list.front();
     list.pop_front();
-    // Make a copy of the succInfo.
-    auto copyInfo = succInfos[block];
+    // Make a copy of the old info.
+    auto curInfo = oldBlockToInfo[block];
     SmallVector<Block *> successors;
-    for (auto &op : block->getOperations()) {
+    // Visit all the operations in this block.
+    for (auto &op : block->getOperations())
       if (op.hasTrait<OpTrait::IsTerminator>())
-        visitTerminator(&op, successors);
+        visit(&op, successors);
       else
-        update(&op, copyInfo, funcInfos, builder);
-    }
-    if (thisInfos.contains(block) && copyInfo == thisInfos[block]) {
-      // If we have seen the block before and the copyInfo is the same as the
-      // thisInfo, we skip it and its successors.
+        visit(&op, curInfo, funcToInfo);
+    if (newBlockToInfo.contains(block) && curInfo == newBlockToInfo[block]) {
+      // If we have seen the block before and the there are no update for this
+      // block, we skip it and its successors.
       continue;
     }
     // Update the current block.
-    thisInfos[block].join(copyInfo);
+    newBlockToInfo[block].join(curInfo);
     // Update the successors.
     for (auto *successor : successors) {
-      succInfos[successor].join(thisInfos[block]);
+      oldBlockToInfo[successor].join(newBlockToInfo[block]);
       list.push_back(successor);
     }
   }
   // Update the final dangling buffers that haven't been synced.
-  auto &funcInfo = funcInfos[funcOp];
+  auto &funcInfo = funcToInfo[funcOp];
   funcOp.walk<WalkOrder::PreOrder>([&](Block *block) {
-    block->walk([&](ReturnOp returnOp) { funcInfo.join(thisInfos[block]); });
+    if (isa<ReturnOp>(block->getTerminator()))
+      funcInfo.join(newBlockToInfo[block]);
   });
 }
 
-void MemBarAnalysis::visitTerminator(
-    Operation *op, SmallVectorImpl<Block *> &successors) const {
+void MemBarAnalysis::visit(Operation *op,
+                           SmallVectorImpl<Block *> &successors) const {
   if (auto branchOp = dyn_cast<BranchOpInterface>(op)) {
     auto *block = branchOp->getBlock();
     successors.append(block->getSuccessors().begin(),
@@ -110,14 +103,14 @@ void MemBarAnalysis::visitTerminator(
   llvm_unreachable("unknown terminator encountered");
 }
 
-void MemBarAnalysis::insertBarrier(Operation *op, OpBuilder &builder) const {
-  OpBuilder::InsertionGuard guard(builder);
-  (void)builder.create<gpu::BarrierOp>(op->getLoc());
+void MemBarAnalysis::insertBarrier(Operation *op) const {
+  builder->setInsertionPoint(op);
+  builder->create<gpu::BarrierOp>(op->getLoc());
 }
 
-void MemBarAnalysis::update(Operation *op, BlockInfo &infoToUpdate,
-                            DenseMap<FunctionOpInterface, BlockInfo> &funcInfos,
-                            OpBuilder &builder) const {
+void MemBarAnalysis::visit(
+    Operation *op, BlockInfo &infoToUpdate,
+    DenseMap<FunctionOpInterface, BlockInfo> &funcToInfo) const {
   if (isa<gpu::BarrierOp>(op)) {
     // If the current operation is a BarrierOp, we sync previous reads and
     // writes.
@@ -127,8 +120,7 @@ void MemBarAnalysis::update(Operation *op, BlockInfo &infoToUpdate,
   if (isa<AsyncWaitOp>(op) && !isa<gpu::BarrierOp>(op->getNextNode())) {
     // If the current operation is an AsyncWaitOp and the next operation is not
     // a BarrierOp we insert a BarrierOp and sync.
-    builder.setInsertionPointAfter(op);
-    insertBarrier(op, builder);
+    insertBarrier(op);
     infoToUpdate.sync();
     return;
   }
@@ -139,7 +131,7 @@ void MemBarAnalysis::update(Operation *op, BlockInfo &infoToUpdate,
     auto callOp = dyn_cast<CallOpInterface>(op);
     auto *callable = callOp.resolveCallable();
     if (auto funcOp = dyn_cast_or_null<FunctionOpInterface>(callable))
-      info = funcInfos.lookup(funcOp);
+      info = funcToInfo.lookup(funcOp);
   } else {
     // Intra-function dependencies.
     if (auto effectOp = dyn_cast<MemoryEffectOpInterface>(op)) {
@@ -157,17 +149,17 @@ void MemBarAnalysis::update(Operation *op, BlockInfo &infoToUpdate,
           }
         }
       }
-    }
-    // Scratch buffer read and write.
-    auto id = allocation->getBufferId(op);
-    if (id != Allocation::invalidId) {
-      info.readIntervals.insert(allocation->getInterval(id));
-      info.writeIntervals.insert(allocation->getInterval(id));
+    } else {
+      // Scratch buffer read and write.
+      auto id = allocation->getBufferId(op);
+      if (id != Allocation::invalidId) {
+        info.readIntervals.insert(allocation->getInterval(id));
+        info.writeIntervals.insert(allocation->getInterval(id));
+      }
     }
   }
   if (infoToUpdate.isIntersected(info)) {
-    builder.setInsertionPoint(op);
-    insertBarrier(op, builder);
+    insertBarrier(op);
     infoToUpdate.sync();
   }
   // Update the block info, even if barrier is inserted, we have to maintain the

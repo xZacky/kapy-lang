@@ -98,30 +98,24 @@ public:
   /// as both a shared memory write and read.
   /// If the temporary storage is written but not read, it is considered as the
   /// problem of the operation itself.
-  MemBarAnalysis() = default;
-  explicit MemBarAnalysis(Allocation *allocation) : allocation(allocation) {}
+  explicit MemBarAnalysis(Allocation *allocation) : allocation(allocation) {
+    builder = std::make_unique<OpBuilder>(allocation->getOperation());
+  }
 
   /// Run this analysis on the given function, insert a barrier if necessary.
-  void run(DenseMap<FunctionOpInterface, BlockInfo> &funcInfos) const;
+  void run(DenseMap<FunctionOpInterface, BlockInfo> &funcToInfo) const;
 
 private:
-  /// Apply this analysis based on the basic blocks.
-  /// TODO: Explain why we don't use ForwardAnalysis.
-  void resolve(FunctionOpInterface funcOp,
-               DenseMap<FunctionOpInterface, BlockInfo> &funcInfos,
-               OpBuilder &builder) const;
+  Allocation *allocation = nullptr;
+  std::unique_ptr<OpBuilder> builder;
 
-  void update(Operation *op, BlockInfo &infoToUpdate,
-              DenseMap<FunctionOpInterface, BlockInfo> &funcInfos,
-              OpBuilder &builder) const;
+  void visit(Operation *op, BlockInfo &infoToUpdate,
+             DenseMap<FunctionOpInterface, BlockInfo> &funcToInfo) const;
 
   /// Collect the successors of the terminator.
-  void visitTerminator(Operation *op,
-                       SmallVectorImpl<Block *> &successors) const;
+  void visit(Operation *op, SmallVectorImpl<Block *> &successors) const;
 
-  void insertBarrier(Operation *op, OpBuilder &builder) const;
-
-  Allocation *allocation = nullptr;
+  void insertBarrier(Operation *op) const;
 };
 
 /// Post-order traversal on the call graph to insert memory barrier instructions

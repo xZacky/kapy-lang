@@ -14,7 +14,7 @@
 using namespace mlir;
 using namespace kapy;
 
-RegistersLayoutAttr kapy::getRegistersLayout(MLIRContext *context,
+FragmentsLayoutAttr kapy::getFragmentsLayout(MLIRContext *context,
                                              ArrayRef<int64_t> laneLoops,
                                              ArrayRef<int64_t> shape,
                                              ArrayRef<unsigned> order,
@@ -42,23 +42,23 @@ RegistersLayoutAttr kapy::getRegistersLayout(MLIRContext *context,
   // Make the most minor axis to fill the rest lanes and warps.
   shapeOfLanes[order[0]] = restLanes;
   shapeOfWarps[order[0]] = restWarps;
-  return RegistersLayoutAttr::get(context, shapeOfWarps, warpLoops,
+  return FragmentsLayoutAttr::get(context, shapeOfWarps, warpLoops,
                                   shapeOfLanes, laneLoops, order);
 }
 
-RegistersLayoutAttr kapy::getRegistersLayout(MLIRContext *context,
+FragmentsLayoutAttr kapy::getFragmentsLayout(MLIRContext *context,
                                              ArrayRef<int64_t> laneLoops,
                                              ArrayRef<int64_t> shape,
                                              int64_t numWarps) {
   auto order = makeIota<unsigned>(shape.size());
-  return getRegistersLayout(context, laneLoops, shape, order, numWarps);
+  return getFragmentsLayout(context, laneLoops, shape, order, numWarps);
 }
 
-RegistersLayoutAttr kapy::getRegistersLayout(MLIRContext *context,
+FragmentsLayoutAttr kapy::getFragmentsLayout(MLIRContext *context,
                                              ArrayRef<int64_t> shape,
                                              int64_t numWarps) {
   SmallVector<int64_t, 4> laneLoops(shape.size(), 1);
-  return getRegistersLayout(context, laneLoops, shape, numWarps);
+  return getFragmentsLayout(context, laneLoops, shape, numWarps);
 }
 
 bool kapy::isNvidiaMmaToMmOperandShortcut(NvidiaMmaLayoutAttr nvmmaLayout,
@@ -73,9 +73,9 @@ bool kapy::isNvidiaMmaToMmOperandShortcut(NvidiaMmaLayoutAttr nvmmaLayout,
   return true;
 }
 
-bool kapy::isNvidiaMmaToRegistersShortcut(NvidiaMmaLayoutAttr nvmmaLayout,
-                                          RegistersLayoutAttr regisLayout) {
-  return nvmmaLayout.toRegistersLayout() == regisLayout;
+bool kapy::isNvidiaMmaToFragmentsShortcut(NvidiaMmaLayoutAttr nvmmaLayout,
+                                          FragmentsLayoutAttr fragsLayout) {
+  return nvmmaLayout.toFragmentsLayout() == fragsLayout;
 }
 
 NvidiaMmaLayoutAttr kapy::getNvidiaMmaLayout(MatmulOp matmulOp,
@@ -158,15 +158,15 @@ static SetVector<Attribute> getCandidateLayouts1d(MLIRContext *context,
                                                   RankedTensorType type,
                                                   int64_t numWarps) {
   auto shape = type.getShape();
-  auto regisLayout = cast<RegistersLayoutAttr>(type.getEncoding());
-  auto rank = regisLayout.getRank();
+  auto fragsLayout = cast<FragmentsLayoutAttr>(type.getEncoding());
+  auto rank = fragsLayout.getRank();
   assert(rank == 1);
 
   auto numElems = product(shape);
-  auto shapeOfWarps = regisLayout.getShapeOfWarpsRef();
-  auto warpLoops = regisLayout.getWarpLoops();
-  auto shapeOfLanes = regisLayout.getShapeOfLanesRef();
-  auto laneLoops = regisLayout.getLaneLoopsRef();
+  auto shapeOfWarps = fragsLayout.getShapeOfWarpsRef();
+  auto warpLoops = fragsLayout.getWarpLoops();
+  auto shapeOfLanes = fragsLayout.getShapeOfLanesRef();
+  auto laneLoops = fragsLayout.getLaneLoopsRef();
 
   auto vecWidth = laneLoops[0];
   auto restLoop =
@@ -175,7 +175,7 @@ static SetVector<Attribute> getCandidateLayouts1d(MLIRContext *context,
   SetVector<Attribute> layouts;
   for (int64_t warpLoop = 1; warpLoop <= restLoop; warpLoop *= 2) {
     warpLoops[0] = warpLoop;
-    layouts.insert(RegistersLayoutAttr::get(context, shapeOfWarps, warpLoops,
+    layouts.insert(FragmentsLayoutAttr::get(context, shapeOfWarps, warpLoops,
                                             shapeOfLanes, laneLoops));
   }
   return layouts;
@@ -185,15 +185,15 @@ static SetVector<Attribute> getCandidateLayouts2d(MLIRContext *context,
                                                   RankedTensorType type,
                                                   int64_t numWarps) {
   auto shape = type.getShape();
-  auto regisLayout = cast<RegistersLayoutAttr>(type.getEncoding());
-  auto rank = regisLayout.getRank();
+  auto fragsLayout = cast<FragmentsLayoutAttr>(type.getEncoding());
+  auto rank = fragsLayout.getRank();
   assert(rank == 2);
 
   auto numElems = product(shape);
-  auto shapeOfWarps = regisLayout.getShapeOfWarps();
-  auto warpLoops = regisLayout.getWarpLoops();
-  auto shapeOfLanes = regisLayout.getShapeOfLanes();
-  auto laneLoops = regisLayout.getLaneLoops();
+  auto shapeOfWarps = fragsLayout.getShapeOfWarps();
+  auto warpLoops = fragsLayout.getWarpLoops();
+  auto shapeOfLanes = fragsLayout.getShapeOfLanes();
+  auto laneLoops = fragsLayout.getLaneLoops();
 
   unsigned majorAxis = rank - 1;
   int64_t vecWidth = 1;
@@ -257,7 +257,7 @@ static SetVector<Attribute> getCandidateLayouts2d(MLIRContext *context,
         warpLoops[minorAxis] = warpLoopMinor;
         warpLoops[majorAxis] = warpLoopMajor;
         laneLoops[minorAxis] = laneLoopMinor;
-        layouts.insert(RegistersLayoutAttr::get(
+        layouts.insert(FragmentsLayoutAttr::get(
             context, shapeOfWarps, warpLoops, shapeOfLanes, laneLoops, order));
       }
     }
@@ -323,12 +323,12 @@ static SetVector<Attribute> getCandidateLayouts(AtomicCASOp casOp,
 static SetVector<Attribute> getCandidateLayouts(MatmulOp matmulOp,
                                                 int64_t numWarps) {
   auto resultType = matmulOp.getType();
-  if (isa<RegistersLayoutAttr>(resultType.getEncoding())) {
+  if (isa<FragmentsLayoutAttr>(resultType.getEncoding())) {
     // Currently only support 2d fma matmul.
     auto layouts =
         getCandidateLayouts2d(matmulOp.getContext(), resultType, numWarps);
     for (auto layout : layouts) {
-      auto laneLoops = cast<RegistersLayoutAttr>(layout).getLaneLoopsRef();
+      auto laneLoops = cast<FragmentsLayoutAttr>(layout).getLaneLoopsRef();
       if (laneLoops[0] != laneLoops[1])
         layouts.remove(layout);
     }

@@ -80,7 +80,7 @@ public:
   Allocation() = default;
   explicit Allocation(Operation *op) : operation(op) {}
 
-  void run(DenseMap<FunctionOpInterface, Allocation> &funcAllocations);
+  void run(DenseMap<FunctionOpInterface, Allocation> &funcToAllocation);
 
   Operation *getOperation() { return operation; }
 
@@ -107,23 +107,23 @@ public:
   }
 
   bool isExplicit(BufferId id) const {
-    return buffers.at(id).kind == Buffer::BufferKind::Explicit;
+    return buffers.at(id).kind == Buffer::BufferKind::EXPLICIT;
   }
   bool isScratch(BufferId id) const {
-    return buffers.at(id).kind == Buffer::BufferKind::Scratch;
+    return buffers.at(id).kind == Buffer::BufferKind::SCRATCH;
   }
   bool isVirtual(BufferId id) const {
-    return buffers.at(id).kind == Buffer::BufferKind::Virtual;
+    return buffers.at(id).kind == Buffer::BufferKind::VIRTUAL;
   }
 
   int64_t getAllocatedSize() const { return allocatedSize; }
 
 private:
   struct Buffer {
-    // Explicit: LocalAllocOp
-    // Scratch: ReduceOp, ChangeOp
-    // Virtual: CallOp
-    enum class BufferKind { Explicit, Scratch, Virtual };
+    // EXPLICIT: LocalAllocOp
+    // SCRATCH: ReduceOp, ChangeOp
+    // VIRTUAL: CallOp
+    enum class BufferKind { EXPLICIT, SCRATCH, VIRTUAL };
 
     // MT: thread safe
     inline static std::atomic<BufferId> nextId = 0;
@@ -134,7 +134,7 @@ private:
     int64_t alignment;
     int64_t offset;
 
-    Buffer() : Buffer(BufferKind::Explicit, 0) {}
+    Buffer() : Buffer(BufferKind::EXPLICIT, 0) {}
     Buffer(BufferKind kind, int64_t size)
         : kind(kind), id(nextId++), size(size), alignment(128), offset(0) {}
 
@@ -156,52 +156,15 @@ private:
   void addBuffer(T &key, Ts &&...args) {
     auto buffer = Buffer(Kind, std::forward<Ts>(args)...);
     buffers[buffer.id] = std::move(buffer);
-    if constexpr (Kind == Buffer::BufferKind::Explicit)
+    if constexpr (Kind == Buffer::BufferKind::EXPLICIT)
       explicits[key] = &buffers[buffer.id];
-    else if constexpr (Kind == Buffer::BufferKind::Scratch)
+    else if constexpr (Kind == Buffer::BufferKind::SCRATCH)
       scratchs[key] = &buffers[buffer.id];
-    else if constexpr (Kind == Buffer::BufferKind::Virtual)
+    else if constexpr (Kind == Buffer::BufferKind::VIRTUAL)
       virtuals[key] = &buffers[buffer.id];
   }
 
   friend class AllocationAnalysis;
-};
-
-class AllocationAnalysis {
-public:
-  AllocationAnalysis(Operation *op, Allocation *allocation,
-                     DenseMap<FunctionOpInterface, Allocation> *funcAllocations)
-      : operation(op), allocation(allocation),
-        funcAllocations(funcAllocations) {}
-
-private:
-  using Buffer = Allocation::Buffer;
-  using OpId = int64_t;
-  Operation *operation;
-  Allocation *allocation;
-  DenseMap<FunctionOpInterface, Allocation> *funcAllocations;
-  llvm::MapVector<Buffer *, Interval<OpId>> bufferLivenesses;
-
-  void addBuffers();
-
-  void resolveExplicits(function_ref<Interval<OpId>(Value)> getLiveness);
-  void resolveScratchsAndVirtuals(const DenseMap<Operation *, OpId> &opIds);
-  void resolveLiveness();
-
-  // Compute the shared memory offsets and allocate for all related buffers
-  // while considering interference.
-  // Paper: Algorithms for Compile-time Memory Optimization
-  // https://dl.acm.org/doi/pdf/10.5555/314500.315082
-  void computeAndAllocate();
-
-  // Build a graph of all shared memory values. Edges are created between shared
-  // memory values that are overlapping.
-  void buildGraph(ArrayRef<Buffer *> buffers,
-                  DenseMap<Buffer *, DenseSet<Buffer *>> &graph);
-
-  // Finalize shared memory offsets while considering interference.
-  void allocate(ArrayRef<Buffer *> buffers,
-                const DenseMap<Buffer *, DenseSet<Buffer *>> &graph);
 };
 
 class ModuleAllocationAnalysis : public CallGraph<Allocation> {

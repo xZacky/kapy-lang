@@ -45,8 +45,8 @@ KgpuTypeConverter::KgpuTypeConverter(MLIRContext *context, int64_t numWarps)
     if (tensorType.getEncoding())
       return tensorType;
     auto shape = tensorType.getShape();
-    auto regisLayout = getRegistersLayout(this->context, shape, this->numWarps);
-    return cloneWith(tensorType, regisLayout);
+    auto fragsLayout = getFragmentsLayout(this->context, shape, this->numWarps);
+    return cloneWith(tensorType, fragsLayout);
   });
 
   addTargetMaterialization([](OpBuilder &builder, RankedTensorType tensorType,

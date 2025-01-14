@@ -58,7 +58,7 @@ SmallVector<T, 4> permute(ArrayRef<T> array, ArrayRef<I> order) {
   static_assert(std::is_integral_v<I>);
   assert(array.size() == order.size());
   SmallVector<T, 4> result;
-  for (I i : order)
+  for (unsigned i : order)
     result.push_back(array[i]);
   return result;
 }
@@ -71,7 +71,7 @@ template <typename I> SmallVector<I, 4> inverse(ArrayRef<I> order) {
   static_assert(std::is_integral_v<I>);
   auto rank = order.size();
   SmallVector<I, 4> result(rank);
-  for (I i = 0; i < rank; ++i)
+  for (unsigned i = 0; i < rank; ++i)
     result[order[i]] = i;
   return result;
 }

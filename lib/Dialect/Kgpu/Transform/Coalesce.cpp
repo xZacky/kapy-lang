@@ -85,8 +85,9 @@ static Attribute chooseLayout(ModuleIntegerInfoAnalysis &analysis,
   auto rank = memrefType.getRank();
   SmallVector<int64_t, 4> laneLoops(rank, 1);
   laneLoops[order[rank - 1]] = vecWidth;
-  return getRegistersLayout(op->getContext(), laneLoops, memrefType.getShape(),
-                            order, numWarps);
+  auto *context = op->getContext();
+  auto shape = memrefType.getShape();
+  return getFragmentsLayout(context, laneLoops, shape, order, numWarps);
 }
 
 static void updateLayout(Operation *op, Attribute layout) {

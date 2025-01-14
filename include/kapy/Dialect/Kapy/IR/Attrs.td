@@ -22,7 +22,7 @@ def Kapy_GlobalMemLayoutAttr : Kapy_AttrDef<"GlobalMemLayout", "glmem"> {
 
   let extraClassDeclaration = [{
     /// Get an AffineMap from memref indices to the relative offset from the
-    /// first element in memory. Use symbols for dynamic strides.
+    /// first element of this memref. Use symbols for dynamic strides.
     AffineMap getMemRefMap() const;
   }];
 }

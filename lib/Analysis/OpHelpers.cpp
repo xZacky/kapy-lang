@@ -46,7 +46,7 @@ RankedTensorType ReduceOpHelper::getOperandType() const {
 
 bool ReduceOpHelper::isSupportedLayout() const {
   auto operandLayout = getOperandType().getEncoding();
-  return isa<RegistersLayoutAttr, NvidiaMmaLayoutAttr>(operandLayout);
+  return isa<FragmentsLayoutAttr, NvidiaMmaLayoutAttr>(operandLayout);
 }
 
 bool ReduceOpHelper::isWarpSynchronous() const {

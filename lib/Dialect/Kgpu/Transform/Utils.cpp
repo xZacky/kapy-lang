@@ -54,50 +54,50 @@ bool kapy::isExpensiveMemoryWrite(Operation *op) {
   return !hasMoreThreadsThanElements(op);
 }
 
-static Attribute inferUseLayout(ReduceOp op, Attribute defLayout) {
-  return SliceAxisLayoutAttr::get(op.getContext(), defLayout, op.getAxis());
+static Attribute inferResultLayout(ReduceOp op, Attribute operandLayout) {
+  return AxisSliceLayoutAttr::get(op.getContext(), operandLayout, op.getAxis());
 }
 
-static Attribute inferUseLayout(UnsqueezeOp op, Attribute defLayout) {
-  auto sliceLayout = dyn_cast<SliceAxisLayoutAttr>(defLayout);
+static Attribute inferResultLayout(UnsqueezeOp op, Attribute operandLayout) {
+  auto sliceLayout = dyn_cast<AxisSliceLayoutAttr>(operandLayout);
   if (!sliceLayout || op.getAxis() != sliceLayout.getAxis())
     return Attribute();
   return sliceLayout.getParent();
 }
 
-Attribute kapy::inferUseLayout(Operation *op, Attribute defLayout) {
+Attribute kapy::inferResultLayout(Operation *op, Attribute operandLayout) {
   if (op->hasTrait<OpTrait::SameOperandsAndResultLayout>() ||
       op->hasTrait<OpTrait::Elementwise>() ||
-      isa<scf::ForOp, scf::WhileOp, scf::ConditionOp, scf::YieldOp>(op))
-    return defLayout;
+      isa<scf::ForOp, scf::WhileOp, scf::YieldOp, scf::ConditionOp>(op))
+    return operandLayout;
   if (auto reduceOp = dyn_cast<ReduceOp>(op))
-    return ::inferUseLayout(reduceOp, defLayout);
+    return ::inferResultLayout(reduceOp, operandLayout);
   if (auto unsqueezeOp = dyn_cast<UnsqueezeOp>(op))
-    return ::inferUseLayout(unsqueezeOp, defLayout);
+    return ::inferResultLayout(unsqueezeOp, operandLayout);
   // TODO: Support PermuteOp.
   return Attribute();
 }
 
-static Attribute inferDefLayout(ReduceOp op, Attribute useLayout) {
-  auto sliceLayout = dyn_cast<SliceAxisLayoutAttr>(useLayout);
+static Attribute inferOperandLayout(ReduceOp op, Attribute resultLayout) {
+  auto sliceLayout = dyn_cast<AxisSliceLayoutAttr>(resultLayout);
   if (!sliceLayout || op.getAxis() != sliceLayout.getAxis())
     return Attribute();
   return sliceLayout.getParent();
 }
 
-static Attribute inferDefLayout(UnsqueezeOp op, Attribute useLayout) {
-  return SliceAxisLayoutAttr::get(op.getContext(), useLayout, op.getAxis());
+static Attribute inferOperandLayout(UnsqueezeOp op, Attribute resultLayout) {
+  return AxisSliceLayoutAttr::get(op.getContext(), resultLayout, op.getAxis());
 }
 
-Attribute kapy::inferDefLayout(Operation *op, Attribute useLayout) {
+Attribute kapy::inferOperandLayout(Operation *op, Attribute resultLayout) {
   if (op->hasTrait<OpTrait::SameOperandsAndResultLayout>() ||
       op->hasTrait<OpTrait::Elementwise>() ||
       isa<scf::ForOp, scf::WhileOp, scf::IfOp>(op))
-    return useLayout;
+    return resultLayout;
   if (auto reduceOp = dyn_cast<ReduceOp>(op))
-    return ::inferDefLayout(reduceOp, useLayout);
+    return ::inferOperandLayout(reduceOp, resultLayout);
   if (auto unsqueezeOp = dyn_cast<UnsqueezeOp>(op))
-    return ::inferDefLayout(unsqueezeOp, useLayout);
+    return ::inferOperandLayout(unsqueezeOp, resultLayout);
   // TODO: Support PermuteOp.
   return Attribute();
 }
@@ -111,10 +111,10 @@ bool kapy::isFreeChangeOp(Operation *op) {
           dyn_cast<NvidiaMmaLayoutAttr>(operandType.getEncoding())) {
     auto mmopdLayout =
         dyn_cast<MmOperandLayoutAttr>(changeOp.getType().getEncoding());
-    auto regisLayout =
-        dyn_cast<RegistersLayoutAttr>(changeOp.getType().getEncoding());
+    auto fragsLayout =
+        dyn_cast<FragmentsLayoutAttr>(changeOp.getType().getEncoding());
     return isNvidiaMmaToMmOperandShortcut(nvmmaLayout, mmopdLayout) ||
-           isNvidiaMmaToRegistersShortcut(nvmmaLayout, regisLayout);
+           isNvidiaMmaToFragmentsShortcut(nvmmaLayout, fragsLayout);
   }
   return false;
 }

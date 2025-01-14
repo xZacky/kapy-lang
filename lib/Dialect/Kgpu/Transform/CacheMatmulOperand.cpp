@@ -60,11 +60,11 @@ public:
           dyn_cast<NvidiaMmaLayoutAttr>(operandType.getEncoding());
       if (isNvidiaMmaToMmOperandShortcut(nvmmaLayout, mmopdLayout))
         return;
-      auto regisLayout =
-          dyn_cast<RegistersLayoutAttr>(operandType.getEncoding());
-      if (!regisLayout)
+      auto fragsLayout =
+          dyn_cast<FragmentsLayoutAttr>(operandType.getEncoding());
+      if (!fragsLayout)
         return;
-      auto oldOrder = regisLayout.getOrderRef();
+      auto oldOrder = fragsLayout.getOrderRef();
       SmallVector<unsigned, 4> newOrder;
       if (oldOrder.size() == 3) {
         // Add 0 as first element.

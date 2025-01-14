@@ -1,4 +1,5 @@
 add_mlir_library(KapyAnalysis
+  Affine.cpp
   Allocation.cpp
   Integer.cpp
   Layout.cpp

@@ -37,11 +37,11 @@ public:
       os << "shmem";
       return AliasResult::FinalAlias;
     }
-    if (isa<RegistersLayoutAttr>(attr)) {
-      os << "regis";
+    if (isa<FragmentsLayoutAttr>(attr)) {
+      os << "frags";
       return AliasResult::FinalAlias;
     }
-    if (isa<SliceAxisLayoutAttr>(attr)) {
+    if (isa<AxisSliceLayoutAttr>(attr)) {
       os << "slice";
       return AliasResult::FinalAlias;
     }
@@ -64,13 +64,13 @@ public:
   virtual FailureOr<Attribute>
   inferReduceOpLayout(Attribute operandLayout, unsigned axis,
                       std::optional<Location> loc) const override {
-    return SliceAxisLayoutAttr::get(getContext(), operandLayout, axis);
+    return AxisSliceLayoutAttr::get(getContext(), operandLayout, axis);
   }
 
   virtual FailureOr<Attribute>
   inferUnsqueezeOpLayout(Attribute operandLayout, unsigned axis,
                          std::optional<Location> loc) const override {
-    auto sliceLayout = dyn_cast<SliceAxisLayoutAttr>(operandLayout);
+    auto sliceLayout = dyn_cast<AxisSliceLayoutAttr>(operandLayout);
     if (!sliceLayout)
       return emitOptionalError(loc, "operand must have slice axis layout");
     if (sliceLayout.getAxis() != axis)
@@ -81,15 +81,15 @@ public:
   virtual FailureOr<Attribute>
   inferPermuteOpLayout(Attribute operandLayout, ArrayRef<int32_t> order,
                        std::optional<Location> loc) const override {
-    auto regisLayout = dyn_cast<RegistersLayoutAttr>(operandLayout);
-    if (!regisLayout)
-      return emitOptionalError(loc, "operand must have registers layout");
-    return RegistersLayoutAttr::get(
-        getContext(), permute(regisLayout.getShapeOfWarpsRef(), order),
-        permute(regisLayout.getWarpLoopsRef(), order),
-        permute(regisLayout.getShapeOfLanesRef(), order),
-        permute(regisLayout.getLaneLoopsRef(), order),
-        permute(regisLayout.getOrderRef(), order));
+    auto fragsLayout = dyn_cast<FragmentsLayoutAttr>(operandLayout);
+    if (!fragsLayout)
+      return emitOptionalError(loc, "operand must have fragments layout");
+    return FragmentsLayoutAttr::get(
+        getContext(), permute(fragsLayout.getShapeOfWarpsRef(), order),
+        permute(fragsLayout.getWarpLoopsRef(), order),
+        permute(fragsLayout.getShapeOfLanesRef(), order),
+        permute(fragsLayout.getLaneLoopsRef(), order),
+        permute(fragsLayout.getOrderRef(), order));
   }
 
   virtual LogicalResult verifyMatmulOpLayouts(MatmulOp op) const override {
@@ -110,7 +110,7 @@ public:
       return op->emitOpError("rhs layout with wrong operand index");
 
     auto accumLayout = accumType.getEncoding();
-    if (isa<RegistersLayoutAttr, NvidiaMmaLayoutAttr>(accumLayout)) {
+    if (isa<FragmentsLayoutAttr, NvidiaMmaLayoutAttr>(accumLayout)) {
       if (lhsLayout.getParent() != accumLayout)
         return op->emitOpError("mismatch layouts between lhs and accum");
       if (rhsLayout.getParent() != accumLayout)
@@ -140,17 +140,28 @@ void KgpuDialect::initialize() {
   addInterfaces<KgpuLayoutInterface>();
 }
 
-RegistersLayoutAttr RegistersLayoutAttr::get(MLIRContext *context,
+AffineMap SharedMemLayoutAttr::getMemRefMap() const {
+  auto resultExpr = getAffineConstantExpr(0, getContext());
+  unsigned numDims = 0;
+  for (auto stride : getStrides()) {
+    auto dimExpr = getAffineDimExpr(numDims++, getContext());
+    auto intExpr = getAffineConstantExpr(stride, getContext());
+    resultExpr = resultExpr + dimExpr * intExpr;
+  }
+  return AffineMap::get(numDims, 0, resultExpr);
+}
+
+FragmentsLayoutAttr FragmentsLayoutAttr::get(MLIRContext *context,
                                              ArrayRef<int64_t> shapeOfWarps,
                                              ArrayRef<int64_t> warpLoops,
                                              ArrayRef<int64_t> shapeOfLanes,
                                              ArrayRef<int64_t> laneLoops) {
   auto order = makeIota<unsigned>(shapeOfWarps.size());
-  return RegistersLayoutAttr::get(context, shapeOfWarps, warpLoops,
+  return FragmentsLayoutAttr::get(context, shapeOfWarps, warpLoops,
                                   shapeOfLanes, laneLoops, order);
 }
 
-AffineMap RegistersLayoutAttr::getLayoutMap() const {
+AffineMap FragmentsLayoutAttr::getLayoutMap() const {
   auto rank = getRank();
   auto order = getOrderRef();
 
@@ -182,7 +193,7 @@ AffineMap RegistersLayoutAttr::getLayoutMap() const {
   return AffineMap::get(rank, 0, threadExpr);
 }
 
-AffineMap RegistersLayoutAttr::getTensorMap(ArrayRef<int64_t> shape) const {
+AffineMap FragmentsLayoutAttr::getTensorMap(ArrayRef<int64_t> shape) const {
   auto shapeOfWarps = getShapeOfWarpsRef();
   auto warpLoops = getWarpLoopsRef();
   auto shapeOfLanes = getShapeOfLanesRef();
@@ -207,10 +218,10 @@ AffineMap RegistersLayoutAttr::getTensorMap(ArrayRef<int64_t> shape) const {
   return AffineMap::get(rank, 0, threadExpr);
 }
 
-unsigned SliceAxisLayoutAttr::getRank() const {
-  if (auto regisLayout = llvm::dyn_cast<RegistersLayoutAttr>(getParent()))
-    return regisLayout.getRank() - 1;
-  if (auto sliceLayout = llvm::dyn_cast<SliceAxisLayoutAttr>(getParent()))
+unsigned AxisSliceLayoutAttr::getRank() const {
+  if (auto fragsLayout = llvm::dyn_cast<FragmentsLayoutAttr>(getParent()))
+    return fragsLayout.getRank() - 1;
+  if (auto sliceLayout = llvm::dyn_cast<AxisSliceLayoutAttr>(getParent()))
     return sliceLayout.getRank() - 1;
   if (auto nvmmaLayout = llvm::dyn_cast<NvidiaMmaLayoutAttr>(getParent()))
     return nvmmaLayout.getRank() - 1;
@@ -218,7 +229,7 @@ unsigned SliceAxisLayoutAttr::getRank() const {
 }
 
 SmallVector<int64_t, 4>
-SliceAxisLayoutAttr::unsqueeze(ArrayRef<int64_t> shape) const {
+AxisSliceLayoutAttr::unsqueeze(ArrayRef<int64_t> shape) const {
   auto rank = shape.size();
   auto axis = getAxis();
   SmallVector<int64_t, 4> newShape;
@@ -228,10 +239,6 @@ SliceAxisLayoutAttr::unsqueeze(ArrayRef<int64_t> shape) const {
     else
       newShape.push_back(1);
   return newShape;
-}
-
-SmallVector<unsigned, 4> NvidiaMmaLayoutAttr::getOrder() const {
-  return makeIota<unsigned>(getRank());
 }
 
 SmallVector<int64_t, 4> NvidiaMmaLayoutAttr::getShapeOfLanes() const {
@@ -249,15 +256,19 @@ SmallVector<int64_t, 4> NvidiaMmaLayoutAttr::getLaneLoops() const {
   return loopsPerLane;
 }
 
-RegistersLayoutAttr NvidiaMmaLayoutAttr::toRegistersLayout() const {
-  return RegistersLayoutAttr::get(getContext(), getShapeOfWarpsRef(),
+SmallVector<unsigned, 4> NvidiaMmaLayoutAttr::getOrder() const {
+  return makeIota<unsigned>(getRank());
+}
+
+FragmentsLayoutAttr NvidiaMmaLayoutAttr::toFragmentsLayout() const {
+  return FragmentsLayoutAttr::get(getContext(), getShapeOfWarpsRef(),
                                   getWarpLoopsRef(), getShapeOfLanes(),
                                   getLaneLoops());
 }
 
 unsigned MmOperandLayoutAttr::getRank() const {
-  if (auto regisLayout = llvm::dyn_cast<RegistersLayoutAttr>(getParent()))
-    return regisLayout.getRank();
+  if (auto fragsLayout = llvm::dyn_cast<FragmentsLayoutAttr>(getParent()))
+    return fragsLayout.getRank();
   if (auto nvmmaLayout = llvm::dyn_cast<NvidiaMmaLayoutAttr>(getParent()))
     return nvmmaLayout.getRank();
   llvm_unreachable("invalid parent layout");
@@ -272,6 +283,7 @@ LogicalResult ChangeOp::canonicalize(ChangeOp op, PatternRewriter &rewriter) {
   if (hasLayout<NvidiaMmaLayoutAttr>(op.getOperand().getType()) &&
       hasLayout<MmOperandLayoutAttr>(op.getType()))
     return failure();
+
   auto *defOp = op.getOperand().getDefiningOp();
   if (!defOp)
     return failure();
@@ -335,7 +347,7 @@ void LocalAllocOp::getEffects(
   // If the allocation has operand, mark it as no side effect allow passes like
   // CSE, DCE to work in early compiler passes.
   // After the memory offset is computed, we attach the true side effect.
-  if (getOperand() && !getOperation()->hasAttr("allocation.offset"))
+  if (getOperand() && !getOperation()->hasAttr(shmemOffsetAttrName))
     return;
   effects.emplace_back(MemoryEffects::Allocate::get(), SharedMemory::get());
 }
@@ -348,8 +360,8 @@ LogicalResult LocalAllocOp::verify() {
   if (!operand)
     return success();
   auto operandType = operand.getType();
-  if (!hasLayout<RegistersLayoutAttr>(operandType))
-    return emitOpError("operand must have registers layout");
+  if (!hasLayout<FragmentsLayoutAttr>(operandType))
+    return emitOpError("operand must have fragments layout");
   if (operandType.getShape() != resultType.getShape())
     return emitOpError("operand and result must have same shape");
   if (operandType.getElementType() != resultType.getElementType())
@@ -395,13 +407,25 @@ int64_t kapy::getNumWarps(ModuleOp module) {
   return cast<IntegerAttr>(module->getAttr(numWarpsAttrName)).getInt();
 }
 
+int64_t kapy::getSharedMemNeeded(ModuleOp module) {
+  if (!module->hasAttr(shmemNeededAttrName))
+    return 0;
+  return cast<IntegerAttr>(module->getAttr(shmemNeededAttrName)).getInt();
+}
+
+int64_t kapy::getSharedMemOffset(Operation *op) {
+  if (!op->hasAttr(shmemOffsetAttrName))
+    return 0;
+  return cast<IntegerAttr>(op->getAttr(shmemOffsetAttrName)).getInt();
+}
+
 bool kapy::supportNvidiaMma(MatmulOp op) {
   auto lhsElementType = op.getLhs().getType().getElementType();
   auto rhsElementType = op.getRhs().getType().getElementType();
   if (lhsElementType.isF32() && rhsElementType.isF32()) {
     auto matmulFormat = op.getMatmulFormat();
     return matmulFormat == MatmulFormat::TF32 ||
-           matmulFormat == MatmulFormat::TF32x3;
+           matmulFormat == MatmulFormat::TF32X3;
   }
   return supportNvidiaMma(lhsElementType) && supportNvidiaMma(rhsElementType);
 }
@@ -455,13 +479,13 @@ static std::string getLineSuffixString(int64_t index, int64_t numElems,
   return suffixStr;
 }
 
-static std::string getLayoutStringImpl(RegistersLayoutAttr regisLayout,
+static std::string getLayoutStringImpl(FragmentsLayoutAttr layout,
                                        ArrayRef<int64_t> shape) {
   auto rank = shape.size();
   auto numElems = product(shape);
   auto strides = computeStrides(shape);
-  auto tensorMap = regisLayout.getTensorMap(shape);
-  auto numWarps = product(regisLayout.getShapeOfWarpsRef());
+  auto tensorMap = layout.getTensorMap(shape);
+  auto numWarps = product(layout.getShapeOfWarpsRef());
   auto maxIdStrWidth = getIdStrWidth(numLanes * numWarps - 1);
   std::string layoutStr = "";
   for (int64_t index = 0; index < numElems; ++index) {
@@ -483,11 +507,11 @@ static std::string getLayoutStringImpl(RegistersLayoutAttr regisLayout,
 }
 
 std::string kapy::getLayoutString(RankedTensorType type) {
-  if (auto regisLayout = dyn_cast<RegistersLayoutAttr>(type.getEncoding()))
-    return getLayoutStringImpl(regisLayout, type.getShape());
+  if (auto fragsLayout = dyn_cast<FragmentsLayoutAttr>(type.getEncoding()))
+    return getLayoutStringImpl(fragsLayout, type.getShape());
   if (auto nvmmaLayout = dyn_cast<NvidiaMmaLayoutAttr>(type.getEncoding())) {
-    auto regisLayout = nvmmaLayout.toRegistersLayout();
-    return getLayoutStringImpl(regisLayout, type.getShape());
+    auto fragsLayout = nvmmaLayout.toFragmentsLayout();
+    return getLayoutStringImpl(fragsLayout, type.getShape());
   }
   llvm_unreachable("unsupported layout");
 }

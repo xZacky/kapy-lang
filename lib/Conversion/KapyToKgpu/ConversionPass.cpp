@@ -104,7 +104,7 @@ public:
     auto operandType = cast<RankedTensorType>(operand.getType());
     if (!operandType.getEncoding())
       return failure();
-    auto operandLayout = cast<RegistersLayoutAttr>(operandType.getEncoding());
+    auto operandLayout = cast<FragmentsLayoutAttr>(operandType.getEncoding());
     auto axis = op.getAxis();
 
     auto shapeOfWarps = operandLayout.getShapeOfWarps();
@@ -116,10 +116,10 @@ public:
     auto laneLoops = operandLayout.getLaneLoops();
     laneLoops.insert(laneLoops.begin() + axis, 1);
 
-    auto regisLayout = RegistersLayoutAttr::get(
+    auto fragsLayout = FragmentsLayoutAttr::get(
         op.getContext(), shapeOfWarps, warpLoops, shapeOfLanes, laneLoops);
     auto sliceLayout =
-        SliceAxisLayoutAttr::get(op.getContext(), regisLayout, axis);
+        AxisSliceLayoutAttr::get(op.getContext(), fragsLayout, axis);
 
     operandType = cloneWith(operandType, sliceLayout);
     operand = rewriter.create<ChangeOp>(operand.getLoc(), operandType, operand);
@@ -188,7 +188,7 @@ public:
     }
 
     auto accumLayout =
-        getRegistersLayout(op.getContext(), laneLoops, shape, numWarps);
+        getFragmentsLayout(op.getContext(), laneLoops, shape, numWarps);
     auto accumType = cloneWith(type, accumLayout);
     auto accum = adaptor.getAccum();
     accum = rewriter.create<ChangeOp>(accum.getLoc(), accumType, accum);

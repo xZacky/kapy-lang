@@ -40,8 +40,8 @@ namespace kapy {
 bool isExpensiveMemoryRead(Operation *op);
 bool isExpensiveMemoryWrite(Operation *op);
 
-Attribute inferUseLayout(Operation *op, Attribute defLayout);
-Attribute inferDefLayout(Operation *op, Attribute useLayout);
+Attribute inferResultLayout(Operation *op, Attribute operandLayout);
+Attribute inferOperandLayout(Operation *op, Attribute resultLayout);
 
 bool isFreeChangeOp(Operation *op);
 

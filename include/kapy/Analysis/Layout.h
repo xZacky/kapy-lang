@@ -19,28 +19,28 @@ namespace kapy {
 
 class MatmulOp;
 class SharedMemLayoutAttr;
-class RegistersLayoutAttr;
+class FragmentsLayoutAttr;
 class NvidiaMmaLayoutAttr;
 class MmOperandLayoutAttr;
 
-RegistersLayoutAttr getRegistersLayout(MLIRContext *context,
+FragmentsLayoutAttr getFragmentsLayout(MLIRContext *context,
                                        ArrayRef<int64_t> laneLoops,
                                        ArrayRef<int64_t> shape,
                                        ArrayRef<unsigned> order,
                                        int64_t numWarps);
-RegistersLayoutAttr getRegistersLayout(MLIRContext *context,
+FragmentsLayoutAttr getFragmentsLayout(MLIRContext *context,
                                        ArrayRef<int64_t> laneLoops,
                                        ArrayRef<int64_t> shape,
                                        int64_t numWarps);
-RegistersLayoutAttr getRegistersLayout(MLIRContext *context,
+FragmentsLayoutAttr getFragmentsLayout(MLIRContext *context,
                                        ArrayRef<int64_t> shape,
                                        int64_t numWarps);
 
 bool isNvidiaMmaToMmOperandShortcut(NvidiaMmaLayoutAttr nvmmaLayout,
                                     MmOperandLayoutAttr mmopdLayout);
 
-bool isNvidiaMmaToRegistersShortcut(NvidiaMmaLayoutAttr nvmmaLayout,
-                                    RegistersLayoutAttr regisLayout);
+bool isNvidiaMmaToFragmentsShortcut(NvidiaMmaLayoutAttr nvmmaLayout,
+                                    FragmentsLayoutAttr fragsLayout);
 
 NvidiaMmaLayoutAttr getNvidiaMmaLayout(MatmulOp matmulOp, int64_t numWarps);
 

@@ -54,10 +54,14 @@ public:
 
 constexpr char nvidiaCCAttrName[] = "kgpu.nvidia_cc";
 constexpr char numWarpsAttrName[] = "kgpu.num_warps";
+constexpr char shmemNeededAttrName[] = "kgpu.shmem_needed";
+constexpr char shmemOffsetAttrName[] = "kgpu.shmem_offset";
 constexpr int64_t numLanes = 32;
 
 int64_t getNvidiaCC(ModuleOp module);
 int64_t getNumWarps(ModuleOp module);
+int64_t getSharedMemNeeded(ModuleOp module);
+int64_t getSharedMemOffset(Operation *op);
 
 bool supportNvidiaMma(MatmulOp op);
 bool supportNvidiaMma(Type elementType);
