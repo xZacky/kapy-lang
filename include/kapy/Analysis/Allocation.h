@@ -32,6 +32,7 @@
 #define KAPY_ANALYSIS_ALLOCATION_H
 
 #include "kapy/Analysis/CallGraph.h"
+#include "llvm/ADT/MapVector.h"
 #include <atomic>
 
 namespace mlir {
@@ -77,12 +78,13 @@ class Allocation {
 public:
   using BufferId = int64_t;
   static constexpr BufferId invalidId = -1;
+
   Allocation() = default;
-  explicit Allocation(Operation *op) : operation(op) {}
+  explicit Allocation(FunctionOpInterface funcOp) : funcOp(funcOp) {}
 
   void run(DenseMap<FunctionOpInterface, Allocation> &funcToAllocation);
 
-  Operation *getOperation() { return operation; }
+  FunctionOpInterface getFunction() const { return funcOp; }
 
   int64_t getOffset(BufferId id) const { return buffers.at(id).offset; }
   int64_t getSize(BufferId id) const { return buffers.at(id).size; }
@@ -145,7 +147,7 @@ private:
     }
   };
 
-  Operation *operation = nullptr;
+  FunctionOpInterface funcOp;
   llvm::MapVector<Value, Buffer *> explicits;
   DenseMap<Operation *, Buffer *> scratchs;
   DenseMap<Operation *, Buffer *> virtuals;

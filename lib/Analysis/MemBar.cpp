@@ -39,7 +39,7 @@ using namespace mlir::kapy;
 
 void MemBarAnalysis::run(
     DenseMap<FunctionOpInterface, BlockInfo> &funcToInfo) const {
-  auto funcOp = cast<FunctionOpInterface>(allocation->getOperation());
+  auto funcOp = allocation->getFunction();
   std::deque<Block *> list;
   funcOp.walk<WalkOrder::PreOrder>([&](Block *block) {
     for (auto &op : block->getOperations()) {
@@ -162,7 +162,7 @@ void MemBarAnalysis::visit(
     insertBarrier(op);
     infoToUpdate.sync();
   }
-  // Update the block info, even if barrier is inserted, we have to maintain the
+  // Update the BlockInfo, even if barrier is inserted, we have to maintain the
   // current operation's read/write intervals.
   infoToUpdate.join(info);
 }

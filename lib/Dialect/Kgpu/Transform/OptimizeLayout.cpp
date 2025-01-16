@@ -8,6 +8,7 @@
 #include "kapy/Dialect/Kapy/IR/Kapy.h"
 #include "kapy/Dialect/Kgpu/IR/Kgpu.h"
 #include "kapy/Dialect/Kgpu/Transform/Utils.h"
+#include "llvm/ADT/MapVector.h"
 
 using namespace mlir;
 using namespace mlir::kapy;

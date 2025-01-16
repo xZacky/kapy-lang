@@ -63,10 +63,20 @@ int64_t getNumWarps(ModuleOp module);
 int64_t getSharedMemNeeded(ModuleOp module);
 int64_t getSharedMemOffset(Operation *op);
 
-bool supportNvidiaMma(MatmulOp op);
+bool supportNvidiaMma(MatmulOp matmulOp);
 bool supportNvidiaMma(Type elementType);
 
-std::string getLayoutString(RankedTensorType type);
+bool isNvidiaMmaToMmOperandShortcut(NvidiaMmaLayoutAttr nvmmaLayout,
+                                    MmOperandLayoutAttr mmopdLayout);
+bool isNvidiaMmaToFragmentsShortcut(NvidiaMmaLayoutAttr nvmmaLayout,
+                                    FragmentsLayoutAttr fragsLayout);
+
+bool isLayoutShortcut(Attribute oldLayout, Attribute newLayout);
+
+/// Get an AffineMap from tensor indices to the minimum thread id hold it.
+AffineMap getTensorMap(ArrayRef<int64_t> shape, Attribute layout);
+
+std::string getLayoutString(RankedTensorType tensorType);
 
 } // namespace kapy
 } // namespace mlir

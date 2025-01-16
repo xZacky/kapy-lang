@@ -327,15 +327,15 @@ def Kapy_BroadcastOp : Kapy_Op<
   let hasVerifier = 1;
 }
 
-def Kapy_PermuteOp : Kapy_Op<
-  "permute",
+def Kapy_TransposeOp : Kapy_Op<
+  "transpose",
   [
     Pure,
     SameOperandsAndResultElementType,
     DeclareOpInterfaceMethods<InferTypeOpInterface>
   ]
 > {
-  let arguments = (ins Kapy_IntFpTensor:$operand, DenseI32ArrayAttr:$order);
+  let arguments = (ins Kapy_IntFpTensor:$operand);
   let results = (outs Kapy_IntFpTensor:$result);
 
   let assemblyFormat = [{

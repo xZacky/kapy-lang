@@ -105,13 +105,13 @@ LogicalResult kapy::getRelationFromMap(AffineMap map, FlatAffineRelation &rel) {
 
   // Add equalities between domain and range.
   SmallVector<int64_t, 8> eq(flc.getNumCols());
-  for (unsigned i = 0, e = map.getNumResults(); i < e; ++i) {
+  for (unsigned i = 0; i < map.getNumResults(); ++i) {
     // Zero fill.
     std::fill(eq.begin(), eq.end(), 0);
     // Fill equality.
-    for (unsigned j = 0, f = oldNumDims; j < f; ++j)
+    for (unsigned j = 0; j < oldNumDims; ++j)
       eq[j] = flatExprs[i][j];
-    for (unsigned j = oldNumDims, f = oldNumCols; j < f; ++j)
+    for (unsigned j = oldNumDims; j < oldNumCols; ++j)
       eq[j + numRangeVars] = flatExprs[i][j];
     // Set this dimension to -1 to equate lhs and rhs and add equality.
     eq[numDomainVars + i] = -1;

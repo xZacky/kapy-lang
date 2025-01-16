@@ -1,4 +1,4 @@
-//===- TestInteger.cpp ------------------------------------------*- C++ -*-===//
+//===- TestAllocation.cpp ---------------------------------------*- C++ -*-===//
 //
 // Copyright 2018-2020 Philippe Tillet
 // Copyright 2020-2022 OpenAI
@@ -28,50 +28,58 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "kapy/Analysis/Integer.h"
+#include "kapy/Analysis/Allocation.h"
 #include "kapy/Dialect/Kapy/IR/Kapy.h"
 #include "mlir/Pass/Pass.h"
 
 using namespace mlir;
-using namespace mlir::kapy;
+using namespace kapy;
 
 namespace {
 
-class KapyTestIntegerPass
-    : public PassWrapper<KapyTestIntegerPass, OperationPass<ModuleOp>> {
+class KapyTestAllocationPass
+    : public PassWrapper<KapyTestAllocationPass, OperationPass<ModuleOp>> {
 public:
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(KapyTestIntegerPass);
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(KapyTestAllocationPass);
 
-  virtual StringRef getArgument() const override { return "kapy-test-integer"; }
+  virtual StringRef getArgument() const override {
+    return "kapy-test-allocation";
+  }
 
   virtual void runOnOperation() override {
     auto &os = llvm::outs();
     auto module = getOperation();
-    ModuleIntegerInfoAnalysis analysis(module);
+    ModuleAllocationAnalysis analysis(module);
     module.walk([&](FuncOp funcOp) {
       auto funcName = SymbolTable::getSymbolName(funcOp).getValue();
       os << "@" << funcName << "\n";
+      auto *allocation = analysis.getData(funcOp);
       funcOp.walk([&](Operation *op) {
+        auto id = allocation->getBufferId(op);
+        if (id != Allocation::invalidId) {
+          auto offset = allocation->getOffset(id);
+          auto size = allocation->getSize(id);
+          if (allocation->isScratch(id))
+            os << "scratch: { offset = " << offset << ", size = " << size
+               << " }\n";
+          if (allocation->isVirtual(id))
+            os << "virtual: { offset = " << offset << ", size = " << size
+               << " }\n";
+        }
         if (op->getNumResults() < 1)
           return;
         for (auto result : op->getResults()) {
-          if (!isIntOrMemRef(result.getType()))
-            return;
-          auto *info = analysis.getIntegerInfo(result);
-          if (!info || info->isEntryState())
-            return;
-          result.print(os);
-          os << " // ";
-          info->print(os);
-          os << "\n";
+          auto id = allocation->getBufferId(result);
+          if (id != Allocation::invalidId) {
+            auto offset = allocation->getOffset(id);
+            auto size = allocation->getSize(id);
+            os << "explicit: { offset = " << offset << ", size = " << size
+               << " }\n";
+          }
         }
       });
+      os << "total: { size = " << allocation->getAllocatedSize() << " }\n";
     });
-  }
-
-private:
-  bool isIntOrMemRef(Type type) {
-    return type.isIntOrIndex() || isa<KapyMemRefType>(type);
   }
 };
 
@@ -80,7 +88,9 @@ private:
 namespace mlir {
 namespace test {
 
-void registerKapyTestIntegerPass() { PassRegistration<KapyTestIntegerPass>(); }
+void registerKapyTestAllocationPass() {
+  PassRegistration<KapyTestAllocationPass>();
+}
 
 } // namespace test
 } // namespace mlir

@@ -10,7 +10,9 @@
 namespace mlir {
 namespace test {
 
+void registerKapyTestAllocationPass();
 void registerKapyTestIntegerPass();
+void registerKapyTestMemBarPass();
 
 } // namespace test
 } // namespace mlir
@@ -22,8 +24,9 @@ inline void registerAllKapyPasses() {
   registerKapyTransformPasses();
   registerKapyToKgpuPasses();
   registerKgpuTransformPasses();
-
+  test::registerKapyTestAllocationPass();
   test::registerKapyTestIntegerPass();
+  test::registerKapyTestMemBarPass();
 }
 
 #endif // KAPY_PASSES_H

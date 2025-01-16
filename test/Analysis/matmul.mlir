@@ -2,6 +2,7 @@
 
 #glmem = #kapy.glmem<[?, ?]>
 module {
+  // CHECK-LABEL: matmul_kernel
   kapy.func @matmul_kernel(%arg0: !kapy.ptr<1> {kapy.divisibility = 128 : i64}, %arg1: !kapy.ptr<1> {kapy.divisibility = 128 : i64}, %arg2: !kapy.ptr<1> {kapy.divisibility = 128 : i64}) {
     %c0_i32 = arith.constant 0 : i32
     %c1_i32 = arith.constant 1 : i32

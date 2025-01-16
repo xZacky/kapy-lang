@@ -29,8 +29,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "kapy/Analysis/Utils.h"
-#include "mlir/Analysis/DataFlow//DeadCodeAnalysis.h"
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
+#include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
 #include "mlir/IR/Matchers.h"
 
 using namespace mlir;

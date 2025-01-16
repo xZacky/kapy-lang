@@ -72,30 +72,27 @@ public:
                          std::optional<Location> loc) const = 0;
 
   virtual FailureOr<Attribute>
-  inferPermuteOpLayout(Attribute operandLayout, ArrayRef<int32_t> order,
-                       std::optional<Location> loc) const = 0;
+  inferTransposeOpLayout(Attribute operandLayout,
+                         std::optional<Location> loc) const = 0;
 
   virtual LogicalResult verifyMatmulOpLayouts(MatmulOp op) const = 0;
 };
 
 unsigned getIntOrFloatBitWidth(Type type);
 
-RankedTensorType cloneWith(RankedTensorType type, Type elementType);
-RankedTensorType cloneWith(RankedTensorType type, Attribute layout);
+RankedTensorType cloneWith(RankedTensorType tensorType, Type elementType);
+RankedTensorType cloneWith(RankedTensorType tensorType, Attribute layout);
 
-KapyMemRefType cloneWith(KapyMemRefType type, Type elementType);
-KapyMemRefType cloneWith(KapyMemRefType type, Attribute layout);
+KapyMemRefType cloneWith(KapyMemRefType memrefType, Type elementType);
+KapyMemRefType cloneWith(KapyMemRefType memrefType, Attribute layout);
 
-template <typename LayoutT> bool hasLayout(Type type) {
-  if (auto tensorType = dyn_cast<RankedTensorType>(type)) {
-    auto layout = tensorType.getEncoding();
-    return layout && isa<LayoutT>(layout);
-  }
-  if (auto memrefType = dyn_cast<KapyMemRefType>(type)) {
-    auto layout = memrefType.getEncoding();
-    return layout && isa<LayoutT>(layout);
-  }
-  return false;
+template <typename LayoutT> bool hasLayout(RankedTensorType tensorType) {
+  auto layout = tensorType.getEncoding();
+  return layout && isa<LayoutT>(layout);
+}
+template <typename LayoutT> bool hasLayout(KapyMemRefType memrefType) {
+  auto layout = memrefType.getEncoding();
+  return layout && isa<LayoutT>(layout);
 }
 
 } // namespace kapy

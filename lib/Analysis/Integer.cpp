@@ -588,16 +588,16 @@ private:
 
 } // namespace
 
-template <typename FuncT>
-IntegerInfo IntegerInfo::getPessimisticState(FuncT funcOp, unsigned argIndex) {
-  Attribute attr = funcOp.getArgAttr(argIndex, divisibilityAttrName);
+IntegerInfo IntegerInfo::getPessimisticState(FunctionOpInterface funcOp,
+                                             unsigned argIndex) {
+  auto attr = funcOp.getArgAttr(argIndex, divisibilityAttrName);
   if (auto intAttr = dyn_cast_or_null<IntegerAttr>(attr))
     return IntegerInfo(intAttr.getInt());
   return IntegerInfo();
 }
 
 IntegerInfo IntegerInfo::getPessimisticState(Value value) {
-  IntegerInfo info;
+  IntegerInfo info(1);
   auto blockArg = dyn_cast<BlockArgument>(value);
   if (blockArg && blockArg.getOwner()->isEntryBlock()) {
     auto *op = blockArg.getOwner()->getParentOp();
@@ -615,7 +615,6 @@ IntegerInfo IntegerInfo::getPessimisticState(Value value) {
     else if (auto attr = op->getDiscardableAttr(divisibilityAttrName))
       info.setDivisibility(cast<IntegerAttr>(attr).getInt());
   }
-  info.setDivisibility(1);
   return info;
 }
 

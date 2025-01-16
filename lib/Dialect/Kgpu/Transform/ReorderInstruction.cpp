@@ -107,12 +107,12 @@ public:
       allocOp->moveAfter(defOp);
     });
 
-    // Move permute just after their defining operation.
-    module.walk([&](PermuteOp permuteOp) {
-      auto *defOp = permuteOp.getOperand().getDefiningOp();
+    // Move Transpose just after their defining operation.
+    module.walk([&](TransposeOp transposeOp) {
+      auto *defOp = transposeOp.getOperand().getDefiningOp();
       if (!defOp)
         return;
-      permuteOp->moveAfter(defOp);
+      transposeOp->moveAfter(defOp);
     });
 
     // Move matmul lhs load after rhs load.

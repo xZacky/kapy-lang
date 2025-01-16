@@ -41,9 +41,9 @@ namespace kapy {
 class AllocationAnalysis {
 public:
   AllocationAnalysis(
-      Operation *op, Allocation *allocation,
+      FunctionOpInterface funcOp, Allocation *allocation,
       DenseMap<FunctionOpInterface, Allocation> *funcToAllocation)
-      : operation(op), allocation(allocation),
+      : funcOp(funcOp), allocation(allocation),
         funcToAllocation(funcToAllocation) {}
 
   void run() {
@@ -55,7 +55,7 @@ public:
 private:
   using Buffer = Allocation::Buffer;
   using OpId = int64_t;
-  Operation *operation;
+  FunctionOpInterface funcOp;
   Allocation *allocation;
   DenseMap<FunctionOpInterface, Allocation> *funcToAllocation;
   llvm::MapVector<Buffer *, Interval<OpId>> bufferToLiveness;
@@ -81,11 +81,11 @@ using namespace mlir::kapy;
 
 void Allocation::run(
     DenseMap<FunctionOpInterface, Allocation> &funcToAllocation) {
-  AllocationAnalysis(operation, this, &funcToAllocation).run();
+  AllocationAnalysis(funcOp, this, &funcToAllocation).run();
 }
 
 void AllocationAnalysis::addBuffers() {
-  operation->walk<WalkOrder::PreOrder>([&](Operation *op) {
+  funcOp->walk<WalkOrder::PreOrder>([&](Operation *op) {
     if (auto allocOp = dyn_cast<LocalAllocOp>(op)) {
       auto memrefType = allocOp.getType();
       auto numElems = product(memrefType.getShape());
@@ -152,11 +152,11 @@ void AllocationAnalysis::resolveLiveness() {
   // operations, otherwise %5's liveness ends before the child operation's
   // liveness ends.
   DenseMap<Operation *, OpId> opToId;
-  operation->walk<WalkOrder::PostOrder>(
+  funcOp->walk<WalkOrder::PostOrder>(
       [&](Operation *op) { opToId[op] = opToId.size(); });
 
   // Analyze liveness of explicit buffers.
-  Liveness liveness(operation);
+  Liveness liveness(funcOp);
   auto getLiveness = [&](Value value) {
     auto liveOps = liveness.resolveLiveness(value);
     auto minId = std::numeric_limits<OpId>::max();
@@ -191,16 +191,16 @@ void AllocationAnalysis::computeAndAllocate() {
   auto buildGraph = [&]() {
     // Reset interference graph.
     graph.clear();
-    for (auto *bufferI : buffers) {
-      for (auto *bufferJ : buffers) {
-        if (bufferI == bufferJ)
+    for (auto *bufferA : buffers) {
+      for (auto *bufferB : buffers) {
+        if (bufferA == bufferB)
           continue;
-        Interval memoryI(bufferI->offset, bufferI->offset + bufferI->size);
-        Interval memoryJ(bufferJ->offset, bufferJ->offset + bufferJ->size);
-        auto livenessI = bufferToLiveness.lookup(bufferI);
-        auto livenessJ = bufferToLiveness.lookup(bufferJ);
-        if (livenessI.intersects(livenessJ) && memoryI.intersects(memoryJ))
-          graph[bufferI].insert(bufferJ);
+        auto memoryA = allocation->getInterval(bufferA->id);
+        auto memoryB = allocation->getInterval(bufferB->id);
+        auto livenessA = bufferToLiveness.lookup(bufferA);
+        auto livenessB = bufferToLiveness.lookup(bufferB);
+        if (livenessA.intersects(livenessB) && memoryA.intersects(memoryB))
+          graph[bufferA].insert(bufferB);
       }
     }
   };
@@ -211,7 +211,7 @@ void AllocationAnalysis::computeAndAllocate() {
     allocation->allocatedSize = 0;
     // First-fit graph coloring.
     // Neighbors are nodes that interference with each other. We color a node by
-    // finding the index of the first available non-neighboring node or the
+    // finding the position of the first available non-neighboring node or the
     // first neighboring node without any color.
     DenseMap<Buffer *, int> bufferToColor;
     for (auto *buffer : buffers) {
@@ -219,15 +219,15 @@ void AllocationAnalysis::computeAndAllocate() {
       bufferToColor[buffer] = buffer == buffers[0] ? 0 : -1;
     }
     SmallVector<bool> available(buffers.size());
-    for (auto *buffer0 : buffers) {
+    for (auto *bufferA : buffers) {
       std::fill(available.begin(), available.end(), true);
-      for (auto *buffer1 : graph.lookup(buffer0)) {
-        auto color = bufferToColor[buffer1];
+      for (auto *bufferB : graph.lookup(bufferA)) {
+        auto color = bufferToColor[bufferB];
         if (color >= 0)
           available[color] = false;
       }
       auto it = std::find(available.begin(), available.end(), true);
-      bufferToColor[buffer0] = std::distance(available.begin(), it);
+      bufferToColor[bufferA] = std::distance(available.begin(), it);
     }
     // Perform allocation.
     // Example:
@@ -237,20 +237,21 @@ void AllocationAnalysis::computeAndAllocate() {
     //   color1: [7, 9) -> [16, 16 + 9 - 7) -> [16, 18)
     //   color2: [8, 12) -> [18, 18 + 12 - 8) -> [18, 22)
     //
-    for (auto *bufferI : buffers) {
+    for (auto *bufferA : buffers) {
       int64_t newOffset = 0;
-      if (bufferToColor.lookup(bufferI) == 0) {
-        bufferI->setOffsetAligned(newOffset);
+      if (bufferToColor.lookup(bufferA) == 0) {
+        bufferA->setOffsetAligned(newOffset);
       } else {
-        for (auto *bufferJ : graph.lookup(bufferI))
-          newOffset = std::max(newOffset, bufferJ->offset + bufferJ->size);
-        bufferI->setOffsetAligned(newOffset);
+        for (auto *bufferB : graph.lookup(bufferA))
+          newOffset = std::max(newOffset, bufferB->offset + bufferB->size);
+        bufferA->setOffsetAligned(newOffset);
       }
       allocation->allocatedSize =
-          std::max(allocation->allocatedSize, bufferI->offset + bufferI->size);
+          std::max(allocation->allocatedSize, bufferA->offset + bufferA->size);
     }
   };
 
+  // Keep reducing conflicts.
   buildGraph();
   do {
     tryToAllocate();

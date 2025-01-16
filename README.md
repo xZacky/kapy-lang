@@ -9,17 +9,15 @@ A customized version of the [triton-lang](https://github.com/triton-lang/triton)
 ```
 $ git clone https:://github.com/llvm/llvm-project
 $ cd llvm-project
-$ git checkout llvmorg-18.1.8
+$ git checkout llvmorg-19.1.7
 
 $ mkdir build && cd build
 $ cmake -G Ninja ../llvm \
     -DLLVM_ENABLE_PROJECTS=mlir \
     -DLLVM_TARGETS_TO_BUILD="X86;NVPTX" \
-    -DCMAKE_BUILD_TYPE=Release \
     -DLLVM_ENABLE_ASSERTION=ON \
-    -DLLVM_ENABLE_RTTI=ON \
     -DLLVM_INSTALL_UTILS=ON \
-    -DMLIR_INCLUDE_INTEGRATION_TEST=ON \
+    -DCMAKE_BUILD_TYPE=Release \
 
 $ ninja
 $ sudo ninja install

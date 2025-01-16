@@ -29,18 +29,17 @@
 //===----------------------------------------------------------------------===//
 
 #include "kapy/Dialect/Kapy/IR/OpTraits.h"
-#include "kapy/Dialect/Kapy/IR/Utils.h"
 #include "mlir/IR/BuiltinTypes.h"
 
 using namespace mlir;
-using namespace mlir::kapy;
 
 LogicalResult OpTrait::impl::verifyTensorShape(Operation *op) {
   for (auto type : op->getOperandTypes()) {
     if (auto tensorType = dyn_cast<RankedTensorType>(type)) {
-      if (tensorType.getRank() == 0)
-        return op->emitError("0d tensor is not allowed");
-      auto numElements = product(tensorType.getShape());
+      auto rank = tensorType.getRank();
+      if (rank != 1 && rank != 2)
+        return op->emitError("tensor can only be 1d or 2d");
+      auto numElements = tensorType.getNumElements();
       if (numElements > maxElements)
         return op->emitError("maximum allowed number of elements is")
                << maxElements << ", but " << *op << " has more than that";
@@ -51,9 +50,10 @@ LogicalResult OpTrait::impl::verifyTensorShape(Operation *op) {
   }
   for (auto type : op->getResultTypes()) {
     if (auto tensorType = dyn_cast<RankedTensorType>(type)) {
-      if (tensorType.getRank() == 0)
-        return op->emitError("0d tensor is not allowed");
-      auto numElements = product(tensorType.getShape());
+      auto rank = tensorType.getRank();
+      if (rank != 1 && rank != 2)
+        return op->emitError("tensor can only be 1d or 2d");
+      auto numElements = tensorType.getNumElements();
       if (numElements > maxElements)
         return op->emitError("maximum allowed number of elements is")
                << maxElements << ", but " << *op << " has more than that";
@@ -65,17 +65,17 @@ LogicalResult OpTrait::impl::verifyTensorShape(Operation *op) {
   return success();
 }
 
-static LogicalResult verifySameLayout(Type type0, Type type1) {
+static LogicalResult verifySameLayout(Type typeA, Type typeB) {
   auto getLayout = [](Type type) {
     if (auto tensorType = dyn_cast<RankedTensorType>(type))
       return tensorType.getEncoding();
     return Attribute();
   };
-  auto layout0 = getLayout(type0);
-  auto layout1 = getLayout(type1);
-  if (!layout0 || !layout1)
+  auto layoutA = getLayout(typeA);
+  auto layoutB = getLayout(typeB);
+  if (!layoutA || !layoutB)
     return success();
-  return success(layout0 == layout1);
+  return success(layoutA == layoutB);
 }
 
 LogicalResult OpTrait::impl::verifySameOperandsLayout(Operation *op) {
@@ -85,7 +85,7 @@ LogicalResult OpTrait::impl::verifySameOperandsLayout(Operation *op) {
   auto firstType = op->getOperand(0).getType();
   for (auto type : op->getOperandTypes())
     if (failed(verifySameLayout(firstType, type)))
-      return op->emitOpError("requires same layout for all operands");
+      return op->emitOpError("requires same layout for all tensor operands");
 
   return success();
 }
@@ -101,7 +101,7 @@ LogicalResult OpTrait::impl::verifySameOperandsAndResultLayout(Operation *op) {
   for (auto type : op->getResultTypes())
     if (failed(verifySameLayout(firstType, type)))
       return op->emitOpError(
-          "requires same layout for all operands and results");
+          "requires same layout for all tensor operands and results");
 
   return verifySameOperandsLayout(op);
 }

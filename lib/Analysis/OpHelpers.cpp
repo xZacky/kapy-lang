@@ -49,25 +49,22 @@ bool ReduceOpHelper::isSupportedLayout() const {
   return isa<FragmentsLayoutAttr, NvidiaMmaLayoutAttr>(operandLayout);
 }
 
+bool ReduceOpHelper::isLaneSynchronous() const {
+  // TODO: Implement this.
+  return false;
+}
+
 bool ReduceOpHelper::isWarpSynchronous() const {
   // TODO: Implement this.
   return false;
 }
 
-SmallVector<int64_t, 4> ReduceOpHelper::getScratchShape() const {
-  if (isWarpSynchronous())
-    // Return empty scratch shape.
-    return SmallVector<int64_t, 4>();
-
-  auto operandShape = getOperandType().getShape();
-  auto scratchShape = llvm::to_vector<4>(operandShape);
-  // TODO: Compute inter-warp data size.
-  return scratchShape;
-}
-
 int64_t ReduceOpHelper::getScratchSizeInBytes() const {
+  if (isLaneSynchronous() || isWarpSynchronous())
+    return 0;
   auto bitWidth = getIntOrFloatBitWidth(getOperandType());
-  return ceilDiv<unsigned>(bitWidth, 8) * product(getScratchShape());
+  // TODO: Compute inter-warp data size.
+  return ceilDiv<unsigned>(bitWidth, 8) * product(getOperandType().getShape());
 }
 
 RankedTensorType ChangeOpHelper::getOperandType() const {
@@ -78,18 +75,21 @@ RankedTensorType ChangeOpHelper::getResultType() const {
   return cast<ChangeOp>(operation).getType();
 }
 
-SmallVector<int64_t, 4> ChangeOpHelper::getScratchShape() const {
-  if (isWarpSynchronous())
-    // Return empty scratch shape.
-    return SmallVector<int64_t, 4>();
+bool ChangeOpHelper::isLaneSynchronous() const {
+  // TODO: Implement this.
+  return false;
+}
 
-  auto operandShape = getOperandType().getShape();
-  auto scratchShape = llvm::to_vector<4>(operandShape);
-  // TODO: Compute inter-warp data size.
-  return scratchShape;
+bool ChangeOpHelper::isWarpSynchronous() const {
+  // TODO: Implement this.
+  return false;
 }
 
 int64_t ChangeOpHelper::getScratchSizeInBytes() const {
+  if (isLaneSynchronous() || isWarpSynchronous())
+    return 0;
+
   auto bitWidth = getIntOrFloatBitWidth(getOperandType());
-  return ceilDiv<unsigned>(bitWidth, 8) * product(getScratchShape());
+  // TODO: Compute inter-warp data size.
+  return ceilDiv<unsigned>(bitWidth, 8) * product(getOperandType().getShape());
 }

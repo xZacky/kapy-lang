@@ -72,11 +72,11 @@ private:
   std::set<Interval<int64_t>> readIntervals;
   std::set<Interval<int64_t>> writeIntervals;
 
-  bool isIntersected(const std::set<Interval<int64_t>> &intervals0,
-                     const std::set<Interval<int64_t>> &intervals1) const {
-    for (const auto &interval0 : intervals0)
-      for (const auto &interval1 : intervals1)
-        if (interval0.intersects(interval1))
+  bool isIntersected(const std::set<Interval<int64_t>> &intervalsA,
+                     const std::set<Interval<int64_t>> &intervalsB) const {
+    for (const auto &intervalA : intervalsA)
+      for (const auto &intervalB : intervalsB)
+        if (intervalA.intersects(intervalB))
           return true;
     return false;
   }
@@ -99,16 +99,17 @@ public:
   /// If the temporary storage is written but not read, it is considered as the
   /// problem of the operation itself.
   explicit MemBarAnalysis(Allocation *allocation) : allocation(allocation) {
-    builder = std::make_unique<OpBuilder>(allocation->getOperation());
+    builder = std::make_unique<OpBuilder>(allocation->getFunction());
   }
 
-  /// Run this analysis on the given function, insert a barrier if necessary.
+  /// Run this analysis on the function, insert a barrier if necessary.
   void run(DenseMap<FunctionOpInterface, BlockInfo> &funcToInfo) const;
 
 private:
-  Allocation *allocation = nullptr;
+  Allocation *allocation;
   std::unique_ptr<OpBuilder> builder;
 
+  /// Visit an operation and update the given BlockInfo.
   void visit(Operation *op, BlockInfo &infoToUpdate,
              DenseMap<FunctionOpInterface, BlockInfo> &funcToInfo) const;
 
@@ -143,7 +144,7 @@ public:
   }
 
 private:
-  ModuleAllocationAnalysis *allocationAnalysis = nullptr;
+  ModuleAllocationAnalysis *allocationAnalysis;
 };
 
 } // namespace kapy

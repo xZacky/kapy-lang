@@ -37,32 +37,32 @@ module {
     kapy.return %0, %2, %5 : tensor<128x1xf32>, tensor<1x128xf32>, tensor<32x128xf32>
   }
   // CHECK-LABEL: canonicalize_broadcast_op
-  kapy.func @canonicalize_broadcast_op(%arg0: tensor<1x1x128xf32>, %arg1: f32) -> (tensor<64x128xf32>, tensor<64x32x128xf32>, tensor<128x128xf32>, tensor<1x1x128xf32>) {
+  kapy.func @canonicalize_broadcast_op(%arg0: tensor<1x1xf32>, %arg1: f32) -> (tensor<64x128xf32>, tensor<32x128xf32>, tensor<128x128xf32>, tensor<1x1xf32>) {
     %cst = arith.constant dense<0.000000e+00> : tensor<1x128xf32>
     // CHECK: arith.constant
     %0 = kapy.broadcast %cst : tensor<1x128xf32> -> tensor<64x128xf32>
-    %1 = kapy.broadcast %arg0 : tensor<1x1x128xf32> -> tensor<1x32x128xf32>
+    %1 = kapy.broadcast %arg0 : tensor<1x1xf32> -> tensor<1x128xf32>
     // CHECK-NEXT: kapy.broadcast
-    %2 = kapy.broadcast %1 : tensor<1x32x128xf32> -> tensor<64x32x128xf32>
+    %2 = kapy.broadcast %1 : tensor<1x128xf32> -> tensor<32x128xf32>
     %3 = kapy.splat %arg1 : f32 -> tensor<1x128xf32>
     // CHECK-NEXT: kapy.splat
     %4 = kapy.broadcast %3 : tensor<1x128xf32> -> tensor<128x128xf32>
     // CHECK-NOT: kapy.broadcast
-    %5 = kapy.broadcast %arg0 : tensor<1x1x128xf32> -> tensor<1x1x128xf32>
-    kapy.return %0, %2, %4, %5 : tensor<64x128xf32>, tensor<64x32x128xf32>, tensor<128x128xf32>, tensor<1x1x128xf32>
+    %5 = kapy.broadcast %arg0 : tensor<1x1xf32> -> tensor<1x1xf32>
+    kapy.return %0, %2, %4, %5 : tensor<64x128xf32>, tensor<32x128xf32>, tensor<128x128xf32>, tensor<1x1xf32>
   }
-  // CHECK-LABEL: canonicalize_permute_op
-  kapy.func @canonicalize_permute_op(%arg0: f32, %arg1: tensor<32x128xf32>) -> (tensor<128x32xf32>, tensor<128x32xf32>, tensor<32x128xf32>) {
+  // CHECK-LABEL: canonicalize_transpose_op
+  kapy.func @canonicalize_transpose_op(%arg0: f32, %arg1: tensor<32x128xf32>) -> (tensor<128x32xf32>, tensor<128x32xf32>, tensor<32x128xf32>) {
     // CHECK: arith.constant
     %cst = arith.constant dense<0.000000e+00> : tensor<32x128xf32>
-    // CHECK-NOT: kapy.permute
-    %0 = kapy.permute %cst {order = array<i32: 1, 0>} : tensor<32x128xf32> -> tensor<128x32xf32>
+    // CHECK-NOT: kapy.transpose
+    %0 = kapy.transpose %cst : tensor<32x128xf32> -> tensor<128x32xf32>
     %1 = kapy.splat %arg0 : f32 -> tensor<32x128xf32>
     // CHECK: kapy.splat
-    %2 = kapy.permute %1 {order = array<i32: 1, 0>} : tensor<32x128xf32> -> tensor<128x32xf32>
-    // CHECK-NOT: kapy.permute
-    %3 = kapy.permute %arg1 {order = array<i32: 1, 0>} : tensor<32x128xf32> -> tensor<128x32xf32>
-    %4 = kapy.permute %3 {order = array<i32: 1, 0>} : tensor<128x32xf32> -> tensor<32x128xf32>
+    %2 = kapy.transpose %1 : tensor<32x128xf32> -> tensor<128x32xf32>
+    // CHECK-NOT: kapy.transpose
+    %3 = kapy.transpose %arg1 : tensor<32x128xf32> -> tensor<128x32xf32>
+    %4 = kapy.transpose %3 : tensor<128x32xf32> -> tensor<32x128xf32>
     kapy.return %0, %2, %4 : tensor<128x32xf32>, tensor<128x32xf32>, tensor<32x128xf32>
   }
 }

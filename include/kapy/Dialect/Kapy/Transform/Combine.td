@@ -88,17 +88,20 @@ def CombineMatmulOpAsAddFOpRhs : Pat<
 >;
 
 def CombineTwoMoveMemRefOps : Pat<
-  (Kapy_MoveMemRefOp:$result1
-    (Kapy_MoveMemRefOp:$result0 $source, $offset0),
-    $offset1
+  (Kapy_MoveMemRefOp:$resultB
+    (Kapy_MoveMemRefOp:$resultA $source, $offsetA),
+    $offsetB
   ),
   (Kapy_MoveMemRefOp
     $source,
-    (Arith_AddIOp $offset0, $offset1, Arith_IOFnone, (location $result0)),
-    (location $result1)
+    (Arith_AddIOp
+      $offsetA, $offsetB, ConstantEnumCase<Arith_IntegerOverflowAttr, "none">,
+      (location $resultA)
+    ),
+    (location $resultB)
   ),
   [
-    (Constraint<CPred<"isCombinable($0, $1)">> $offset0, $offset1)
+    (Constraint<CPred<"isCombinable($0, $1)">> $offsetA, $offsetB)
   ]
 >;
 

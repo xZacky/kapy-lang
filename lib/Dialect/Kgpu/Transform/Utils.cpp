@@ -31,6 +31,7 @@
 #include "kapy/Dialect/Kgpu/Transform/Utils.h"
 #include "kapy/Analysis/Layout.h"
 #include "kapy/Dialect/Kapy/IR/Kapy.h"
+#include "kapy/Dialect/Kapy/IR/Utils.h"
 #include "kapy/Dialect/Kgpu/IR/Kgpu.h"
 
 using namespace mlir;
@@ -65,6 +66,18 @@ static Attribute inferResultLayout(UnsqueezeOp op, Attribute operandLayout) {
   return sliceLayout.getParent();
 }
 
+static Attribute inferResultLayout(TransposeOp op, Attribute operandLayout) {
+  auto fragsLayout = dyn_cast<FragmentsLayoutAttr>(operandLayout);
+  if (!fragsLayout)
+    return Attribute();
+  return FragmentsLayoutAttr::get(fragsLayout.getContext(),
+                                  transpose(fragsLayout.getShapeOfWarpsRef()),
+                                  transpose(fragsLayout.getWarpLoopsRef()),
+                                  transpose(fragsLayout.getShapeOfLanesRef()),
+                                  transpose(fragsLayout.getLaneLoopsRef()),
+                                  fragsLayout.getMajorAxis() == 1 ? 0 : 1);
+}
+
 Attribute kapy::inferResultLayout(Operation *op, Attribute operandLayout) {
   if (op->hasTrait<OpTrait::SameOperandsAndResultLayout>() ||
       op->hasTrait<OpTrait::Elementwise>() ||
@@ -74,7 +87,8 @@ Attribute kapy::inferResultLayout(Operation *op, Attribute operandLayout) {
     return ::inferResultLayout(reduceOp, operandLayout);
   if (auto unsqueezeOp = dyn_cast<UnsqueezeOp>(op))
     return ::inferResultLayout(unsqueezeOp, operandLayout);
-  // TODO: Support PermuteOp.
+  if (auto transposeOp = dyn_cast<TransposeOp>(op))
+    return ::inferResultLayout(transposeOp, operandLayout);
   return Attribute();
 }
 
@@ -89,6 +103,18 @@ static Attribute inferOperandLayout(UnsqueezeOp op, Attribute resultLayout) {
   return AxisSliceLayoutAttr::get(op.getContext(), resultLayout, op.getAxis());
 }
 
+static Attribute inferOperandLayout(TransposeOp op, Attribute resultLayout) {
+  auto fragsLayout = dyn_cast<FragmentsLayoutAttr>(resultLayout);
+  if (!fragsLayout)
+    return Attribute();
+  return FragmentsLayoutAttr::get(fragsLayout.getContext(),
+                                  transpose(fragsLayout.getShapeOfWarpsRef()),
+                                  transpose(fragsLayout.getWarpLoopsRef()),
+                                  transpose(fragsLayout.getShapeOfLanesRef()),
+                                  transpose(fragsLayout.getLaneLoopsRef()),
+                                  fragsLayout.getMajorAxis() == 1 ? 0 : 1);
+}
+
 Attribute kapy::inferOperandLayout(Operation *op, Attribute resultLayout) {
   if (op->hasTrait<OpTrait::SameOperandsAndResultLayout>() ||
       op->hasTrait<OpTrait::Elementwise>() ||
@@ -98,7 +124,8 @@ Attribute kapy::inferOperandLayout(Operation *op, Attribute resultLayout) {
     return ::inferOperandLayout(reduceOp, resultLayout);
   if (auto unsqueezeOp = dyn_cast<UnsqueezeOp>(op))
     return ::inferOperandLayout(unsqueezeOp, resultLayout);
-  // TODO: Support PermuteOp.
+  if (auto transposeOp = dyn_cast<TransposeOp>(op))
+    return ::inferOperandLayout(transposeOp, resultLayout);
   return Attribute();
 }
 
@@ -106,15 +133,7 @@ bool kapy::isFreeChangeOp(Operation *op) {
   auto changeOp = dyn_cast<ChangeOp>(op);
   if (!changeOp)
     return false;
-  auto operandType = changeOp.getOperand().getType();
-  if (auto nvmmaLayout =
-          dyn_cast<NvidiaMmaLayoutAttr>(operandType.getEncoding())) {
-    auto mmopdLayout =
-        dyn_cast<MmOperandLayoutAttr>(changeOp.getType().getEncoding());
-    auto fragsLayout =
-        dyn_cast<FragmentsLayoutAttr>(changeOp.getType().getEncoding());
-    return isNvidiaMmaToMmOperandShortcut(nvmmaLayout, mmopdLayout) ||
-           isNvidiaMmaToFragmentsShortcut(nvmmaLayout, fragsLayout);
-  }
-  return false;
+  auto operandLayout = changeOp.getOperand().getType().getEncoding();
+  auto resultLayout = changeOp.getType().getEncoding();
+  return isLayoutShortcut(operandLayout, resultLayout);
 }

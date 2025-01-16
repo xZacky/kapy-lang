@@ -34,49 +34,15 @@ template <typename ArrayT> auto product(const ArrayT &array) {
   return product(ArrayRef(array));
 }
 
-template <typename I> bool isIota(ArrayRef<I> order) {
-  static_assert(std::is_integral_v<I>);
-  for (unsigned i = 0; i < order.size(); ++i)
-    if (order[i] != i)
-      return false;
-  return true;
-}
-template <typename OrderT> bool isIota(const OrderT &order) {
-  return isIota(ArrayRef(order));
-}
-
-template <typename I> SmallVector<I, 4> makeIota(unsigned rank) {
-  static_assert(std::is_integral_v<I>);
-  SmallVector<I, 4> result(rank);
-  for (unsigned i = 0; i < rank; ++i)
-    result[i] = i;
+template <typename T> SmallVector<T, 2> transpose(ArrayRef<T> array) {
+  assert(array.size() == 2);
+  SmallVector<T, 2> result;
+  result.push_back(array[1]);
+  result.push_back(array[0]);
   return result;
 }
-
-template <typename T, typename I>
-SmallVector<T, 4> permute(ArrayRef<T> array, ArrayRef<I> order) {
-  static_assert(std::is_integral_v<I>);
-  assert(array.size() == order.size());
-  SmallVector<T, 4> result;
-  for (unsigned i : order)
-    result.push_back(array[i]);
-  return result;
-}
-template <typename ArrayT, typename OrderT>
-auto permute(const ArrayT &array, const OrderT &order) {
-  return permute(ArrayRef(array), ArrayRef(order));
-}
-
-template <typename I> SmallVector<I, 4> inverse(ArrayRef<I> order) {
-  static_assert(std::is_integral_v<I>);
-  auto rank = order.size();
-  SmallVector<I, 4> result(rank);
-  for (unsigned i = 0; i < rank; ++i)
-    result[order[i]] = i;
-  return result;
-}
-template <typename ArrayT> auto inverse(const ArrayT &order) {
-  return inverse(ArrayRef(order));
+template <typename ArrayT> auto transpose(const ArrayT &array) {
+  return transpose(ArrayRef(array));
 }
 
 } // namespace kapy

@@ -32,7 +32,6 @@
 #define KAPY_DIALECT_KAPY_IR_TYPES
 
 include "mlir/IR/BuiltinTypeInterfaces.td"
-
 include "kapy/Dialect/Kapy/IR/Dialect.td"
 
 class Kapy_TypeDef<string name, string keyword, list<Trait> traits = []>
@@ -41,9 +40,6 @@ class Kapy_TypeDef<string name, string keyword, list<Trait> traits = []>
 def Kapy_Int : AnyTypeOf<[I1, I8, I16, I32, I64], "integer">;
 def Kapy_IntTensor : RankedTensorOf<[Kapy_Int]>;
 def Kapy_IntLike : AnyTypeOf<[Kapy_Int, Kapy_IntTensor]>;
-
-def Kapy_I1Tensor : RankedTensorOf<[I1]>;
-def Kapy_I1Like : AnyTypeOf<[I1, Kapy_I1Tensor]>;
 
 def Kapy_I32Tensor : RankedTensorOf<[I32]>;
 def Kapy_I32Like : AnyTypeOf<[I32, Kapy_I32Tensor]>;
@@ -80,7 +76,7 @@ def Kapy_MemRefType
     : Kapy_TypeDef<"KapyMemRef", "memref", [ShapedTypeInterface]> {
   let parameters = (ins
     ArrayRefParameter<"int64_t">:$shape,
-    "Type":$element_type,
+    "Type":$elementType,
     "Attribute":$encoding
   );
 

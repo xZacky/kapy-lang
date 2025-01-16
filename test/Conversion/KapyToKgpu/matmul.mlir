@@ -1,10 +1,10 @@
 // RUN: kapy-opt %s -convert-kapy-to-kgpu | FileCheck %s
 
 #glmem = #kapy.glmem<[?, ?]>
-// CHECK: #[[REGIS0:.*]] = #kgpu.regis<[2, 2], [1, 1], [1, 32], [1, 1], (0, 1)>
-// CHECK: #[[REGIS1:.*]] = #kgpu.regis<[4, 1], [1, 1], [2, 16], [4, 4], (0, 1)>
-// CHECK: #[[MMOPD0:.*]] = #kgpu.mmopd<#regis1, 0, 16>
-// CHECK: #[[MMOPD1:.*]] = #kgpu.mmopd<#regis1, 1, 16>
+// CHECK: #[[FRAGS0:.*]] = #kgpu.frags<[2, 2], [1, 1], [1, 32], [1, 1], 1>
+// CHECK: #[[FRAGS1:.*]] = #kgpu.frags<[4, 1], [1, 1], [2, 16], [4, 4], 1>
+// CHECK: #[[MMOPD0:.*]] = #kgpu.mmopd<#frags1, 0, 16>
+// CHECK: #[[MMOPD1:.*]] = #kgpu.mmopd<#frags1, 1, 16>
 // CHECK: module attributes
 // CHECK-SAME: kgpu.num_warps = 4
 // CHECK-SAME: kgpu.nvidia_cc = 80
@@ -31,7 +31,7 @@ module {
       // CHECK: kapy.matmul
       // CHECK-SAME: #[[MMOPD0]]
       // CHECK-SAME: #[[MMOPD1]]
-      // CHECK-SAME: #[[REGIS1]]
+      // CHECK-SAME: #[[FRAGS1]]
       %17 = kapy.matmul %15, %16, %arg4 : tensor<64x64xf16>, tensor<64x64xf16> -> tensor<64x64xf32>
       %18 = kapy.move_memref %arg5, %c64_i32 : !kapy.memref<64x64xf16, #glmem>
       %19 = kapy.move_memref %arg6, %c8192_i32 : !kapy.memref<64x64xf16, #glmem>

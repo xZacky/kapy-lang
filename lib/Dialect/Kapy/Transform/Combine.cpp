@@ -48,7 +48,7 @@ static bool isZero(Value value) {
   return false;
 }
 
-static bool isCombinable(Value offset0, Value offset1) {
+static bool isCombinable(Value offsetA, Value offsetB) {
   auto getAPInt = [](Value value) -> std::optional<APInt> {
     DenseElementsAttr denseAttr;
     auto *defOp = value.getDefiningOp();
@@ -68,11 +68,11 @@ static bool isCombinable(Value offset0, Value offset1) {
     return std::nullopt;
   };
 
-  auto apInt0 = getAPInt(offset0);
-  auto apInt1 = getAPInt(offset1);
-  if (apInt0.has_value() && apInt1.has_value()) {
+  auto apIntA = getAPInt(offsetA);
+  auto apIntB = getAPInt(offsetB);
+  if (apIntA.has_value() && apIntB.has_value()) {
     bool overflow = false;
-    (void)apInt0.value().sadd_ov(apInt1.value(), overflow);
+    (void)apIntA.value().sadd_ov(apIntB.value(), overflow);
     return !overflow;
   }
   return false;

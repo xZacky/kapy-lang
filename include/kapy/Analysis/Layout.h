@@ -26,28 +26,18 @@ class MmOperandLayoutAttr;
 FragmentsLayoutAttr getFragmentsLayout(MLIRContext *context,
                                        ArrayRef<int64_t> laneLoops,
                                        ArrayRef<int64_t> shape,
-                                       ArrayRef<unsigned> order,
-                                       int64_t numWarps);
-FragmentsLayoutAttr getFragmentsLayout(MLIRContext *context,
-                                       ArrayRef<int64_t> laneLoops,
-                                       ArrayRef<int64_t> shape,
-                                       int64_t numWarps);
+                                       int64_t numWarps,
+                                       bool needTranspose = false);
 FragmentsLayoutAttr getFragmentsLayout(MLIRContext *context,
                                        ArrayRef<int64_t> shape,
                                        int64_t numWarps);
-
-bool isNvidiaMmaToMmOperandShortcut(NvidiaMmaLayoutAttr nvmmaLayout,
-                                    MmOperandLayoutAttr mmopdLayout);
-
-bool isNvidiaMmaToFragmentsShortcut(NvidiaMmaLayoutAttr nvmmaLayout,
-                                    FragmentsLayoutAttr fragsLayout);
 
 NvidiaMmaLayoutAttr getNvidiaMmaLayout(MatmulOp matmulOp, int64_t numWarps);
 
 SharedMemLayoutAttr getSharedMemLayout(MLIRContext *context,
                                        MmOperandLayoutAttr mmopdLayout,
                                        ArrayRef<int64_t> shape,
-                                       ArrayRef<unsigned> order);
+                                       bool needTranspose = false);
 
 SetVector<Attribute> getCandidateLayouts(Operation *op, int64_t numWarps);
 

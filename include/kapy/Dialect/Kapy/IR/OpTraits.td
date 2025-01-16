@@ -33,13 +33,15 @@
 
 include "mlir/IR/OpBase.td"
 
+// Tensor in Kapy dialect can only be 1d or 2d (with rank 1, 2), and number of
+// elements must be power of 2.
 def ValidTensorShape : NativeOpTrait<"ValidTensorShape">;
 
 // Operation with this trait requires all its tensor operands having the same
 // layout.
 def SameOperandsLayout : NativeOpTrait<"SameOperandsLayout">;
 
-// Operation with this trait requires all its tensor operands and results having
+// Operation with this trait requires all its tensor operands and result having
 // the same layout.
 def SameOperandsAndResultLayout : NativeOpTrait<"SameOperandsAndResultLayout">;
 

@@ -1,4 +1,4 @@
-//===- OpHelpers.h ----------------------------------------------*- C++ -*-===//
+//===- TestMemBar.cpp -------------------------------------------*- C++ -*-===//
 //
 // Copyright 2018-2020 Philippe Tillet
 // Copyright 2020-2022 OpenAI
@@ -28,48 +28,35 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef KAPY_ANALYSIS_OPHELPERS_H
-#define KAPY_ANALYSIS_OPHELPERS_H
+#include "kapy/Analysis/MemBar.h"
+#include "mlir/Pass/Pass.h"
 
-#include "mlir/IR/Operation.h"
+using namespace mlir;
+using namespace mlir::kapy;
+
+namespace {
+
+class KapyTestMemBarPass
+    : public PassWrapper<KapyTestMemBarPass, OperationPass<ModuleOp>> {
+public:
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(KapyTestMemBarPass);
+
+  virtual StringRef getArgument() const override { return "kapy-test-membar"; }
+
+  virtual void runOnOperation() override {
+    auto module = getOperation();
+    ModuleAllocationAnalysis allocationAnalysis(module);
+    ModuleMemBarAnalysis membarAnalysis(&allocationAnalysis);
+    membarAnalysis.run();
+  }
+};
+
+} // namespace
 
 namespace mlir {
-namespace kapy {
+namespace test {
 
-class ReduceOpHelper {
-public:
-  explicit ReduceOpHelper(Operation *op) : operation(op) {}
+void registerKapyTestMemBarPass() { PassRegistration<KapyTestMemBarPass>(); }
 
-  unsigned getAxis() const;
-  RankedTensorType getOperandType() const;
-
-  bool isSupportedLayout() const;
-  bool isLaneSynchronous() const;
-  bool isWarpSynchronous() const;
-
-  int64_t getScratchSizeInBytes() const;
-
-private:
-  Operation *operation;
-};
-
-class ChangeOpHelper {
-public:
-  explicit ChangeOpHelper(Operation *op) : operation(op) {}
-
-  RankedTensorType getOperandType() const;
-  RankedTensorType getResultType() const;
-
-  bool isLaneSynchronous() const;
-  bool isWarpSynchronous() const;
-
-  int64_t getScratchSizeInBytes() const;
-
-private:
-  Operation *operation;
-};
-
-} // namespace kapy
+} // namespace test
 } // namespace mlir
-
-#endif // KAPY_ANALYSIS_OPHELPERS_H

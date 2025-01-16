@@ -38,8 +38,8 @@ public:
   bool isEntryState() const { return divisibility == 0 && !hasConstant(); }
 
   /// Initialize pessimistic lattice state from frunction.
-  template <typename FuncT>
-  static IntegerInfo getPessimisticState(FuncT funcOp, unsigned argIndex);
+  static IntegerInfo getPessimisticState(FunctionOpInterface funcOp,
+                                         unsigned argIndex);
 
   static IntegerInfo getPessimisticState(Value value);
 
@@ -95,12 +95,13 @@ public:
   }
 
   IntegerInfo *getIntegerInfo(Value value) {
-    auto *data = getData(
-        value.getParentRegion()->getParentOfType<FunctionOpInterface>());
-    if (!data)
+    auto funcOp =
+        value.getParentRegion()->getParentOfType<FunctionOpInterface>();
+    auto *valueToInfo = getData(funcOp);
+    if (!valueToInfo)
       return nullptr;
-    auto it = data->find(value);
-    if (it == data->end())
+    auto it = valueToInfo->find(value);
+    if (it == valueToInfo->end())
       return nullptr;
     return &(it->second);
   }

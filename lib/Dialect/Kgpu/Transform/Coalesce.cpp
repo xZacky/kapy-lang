@@ -50,21 +50,6 @@ static Value getMemRef(Operation *op) {
   return Value();
 }
 
-static SmallVector<unsigned, 4> getOrder(ArrayRef<int64_t> strides) {
-  SmallVector<unsigned, 4> order;
-  auto rank = strides.size();
-  unsigned majorAxis = rank;
-  for (unsigned i = 0; i < rank; ++i)
-    if (strides[i] == 1)
-      majorAxis = i;
-    else
-      order.push_back(i);
-  // Currently must have a contiguous major axis.
-  assert(majorAxis < rank);
-  order.push_back(majorAxis);
-  return order;
-}
-
 static int64_t getVectorWidth(Operation *op,
                               ModuleIntegerInfoAnalysis &analysis) {
   auto memref = getMemRef(op);
@@ -78,16 +63,20 @@ static Attribute chooseLayout(ModuleIntegerInfoAnalysis &analysis,
   auto memref = getMemRef(op);
   auto memrefType = cast<KapyMemRefType>(memref.getType());
   auto glmemLayout = cast<GlobalMemLayoutAttr>(memrefType.getEncoding());
-  auto order = getOrder(glmemLayout.getStrides());
+  auto rank = memrefType.getRank();
+  unsigned majorAxis = rank - 1;
+  for (auto it : llvm::enumerate(glmemLayout.getStrides()))
+    if (it.value() == 1)
+      majorAxis = it.index();
   auto vecWidth = getVectorWidth(op, analysis);
   auto numElems = memrefType.getNumElements();
   vecWidth = std::min(vecWidth, ceilDiv(numElems, numLanes));
-  auto rank = memrefType.getRank();
-  SmallVector<int64_t, 4> laneLoops(rank, 1);
-  laneLoops[order[rank - 1]] = vecWidth;
+  SmallVector<int64_t, 2> laneLoops(rank, 1);
+  laneLoops[majorAxis] = vecWidth;
   auto *context = op->getContext();
   auto shape = memrefType.getShape();
-  return getFragmentsLayout(context, laneLoops, shape, order, numWarps);
+  bool needTranspose = rank == 2 && majorAxis == 0;
+  return getFragmentsLayout(context, laneLoops, shape, numWarps, needTranspose);
 }
 
 static void updateLayout(Operation *op, Attribute layout) {

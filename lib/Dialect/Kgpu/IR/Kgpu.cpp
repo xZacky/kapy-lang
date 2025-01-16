@@ -79,17 +79,17 @@ public:
   }
 
   virtual FailureOr<Attribute>
-  inferPermuteOpLayout(Attribute operandLayout, ArrayRef<int32_t> order,
-                       std::optional<Location> loc) const override {
+  inferTransposeOpLayout(Attribute operandLayout,
+                         std::optional<Location> loc) const override {
     auto fragsLayout = dyn_cast<FragmentsLayoutAttr>(operandLayout);
     if (!fragsLayout)
       return emitOptionalError(loc, "operand must have fragments layout");
-    return FragmentsLayoutAttr::get(
-        getContext(), permute(fragsLayout.getShapeOfWarpsRef(), order),
-        permute(fragsLayout.getWarpLoopsRef(), order),
-        permute(fragsLayout.getShapeOfLanesRef(), order),
-        permute(fragsLayout.getLaneLoopsRef(), order),
-        permute(fragsLayout.getOrderRef(), order));
+    return FragmentsLayoutAttr::get(getContext(),
+                                    transpose(fragsLayout.getShapeOfWarpsRef()),
+                                    transpose(fragsLayout.getWarpLoopsRef()),
+                                    transpose(fragsLayout.getShapeOfLanesRef()),
+                                    transpose(fragsLayout.getLaneLoopsRef()),
+                                    fragsLayout.getMajorAxis() == 1 ? 0 : 1);
   }
 
   virtual LogicalResult verifyMatmulOpLayouts(MatmulOp op) const override {
@@ -156,29 +156,46 @@ FragmentsLayoutAttr FragmentsLayoutAttr::get(MLIRContext *context,
                                              ArrayRef<int64_t> warpLoops,
                                              ArrayRef<int64_t> shapeOfLanes,
                                              ArrayRef<int64_t> laneLoops) {
-  auto order = makeIota<unsigned>(shapeOfWarps.size());
   return FragmentsLayoutAttr::get(context, shapeOfWarps, warpLoops,
-                                  shapeOfLanes, laneLoops, order);
+                                  shapeOfLanes, laneLoops, 1);
+}
+
+SmallVector<int64_t, 2> FragmentsLayoutAttr::getShape() const {
+  auto shapeOfWarps = getShapeOfWarpsRef();
+  auto warpLoops = getWarpLoopsRef();
+  auto shapeOfLanes = getShapeOfLanesRef();
+  auto laneLoops = getLaneLoopsRef();
+  auto rank = getRank();
+  SmallVector<int64_t, 2> layoutShape(rank);
+  for (unsigned i = 0; i < rank; ++i)
+    layoutShape[i] =
+        shapeOfWarps[i] * warpLoops[i] * shapeOfLanes[i] * laneLoops[i];
+  return layoutShape;
 }
 
 AffineMap FragmentsLayoutAttr::getLayoutMap() const {
   auto rank = getRank();
-  auto order = getOrderRef();
 
   auto shapeOfWarps = getShapeOfWarpsRef();
-  auto stridesOfWarps =
-      permute(computeStrides(permute(shapeOfWarps, order)), inverse(order));
+  SmallVector<int64_t, 2> stridesOfWarps;
+  if (getMajorAxis() == 1)
+    stridesOfWarps = computeStrides(shapeOfWarps);
+  else
+    stridesOfWarps = transpose(computeStrides(transpose(shapeOfWarps)));
   for (unsigned i = 0; i < rank; ++i)
     stridesOfWarps[i] *= numLanes;
 
   auto shapeOfLanes = getShapeOfLanesRef();
-  auto stridesOfLanes =
-      permute(computeStrides(permute(shapeOfLanes, order)), inverse(order));
+  SmallVector<int64_t, 2> stridesOfLanes;
+  if (getMajorAxis() == 1)
+    stridesOfLanes = computeStrides(shapeOfLanes);
+  else
+    stridesOfLanes = transpose(computeStrides(transpose(shapeOfLanes)));
 
   auto warpLoops = getWarpLoopsRef();
   auto laneLoops = getLaneLoopsRef();
 
-  SmallVector<AffineExpr, 4> indexExprs;
+  SmallVector<AffineExpr, 2> indexExprs;
   for (unsigned i = 0; i < rank; ++i)
     indexExprs.push_back(getAffineDimExpr(i, getContext()));
 
@@ -193,77 +210,68 @@ AffineMap FragmentsLayoutAttr::getLayoutMap() const {
   return AffineMap::get(rank, 0, threadExpr);
 }
 
-AffineMap FragmentsLayoutAttr::getTensorMap(ArrayRef<int64_t> shape) const {
-  auto shapeOfWarps = getShapeOfWarpsRef();
-  auto warpLoops = getWarpLoopsRef();
-  auto shapeOfLanes = getShapeOfLanesRef();
-  auto laneLoops = getLaneLoopsRef();
-
-  auto rank = getRank();
-  SmallVector<int64_t, 4> layoutShape(rank);
-  for (unsigned i = 0; i < rank; ++i)
-    layoutShape[i] =
-        shapeOfWarps[i] * warpLoops[i] * shapeOfLanes[i] * laneLoops[i];
-
-  SmallVector<AffineExpr, 4> indexExprs;
-  for (unsigned i = 0; i < rank; ++i)
-    indexExprs.push_back(getAffineDimExpr(i, getContext()));
-  for (unsigned i = 0; i < rank; ++i)
-    if (shape[i] > layoutShape[i])
-      indexExprs[i] = indexExprs[i] % layoutShape[i];
-
-  auto threadExpr = getLayoutMap().getResult(0);
-  auto indexMap = AffineMap::get(rank, 0, indexExprs, getContext());
-  threadExpr = threadExpr.compose(indexMap);
-  return AffineMap::get(rank, 0, threadExpr);
-}
-
 unsigned AxisSliceLayoutAttr::getRank() const {
   if (auto fragsLayout = llvm::dyn_cast<FragmentsLayoutAttr>(getParent()))
     return fragsLayout.getRank() - 1;
-  if (auto sliceLayout = llvm::dyn_cast<AxisSliceLayoutAttr>(getParent()))
-    return sliceLayout.getRank() - 1;
   if (auto nvmmaLayout = llvm::dyn_cast<NvidiaMmaLayoutAttr>(getParent()))
     return nvmmaLayout.getRank() - 1;
   llvm_unreachable("invalid parent layout");
 }
 
-SmallVector<int64_t, 4>
-AxisSliceLayoutAttr::unsqueeze(ArrayRef<int64_t> shape) const {
-  auto rank = shape.size();
+SmallVector<int64_t, 2> AxisSliceLayoutAttr::getShape() const {
+  if (auto fragsLayout = llvm::dyn_cast<FragmentsLayoutAttr>(getParent())) {
+    auto layoutShape = fragsLayout.getShape();
+    layoutShape.erase(layoutShape.begin() + getAxis());
+    return layoutShape;
+  }
+  if (auto nvmmaLayout = llvm::dyn_cast<NvidiaMmaLayoutAttr>(getParent())) {
+    auto layoutShape = nvmmaLayout.getShape();
+    layoutShape.erase(layoutShape.begin() + getAxis());
+    return layoutShape;
+  }
+  llvm_unreachable("invalid parent layout");
+}
+
+AffineMap AxisSliceLayoutAttr::getLayoutMap() const {
   auto axis = getAxis();
-  SmallVector<int64_t, 4> newShape;
-  for (unsigned i = 0; i < rank + 1; ++i)
-    if (i != axis)
-      newShape.push_back(i > axis ? shape[i - 1] : shape[i]);
-    else
-      newShape.push_back(1);
-  return newShape;
-}
-
-SmallVector<int64_t, 4> NvidiaMmaLayoutAttr::getShapeOfLanes() const {
   auto rank = getRank();
-  SmallVector<int64_t, 4> shapeOfLanes(rank, 1);
-  shapeOfLanes[rank - 1] = 4;
-  shapeOfLanes[rank - 2] = 8;
-  return shapeOfLanes;
+  SmallVector<AffineExpr, 2> indexExprs;
+  for (unsigned i = 0; i < rank + 1; ++i) {
+    if (i != axis) {
+      auto j = i > axis ? i - 1 : i;
+      indexExprs.push_back(getAffineDimExpr(j, getContext()));
+    } else {
+      indexExprs.push_back(getAffineConstantExpr(0, getContext()));
+    }
+  }
+  auto indicesMap = AffineMap::get(rank, 0, indexExprs, getContext());
+  if (auto fragsLayout = llvm::dyn_cast<FragmentsLayoutAttr>(getParent()))
+    return fragsLayout.getLayoutMap().compose(indicesMap);
+  if (auto nvmmaLayout = llvm::dyn_cast<NvidiaMmaLayoutAttr>(getParent()))
+    return nvmmaLayout.getLayoutMap().compose(indicesMap);
+  llvm_unreachable("invalid parent layout");
 }
 
-SmallVector<int64_t, 4> NvidiaMmaLayoutAttr::getLaneLoops() const {
-  auto rank = getRank();
-  SmallVector<int64_t, 4> loopsPerLane(rank, 1);
-  loopsPerLane[rank - 1] = 2;
-  return loopsPerLane;
+SmallVector<int64_t, 2> NvidiaMmaLayoutAttr::getShapeOfLanes() const {
+  return SmallVector<int64_t, 2>{8, 4};
 }
 
-SmallVector<unsigned, 4> NvidiaMmaLayoutAttr::getOrder() const {
-  return makeIota<unsigned>(getRank());
+SmallVector<int64_t, 2> NvidiaMmaLayoutAttr::getLaneLoops() const {
+  return SmallVector<int64_t, 2>{1, 2};
 }
 
 FragmentsLayoutAttr NvidiaMmaLayoutAttr::toFragmentsLayout() const {
   return FragmentsLayoutAttr::get(getContext(), getShapeOfWarpsRef(),
                                   getWarpLoopsRef(), getShapeOfLanes(),
                                   getLaneLoops());
+}
+
+SmallVector<int64_t, 2> NvidiaMmaLayoutAttr::getShape() const {
+  return toFragmentsLayout().getShape();
+}
+
+AffineMap NvidiaMmaLayoutAttr::getLayoutMap() const {
+  return toFragmentsLayout().getLayoutMap();
 }
 
 unsigned MmOperandLayoutAttr::getRank() const {
@@ -275,45 +283,45 @@ unsigned MmOperandLayoutAttr::getRank() const {
 }
 
 LogicalResult ChangeOp::canonicalize(ChangeOp op, PatternRewriter &rewriter) {
-  if (op.getType() == op.getOperand().getType()) {
+  auto operandType = op.getOperand().getType();
+  auto resultType = op.getType();
+  if (resultType == operandType) {
     op.replaceAllUsesWith(op.getOperand());
     return success();
   }
-  // Do not rewrite changes from nvidia mma layout to matmul operand layout.
-  if (hasLayout<NvidiaMmaLayoutAttr>(op.getOperand().getType()) &&
-      hasLayout<MmOperandLayoutAttr>(op.getType()))
+  // Do not rewrite layout shortcut change.
+  if (isLayoutShortcut(operandType.getEncoding(), resultType.getEncoding()))
     return failure();
 
   auto *defOp = op.getOperand().getDefiningOp();
   if (!defOp)
     return failure();
-  if (auto loadOp = dyn_cast<LocalLoadOp>(defOp)) {
-    rewriter.replaceOpWithNewOp<LocalLoadOp>(op, op.getType(),
-                                             loadOp.getSource());
-    return success();
-  }
   if (auto changeOp = dyn_cast<ChangeOp>(defOp)) {
-    rewriter.replaceOpWithNewOp<ChangeOp>(op, op.getType(),
+    rewriter.replaceOpWithNewOp<ChangeOp>(op, resultType,
                                           changeOp.getOperand());
-    return success();
-  }
-  if (auto splatOp = dyn_cast<SplatOp>(defOp)) {
-    rewriter.replaceOpWithNewOp<SplatOp>(op, op.getType(),
-                                         splatOp.getOperand());
-    return success();
-  }
-  if (auto arangeOp = dyn_cast<ArangeOp>(defOp)) {
-    rewriter.replaceOpWithNewOp<ArangeOp>(op, op.getType(), arangeOp.getStart(),
-                                          arangeOp.getEnd());
     return success();
   }
   if (auto constantOp = dyn_cast<arith::ConstantOp>(defOp)) {
     if (auto splatAttr = dyn_cast<SplatElementsAttr>(constantOp.getValue())) {
       rewriter.replaceOpWithNewOp<arith::ConstantOp>(
-          op, SplatElementsAttr::get(op.getType(),
+          op, SplatElementsAttr::get(resultType,
                                      splatAttr.getSplatValue<Attribute>()));
       return success();
     }
+  }
+  if (auto arangeOp = dyn_cast<ArangeOp>(defOp)) {
+    rewriter.replaceOpWithNewOp<ArangeOp>(op, resultType, arangeOp.getStart(),
+                                          arangeOp.getEnd());
+    return success();
+  }
+  if (auto splatOp = dyn_cast<SplatOp>(defOp)) {
+    rewriter.replaceOpWithNewOp<SplatOp>(op, resultType, splatOp.getOperand());
+    return success();
+  }
+  if (auto loadOp = dyn_cast<LocalLoadOp>(defOp)) {
+    rewriter.replaceOpWithNewOp<LocalLoadOp>(op, resultType,
+                                             loadOp.getSource());
+    return success();
   }
   return failure();
 }
@@ -321,9 +329,9 @@ LogicalResult ChangeOp::canonicalize(ChangeOp op, PatternRewriter &rewriter) {
 void AsyncCopyOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
-  effects.emplace_back(MemoryEffects::Read::get(), getSource(),
+  effects.emplace_back(MemoryEffects::Read::get(), &getSourceMutable(),
                        GlobalMemory::get());
-  effects.emplace_back(MemoryEffects::Write::get(), getTarget(),
+  effects.emplace_back(MemoryEffects::Write::get(), &getTargetMutable(),
                        SharedMemory::get());
 }
 
@@ -379,7 +387,7 @@ LogicalResult LocalFreeOp::verify() {
 void LocalLoadOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
-  effects.emplace_back(MemoryEffects::Read::get(), getSource(),
+  effects.emplace_back(MemoryEffects::Read::get(), &getSourceMutable(),
                        SharedMemory::get());
 }
 
@@ -396,20 +404,16 @@ LogicalResult LocalLoadOp::verify() {
 }
 
 int64_t kapy::getNvidiaCC(ModuleOp module) {
-  if (!module->hasAttr(nvidiaCCAttrName))
-    return 80;
   return cast<IntegerAttr>(module->getAttr(nvidiaCCAttrName)).getInt();
 }
 
 int64_t kapy::getNumWarps(ModuleOp module) {
-  if (!module->hasAttr(numWarpsAttrName))
-    return 4;
   return cast<IntegerAttr>(module->getAttr(numWarpsAttrName)).getInt();
 }
 
 int64_t kapy::getSharedMemNeeded(ModuleOp module) {
   if (!module->hasAttr(shmemNeededAttrName))
-    return 0;
+    llvm_unreachable("shared memory needed has not been analyzed yet");
   return cast<IntegerAttr>(module->getAttr(shmemNeededAttrName)).getInt();
 }
 
@@ -419,11 +423,11 @@ int64_t kapy::getSharedMemOffset(Operation *op) {
   return cast<IntegerAttr>(op->getAttr(shmemOffsetAttrName)).getInt();
 }
 
-bool kapy::supportNvidiaMma(MatmulOp op) {
-  auto lhsElementType = op.getLhs().getType().getElementType();
-  auto rhsElementType = op.getRhs().getType().getElementType();
+bool kapy::supportNvidiaMma(MatmulOp matmulOp) {
+  auto lhsElementType = matmulOp.getLhs().getType().getElementType();
+  auto rhsElementType = matmulOp.getRhs().getType().getElementType();
   if (lhsElementType.isF32() && rhsElementType.isF32()) {
-    auto matmulFormat = op.getMatmulFormat();
+    auto matmulFormat = matmulOp.getMatmulFormat();
     return matmulFormat == MatmulFormat::TF32 ||
            matmulFormat == MatmulFormat::TF32X3;
   }
@@ -437,11 +441,66 @@ bool kapy::supportNvidiaMma(Type elementType) {
          elementType.isF32() || elementType.isInteger(8);
 }
 
+bool kapy::isNvidiaMmaToMmOperandShortcut(NvidiaMmaLayoutAttr nvmmaLayout,
+                                          MmOperandLayoutAttr mmopdLayout) {
+  if (nvmmaLayout != mmopdLayout.getParent())
+    return false;
+  if (mmopdLayout.getOperandIndex() != 0 || mmopdLayout.getBitWidth() != 16)
+    return false;
+  if (nvmmaLayout.getShapeOfWarpsRef()[1] != 1)
+    return false;
+  return true;
+}
+
+bool kapy::isNvidiaMmaToFragmentsShortcut(NvidiaMmaLayoutAttr nvmmaLayout,
+                                          FragmentsLayoutAttr fragsLayout) {
+  return nvmmaLayout.toFragmentsLayout() == fragsLayout;
+}
+
+bool kapy::isLayoutShortcut(Attribute oldLayout, Attribute newLayout) {
+  auto nvmmaLayout = dyn_cast<NvidiaMmaLayoutAttr>(oldLayout);
+  if (!nvmmaLayout)
+    return false;
+  auto mmopdLayout = dyn_cast<MmOperandLayoutAttr>(newLayout);
+  if (mmopdLayout && isNvidiaMmaToMmOperandShortcut(nvmmaLayout, mmopdLayout))
+    return true;
+  auto fragsLayout = dyn_cast<FragmentsLayoutAttr>(newLayout);
+  if (fragsLayout && isNvidiaMmaToFragmentsShortcut(nvmmaLayout, fragsLayout))
+    return true;
+  return false;
+}
+
+static AffineMap getTensorMapImpl(ArrayRef<int64_t> shape,
+                                  ArrayRef<int64_t> layoutShape,
+                                  AffineMap layoutMap) {
+  auto rank = shape.size();
+  auto *context = layoutMap.getContext();
+  SmallVector<AffineExpr, 2> indexExprs;
+  for (unsigned i = 0; i < rank; ++i)
+    indexExprs.push_back(getAffineDimExpr(i, context));
+  for (unsigned i = 0; i < rank; ++i)
+    if (shape[i] > layoutShape[i])
+      indexExprs[i] = indexExprs[i] % layoutShape[i];
+  auto indicesMap = AffineMap::get(rank, 0, indexExprs, context);
+  return AffineMap::get(rank, 0, layoutMap.getResult(0).compose(indicesMap));
+}
+
+AffineMap kapy::getTensorMap(ArrayRef<int64_t> shape, Attribute layout) {
+  if (auto fragsLayout = dyn_cast<FragmentsLayoutAttr>(layout))
+    return getTensorMapImpl(shape, fragsLayout.getShape(),
+                            fragsLayout.getLayoutMap());
+  if (auto sliceLayout = dyn_cast<AxisSliceLayoutAttr>(layout))
+    return getTensorMapImpl(shape, sliceLayout.getShape(),
+                            sliceLayout.getLayoutMap());
+  if (auto nvmmaLayout = dyn_cast<NvidiaMmaLayoutAttr>(layout))
+    return getTensorMapImpl(shape, nvmmaLayout.getShape(),
+                            nvmmaLayout.getLayoutMap());
+  llvm_unreachable("unsupported layout");
+}
+
 static unsigned getIdStrWidth(int64_t id) {
-  // Maximum id supported now is 9999.
-  assert(id >= 0 && id < 10000);
-  if (id >= 1000)
-    return 4;
+  // Maximum id supported now is 999.
+  assert(id >= 0 && id < 1000);
   if (id >= 100)
     return 3;
   if (id >= 10)
@@ -479,14 +538,12 @@ static std::string getLineSuffixString(int64_t index, int64_t numElems,
   return suffixStr;
 }
 
-static std::string getLayoutStringImpl(FragmentsLayoutAttr layout,
-                                       ArrayRef<int64_t> shape) {
+std::string kapy::getLayoutString(RankedTensorType tensorType) {
+  auto shape = tensorType.getShape();
+  auto tensorMap = getTensorMap(shape, tensorType.getEncoding());
   auto rank = shape.size();
   auto numElems = product(shape);
   auto strides = computeStrides(shape);
-  auto tensorMap = layout.getTensorMap(shape);
-  auto numWarps = product(layout.getShapeOfWarpsRef());
-  auto maxIdStrWidth = getIdStrWidth(numLanes * numWarps - 1);
   std::string layoutStr = "";
   for (int64_t index = 0; index < numElems; ++index) {
     auto indices = delinearize(index, shape);
@@ -495,7 +552,7 @@ static std::string getLayoutStringImpl(FragmentsLayoutAttr layout,
     if (index % shape[rank - 1] == 0)
       layoutStr += getLinePrefixString(index, strides);
     // element
-    layoutStr += getElementString(threadId, maxIdStrWidth);
+    layoutStr += getElementString(threadId, 3);
     // line suffix
     if ((index + 1) % shape[rank - 1] == 0)
       layoutStr += getLineSuffixString(index, numElems, strides);
@@ -504,14 +561,4 @@ static std::string getLayoutStringImpl(FragmentsLayoutAttr layout,
       layoutStr += ", ";
   }
   return layoutStr;
-}
-
-std::string kapy::getLayoutString(RankedTensorType type) {
-  if (auto fragsLayout = dyn_cast<FragmentsLayoutAttr>(type.getEncoding()))
-    return getLayoutStringImpl(fragsLayout, type.getShape());
-  if (auto nvmmaLayout = dyn_cast<NvidiaMmaLayoutAttr>(type.getEncoding())) {
-    auto fragsLayout = nvmmaLayout.toFragmentsLayout();
-    return getLayoutStringImpl(fragsLayout, type.getShape());
-  }
-  llvm_unreachable("unsupported layout");
 }

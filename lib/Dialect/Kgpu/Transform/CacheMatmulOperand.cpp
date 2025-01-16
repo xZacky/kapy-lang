@@ -64,20 +64,10 @@ public:
           dyn_cast<FragmentsLayoutAttr>(operandType.getEncoding());
       if (!fragsLayout)
         return;
-      auto oldOrder = fragsLayout.getOrderRef();
-      SmallVector<unsigned, 4> newOrder;
-      if (oldOrder.size() == 3) {
-        // Add 0 as first element.
-        newOrder.push_back(0);
-        // Add all elements except the element that is 0.
-        for (unsigned i = 0; i < oldOrder.size(); ++i)
-          if (oldOrder[i] != 0)
-            newOrder.push_back(oldOrder[i]);
-      } else {
-        newOrder = llvm::to_vector<4>(oldOrder);
-      }
-      auto shmemLayout = getSharedMemLayout(changeOp.getContext(), mmopdLayout,
-                                            operandType.getShape(), newOrder);
+      bool needTranspose = fragsLayout.getMajorAxis() == 0;
+      auto shmemLayout =
+          getSharedMemLayout(changeOp.getContext(), mmopdLayout,
+                             operandType.getShape(), needTranspose);
       auto memrefType = KapyMemRefType::get(
           resultType.getShape(), resultType.getElementType(), shmemLayout);
       auto allocOp = builder.create<LocalAllocOp>(loc, memrefType, operand);

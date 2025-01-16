@@ -148,16 +148,15 @@ public:
   }
 };
 
-class PermuteOpConversion : public OpConversionPattern<PermuteOp> {
+class TransposeOpConversion : public OpConversionPattern<TransposeOp> {
 public:
   using OpConversionPattern::OpConversionPattern;
 
   virtual LogicalResult
-  matchAndRewrite(PermuteOp op, OpAdaptor adaptor,
+  matchAndRewrite(TransposeOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    auto operand = adaptor.getOperand();
     auto newOp =
-        rewriter.replaceOpWithNewOp<PermuteOp>(op, operand, op.getOrder());
+        rewriter.replaceOpWithNewOp<TransposeOp>(op, adaptor.getOperand());
     addNamedAttributes(newOp, adaptor.getAttributes());
     return success();
   }
@@ -471,7 +470,7 @@ static void populateKapyOpsConversionPatterns(KgpuTypeConverter &typeConverter,
   patterns.add<GenericOpConversion<SplatOp>>(typeConverter, context);
   patterns.add<UnsqueezeOpConversion>(typeConverter, context);
   patterns.add<BroadcastOpConversion>(typeConverter, context);
-  patterns.add<PermuteOpConversion>(typeConverter, context);
+  patterns.add<TransposeOpConversion>(typeConverter, context);
   patterns.add<MatmulOpConversion>(typeConverter, context);
   patterns.add<ReduceOpConversion>(typeConverter, context);
   patterns.add<GenericOpConversion<ElementwiseExternOp>>(typeConverter,
