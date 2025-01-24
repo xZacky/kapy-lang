@@ -41,8 +41,8 @@ static Operation *getFirstUser(Operation *op) {
   for (auto *useOp : op->getUsers())
     if (auto *ancestor = op->getBlock()->findAncestorOpInBlock(*useOp))
       useOps.push_back(ancestor);
-  auto isBefore = [](Operation *op0, Operation *op1) {
-    return op0->isBeforeInBlock(op1);
+  auto isBefore = [](Operation *opA, Operation *opB) {
+    return opA->isBeforeInBlock(opB);
   };
   auto minOpIt = std::min_element(useOps.begin(), useOps.end(), isBefore);
   return minOpIt != useOps.end() ? *minOpIt : nullptr;
@@ -107,7 +107,7 @@ public:
       allocOp->moveAfter(defOp);
     });
 
-    // Move Transpose just after their defining operation.
+    // Move transpose just after their defining operation.
     module.walk([&](TransposeOp transposeOp) {
       auto *defOp = transposeOp.getOperand().getDefiningOp();
       if (!defOp)

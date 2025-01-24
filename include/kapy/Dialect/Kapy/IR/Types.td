@@ -35,7 +35,9 @@ include "mlir/IR/BuiltinTypeInterfaces.td"
 include "kapy/Dialect/Kapy/IR/Dialect.td"
 
 class Kapy_TypeDef<string name, string keyword, list<Trait> traits = []>
-    : TypeDef<Kapy_Dialect, name, traits> { let mnemonic = keyword; }
+    : TypeDef<Kapy_Dialect, name, traits> {
+  let mnemonic = keyword;
+}
 
 def Kapy_Int : AnyTypeOf<[I1, I8, I16, I32, I64], "integer">;
 def Kapy_IntTensor : RankedTensorOf<[Kapy_Int]>;

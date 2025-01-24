@@ -156,8 +156,9 @@ FragmentsLayoutAttr FragmentsLayoutAttr::get(MLIRContext *context,
                                              ArrayRef<int64_t> warpLoops,
                                              ArrayRef<int64_t> shapeOfLanes,
                                              ArrayRef<int64_t> laneLoops) {
+  auto majorAxis = shapeOfWarps.size() - 1;
   return FragmentsLayoutAttr::get(context, shapeOfWarps, warpLoops,
-                                  shapeOfLanes, laneLoops, 1);
+                                  shapeOfLanes, laneLoops, majorAxis);
 }
 
 SmallVector<int64_t, 2> FragmentsLayoutAttr::getShape() const {
@@ -203,7 +204,7 @@ AffineMap FragmentsLayoutAttr::getLayoutMap() const {
   for (unsigned i = 0; i < rank; ++i) {
     auto tmpShape =
         ArrayRef{shapeOfWarps[i], warpLoops[i], shapeOfLanes[i], laneLoops[i]};
-    auto tmpExprs = delinearize(indexExprs[i], tmpShape);
+    auto tmpExprs = delinearize<4>(indexExprs[i], tmpShape);
     threadExpr = threadExpr + (tmpExprs[0] * stridesOfWarps[i] +
                                tmpExprs[2] * stridesOfLanes[i]);
   }
@@ -283,43 +284,38 @@ unsigned MmOperandLayoutAttr::getRank() const {
 }
 
 LogicalResult ChangeOp::canonicalize(ChangeOp op, PatternRewriter &rewriter) {
-  auto operandType = op.getOperand().getType();
-  auto resultType = op.getType();
-  if (resultType == operandType) {
+  if (op.getType() == op.getOperand().getType()) {
     op.replaceAllUsesWith(op.getOperand());
     return success();
   }
-  // Do not rewrite layout shortcut change.
-  if (isLayoutShortcut(operandType.getEncoding(), resultType.getEncoding()))
-    return failure();
-
   auto *defOp = op.getOperand().getDefiningOp();
   if (!defOp)
     return failure();
   if (auto changeOp = dyn_cast<ChangeOp>(defOp)) {
-    rewriter.replaceOpWithNewOp<ChangeOp>(op, resultType,
+    rewriter.replaceOpWithNewOp<ChangeOp>(op, op.getType(),
                                           changeOp.getOperand());
     return success();
   }
   if (auto constantOp = dyn_cast<arith::ConstantOp>(defOp)) {
     if (auto splatAttr = dyn_cast<SplatElementsAttr>(constantOp.getValue())) {
       rewriter.replaceOpWithNewOp<arith::ConstantOp>(
-          op, SplatElementsAttr::get(resultType,
+          op, SplatElementsAttr::get(op.getType(),
                                      splatAttr.getSplatValue<Attribute>()));
       return success();
     }
   }
   if (auto arangeOp = dyn_cast<ArangeOp>(defOp)) {
-    rewriter.replaceOpWithNewOp<ArangeOp>(op, resultType, arangeOp.getStart(),
+    rewriter.replaceOpWithNewOp<ArangeOp>(op, op.getType(), arangeOp.getStart(),
                                           arangeOp.getEnd());
     return success();
   }
   if (auto splatOp = dyn_cast<SplatOp>(defOp)) {
-    rewriter.replaceOpWithNewOp<SplatOp>(op, resultType, splatOp.getOperand());
+    rewriter.replaceOpWithNewOp<SplatOp>(op, op.getType(),
+                                         splatOp.getOperand());
     return success();
   }
   if (auto loadOp = dyn_cast<LocalLoadOp>(defOp)) {
-    rewriter.replaceOpWithNewOp<LocalLoadOp>(op, resultType,
+    rewriter.replaceOpWithNewOp<LocalLoadOp>(op, op.getType(),
                                              loadOp.getSource());
     return success();
   }
@@ -375,6 +371,13 @@ LogicalResult LocalAllocOp::verify() {
   if (operandType.getElementType() != resultType.getElementType())
     return emitOpError("operand and result must have same element type");
   return success();
+}
+
+void LocalFreeOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Free::get(), &getOperandMutable(),
+                       SharedMemory::get());
 }
 
 LogicalResult LocalFreeOp::verify() {
@@ -445,7 +448,7 @@ bool kapy::isNvidiaMmaToMmOperandShortcut(NvidiaMmaLayoutAttr nvmmaLayout,
                                           MmOperandLayoutAttr mmopdLayout) {
   if (nvmmaLayout != mmopdLayout.getParent())
     return false;
-  if (mmopdLayout.getOperandIndex() != 0 || mmopdLayout.getBitWidth() != 16)
+  if (mmopdLayout.getOperandIndex() != 0)
     return false;
   if (nvmmaLayout.getShapeOfWarpsRef()[1] != 1)
     return false;
@@ -467,6 +470,38 @@ bool kapy::isLayoutShortcut(Attribute oldLayout, Attribute newLayout) {
   auto fragsLayout = dyn_cast<FragmentsLayoutAttr>(newLayout);
   if (fragsLayout && isNvidiaMmaToFragmentsShortcut(nvmmaLayout, fragsLayout))
     return true;
+  return false;
+}
+
+static bool hasMoreThreadsThanElements(Operation *op, Value memref) {
+  auto memrefType = cast<KapyMemRefType>(memref.getType());
+  return memrefType.getNumElements() <
+         numLanes * getNumWarps(op->getParentOfType<ModuleOp>());
+}
+
+bool kapy::isExpensiveMemoryRead(Operation *op) {
+  auto effectOp = dyn_cast<MemoryEffectOpInterface>(op);
+  if (!effectOp)
+    return false;
+  SmallVector<SideEffects::EffectInstance<MemoryEffects::Effect>> effects;
+  effectOp.getEffects(effects);
+  for (auto &effect : effects)
+    if (isa<MemoryEffects::Read>(effect.getEffect()) &&
+        effect.getResource() == GlobalMemory::get())
+      return !hasMoreThreadsThanElements(op, effect.getValue());
+  return false;
+}
+
+bool kapy::isExpensiveMemoryWrite(Operation *op) {
+  auto effectOp = dyn_cast<MemoryEffectOpInterface>(op);
+  if (!effectOp)
+    return false;
+  SmallVector<SideEffects::EffectInstance<MemoryEffects::Effect>> effects;
+  effectOp.getEffects(effects);
+  for (auto &effect : effects)
+    if (isa<MemoryEffects::Write>(effect.getEffect()) &&
+        effect.getResource() == GlobalMemory::get())
+      return !hasMoreThreadsThanElements(op, effect.getValue());
   return false;
 }
 
@@ -539,11 +574,11 @@ static std::string getLineSuffixString(int64_t index, int64_t numElems,
 }
 
 std::string kapy::getLayoutString(RankedTensorType tensorType) {
+  auto rank = tensorType.getRank();
   auto shape = tensorType.getShape();
-  auto tensorMap = getTensorMap(shape, tensorType.getEncoding());
-  auto rank = shape.size();
-  auto numElems = product(shape);
   auto strides = computeStrides(shape);
+  auto numElems = product(shape);
+  auto tensorMap = getTensorMap(shape, tensorType.getEncoding());
   std::string layoutStr = "";
   for (int64_t index = 0; index < numElems; ++index) {
     auto indices = delinearize(index, shape);

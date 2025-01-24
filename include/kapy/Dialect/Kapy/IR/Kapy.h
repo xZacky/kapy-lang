@@ -95,6 +95,10 @@ template <typename LayoutT> bool hasLayout(KapyMemRefType memrefType) {
   return layout && isa<LayoutT>(layout);
 }
 
+constexpr char alignmentAttrName[] = "kapy.alignment";
+
+int64_t getAlignment(OpOperand *memref);
+
 } // namespace kapy
 } // namespace mlir
 

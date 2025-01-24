@@ -28,7 +28,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "kapy/Analysis/Integer.h"
 #include "kapy/Analysis/Layout.h"
 #include "kapy/Dialect/Kapy/IR/Kapy.h"
 #include "kapy/Dialect/Kapy/IR/Utils.h"
@@ -38,42 +37,43 @@
 using namespace mlir;
 using namespace mlir::kapy;
 
-static Value getMemRef(Operation *op) {
-  if (auto loadOp = dyn_cast<LoadOp>(op))
-    return loadOp.getSource();
-  if (auto storeOp = dyn_cast<StoreOp>(op))
-    return storeOp.getTarget();
-  if (auto rmwOp = dyn_cast<AtomicRMWOp>(op))
-    return rmwOp.getSource();
-  if (auto casOp = dyn_cast<AtomicCASOp>(op))
-    return casOp.getSource();
-  return Value();
+static OpOperand *getMemRef(Operation *op) {
+  auto effectOp = dyn_cast<MemoryEffectOpInterface>(op);
+  if (!effectOp)
+    return nullptr;
+  SmallVector<SideEffects::EffectInstance<MemoryEffects::Effect>> effects;
+  effectOp.getEffects(effects);
+  for (auto &effect : effects)
+    if (isa<MemoryEffects::Read, MemoryEffects::Write>(effect.getEffect()) &&
+        effect.getResource() == GlobalMemory::get())
+      return effect.getEffectValue<OpOperand *>();
+  return nullptr;
 }
 
-static int64_t getVectorWidth(Operation *op,
-                              ModuleIntegerInfoAnalysis &analysis) {
-  auto memref = getMemRef(op);
-  auto bitWidth = getIntOrFloatBitWidth(memref.getType());
-  auto alignment = analysis.getIntegerInfo(memref)->getDivisibility();
-  return std::min<int64_t>(alignment, 128 / bitWidth);
+static int64_t getVectorWidth(OpOperand *memref) {
+  auto alignment = getAlignment(memref);
+  auto bitWidth = getIntOrFloatBitWidth(memref->get().getType());
+  return std::min<int64_t>(alignment * 8 / bitWidth, 128 / bitWidth);
 }
 
-static Attribute chooseLayout(ModuleIntegerInfoAnalysis &analysis,
-                              Operation *op, int64_t numWarps) {
-  auto memref = getMemRef(op);
-  auto memrefType = cast<KapyMemRefType>(memref.getType());
+static Attribute chooseLayout(OpOperand *memref, int64_t numWarps) {
+  auto memrefType = cast<KapyMemRefType>(memref->get().getType());
   auto glmemLayout = cast<GlobalMemLayoutAttr>(memrefType.getEncoding());
   auto rank = memrefType.getRank();
-  unsigned majorAxis = rank - 1;
+  // Initialize major axis as rank, that means no contiguous axis.
+  unsigned majorAxis = rank;
   for (auto it : llvm::enumerate(glmemLayout.getStrides()))
     if (it.value() == 1)
       majorAxis = it.index();
-  auto vecWidth = getVectorWidth(op, analysis);
+  // Currently we assume that must have a contiguous axis.
+  if (majorAxis == rank)
+    llvm_unreachable("can not find a contiguous axis");
+  auto vecWidth = getVectorWidth(memref);
   auto numElems = memrefType.getNumElements();
   vecWidth = std::min(vecWidth, ceilDiv(numElems, numLanes));
   SmallVector<int64_t, 2> laneLoops(rank, 1);
   laneLoops[majorAxis] = vecWidth;
-  auto *context = op->getContext();
+  auto *context = memref->getOwner()->getContext();
   auto shape = memrefType.getShape();
   bool needTranspose = rank == 2 && majorAxis == 0;
   return getFragmentsLayout(context, laneLoops, shape, numWarps, needTranspose);
@@ -103,10 +103,10 @@ static void updateLayout(Operation *op, Attribute layout) {
   auto *newOp = builder.create(loc, op->getName().getIdentifier(), newOperands,
                                newTypes, op->getAttrs());
   for (unsigned i = 0; i < op->getNumResults(); ++i) {
-    Value result = op->getResult(i);
+    Value oldResult = op->getResult(i);
     Value newResult = newOp->getResult(i);
-    newResult = builder.create<ChangeOp>(loc, result.getType(), newResult);
-    result.replaceAllUsesWith(newResult);
+    newResult = builder.create<ChangeOp>(loc, oldResult.getType(), newResult);
+    oldResult.replaceAllUsesWith(newResult);
   }
   op->erase();
 }
@@ -120,14 +120,12 @@ class KgpuCoalescePass : public impl::KgpuCoalesceBase<KgpuCoalescePass> {
 public:
   virtual void runOnOperation() override {
     auto module = getOperation();
-    ModuleIntegerInfoAnalysis analysis(module);
     auto numWarps = getNumWarps(module);
     // For each memory access operation, we determine what layout it should have
-    // for best memory coalescing.
+    // for best memory coalescing and update it.
     module.walk([&](Operation *op) {
-      if (!isa<LoadOp, StoreOp, AtomicRMWOp, AtomicCASOp>(op))
-        return;
-      updateLayout(op, chooseLayout(analysis, op, numWarps));
+      if (auto *memref = getMemRef(op))
+        updateLayout(op, chooseLayout(memref, numWarps));
     });
   }
 };

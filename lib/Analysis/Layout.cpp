@@ -31,8 +31,6 @@ FragmentsLayoutAttr kapy::getFragmentsLayout(MLIRContext *context,
                                     shapeOfLanes, laneLoops);
   }
   auto numThreads = numLanes * numWarps;
-  auto restLanes = numLanes;
-  auto restWarps = numWarps;
   unsigned majorAxis = needTranspose ? 0 : 1;
   unsigned minorAxis = needTranspose ? 1 : 0;
   auto numLoopsMajor = warpLoops[majorAxis] * laneLoops[majorAxis];
@@ -66,7 +64,7 @@ NvidiaMmaLayoutAttr kapy::getNvidiaMmaLayout(MatmulOp matmulOp,
   bool hasChainedMatmulOps = false;
   for (auto *op : slice) {
     if (isa<MatmulOp>(op) && op != matmulOp.getOperation()) {
-      if (auto nvmmaLayout = dyn_cast_or_null<NvidiaMmaLayoutAttr>(
+      if (auto nvmmaLayout = dyn_cast_if_present<NvidiaMmaLayoutAttr>(
               cast<MatmulOp>(op).getType().getEncoding()))
         return nvmmaLayout;
       hasChainedMatmulOps = true;
@@ -96,33 +94,40 @@ NvidiaMmaLayoutAttr kapy::getNvidiaMmaLayout(MatmulOp matmulOp,
   return NvidiaMmaLayoutAttr::get(context, shapeOfWarps, warpLoops);
 }
 
-SharedMemLayoutAttr kapy::getSharedMemLayout(MLIRContext *context,
-                                             MmOperandLayoutAttr mmopdLayout,
-                                             ArrayRef<int64_t> shape,
+SharedMemLayoutAttr kapy::getSharedMemLayout(RankedTensorType tensorType,
                                              bool needTranspose) {
-  auto shmemShape = llvm::to_vector<2>(shape);
-  if (needTranspose)
-    shmemShape = transpose(shape);
-  auto strides = computeStrides(shmemShape);
-  if (needTranspose)
-    strides = transpose(strides);
-  auto bitWidth = mmopdLayout.getBitWidth();
-  auto nvmmaLayout = dyn_cast<NvidiaMmaLayoutAttr>(mmopdLayout.getParent());
-  if (!nvmmaLayout)
-    return SharedMemLayoutAttr::get(context, strides, bitWidth, 1);
-  auto perPhase = std::max<unsigned>(1024 / (shmemShape[1] * bitWidth), 1);
-  if (mmopdLayout.getOperandIndex() == 0) {
-    auto maxPhase = (needTranspose ? 128 / bitWidth : 8) / perPhase;
-    return SharedMemLayoutAttr::get(context, strides, bitWidth, maxPhase);
-  } else {
-    auto maxPhase = (needTranspose ? 8 : 128 / bitWidth) / perPhase;
-    return SharedMemLayoutAttr::get(context, strides, bitWidth, maxPhase);
+  auto *context = tensorType.getContext();
+  auto bitWidth = getIntOrFloatBitWidth(tensorType);
+  auto shape = tensorType.getShape();
+  SmallVector<int64_t, 2> strides;
+  if (!needTranspose)
+    strides = computeStrides(shape);
+  else
+    strides = transpose(computeStrides(transpose(shape)));
+  if (auto mmopdLayout =
+          dyn_cast<MmOperandLayoutAttr>(tensorType.getEncoding())) {
+    if (!isa<NvidiaMmaLayoutAttr>(mmopdLayout.getParent()))
+      return SharedMemLayoutAttr::get(context, strides, 1);
+    unsigned majorAxis = needTranspose ? 0 : 1;
+    auto perPhase = std::max<unsigned>(1024 / (shape[majorAxis] * bitWidth), 1);
+    // We use ldmatrix instructions for tensor core operands.
+    // In each phase, 8 lanes hold `[8, 128 / bitWidth]` elements, so we compute
+    // the maximum phase by this in order to avoid bank conflicts.
+    if (mmopdLayout.getOperandIndex() == 0) {
+      auto maxPhase = (needTranspose ? 128 / bitWidth : 8) / perPhase;
+      return SharedMemLayoutAttr::get(context, strides, maxPhase);
+    } else {
+      auto maxPhase = (needTranspose ? 8 : 128 / bitWidth) / perPhase;
+      return SharedMemLayoutAttr::get(context, strides, maxPhase);
+    }
   }
+  // TODO: Support more cases.
+  llvm_unreachable("not implemented");
 }
 
-static SetVector<Attribute> getCandidateLayouts1d(MLIRContext *context,
-                                                  RankedTensorType type,
+static SetVector<Attribute> getCandidateLayouts1d(RankedTensorType type,
                                                   int64_t numWarps) {
+  auto *context = type.getContext();
   auto shape = type.getShape();
   auto fragsLayout = cast<FragmentsLayoutAttr>(type.getEncoding());
   assert(fragsLayout.getRank() == 1);
@@ -146,9 +151,9 @@ static SetVector<Attribute> getCandidateLayouts1d(MLIRContext *context,
   return layouts;
 }
 
-static SetVector<Attribute> getCandidateLayouts2d(MLIRContext *context,
-                                                  RankedTensorType type,
+static SetVector<Attribute> getCandidateLayouts2d(RankedTensorType type,
                                                   int64_t numWarps) {
+  auto *context = type.getContext();
   auto shape = type.getShape();
   auto fragsLayout = cast<FragmentsLayoutAttr>(type.getEncoding());
   assert(fragsLayout.getRank() == 2);
@@ -158,21 +163,12 @@ static SetVector<Attribute> getCandidateLayouts2d(MLIRContext *context,
   auto warpLoops = fragsLayout.getWarpLoops();
   auto shapeOfLanes = fragsLayout.getShapeOfLanes();
   auto laneLoops = fragsLayout.getLaneLoops();
+  unsigned majorAxis = fragsLayout.getMajorAxis();
+  unsigned minorAxis = majorAxis == 1 ? 0 : 1;
 
-  unsigned majorAxis = 1;
-  int64_t vecWidth = 1;
-  int64_t maxLanesMajor = numLanes;
-  int64_t maxThreadsMajor = numLanes * numWarps;
-  for (unsigned i = 0; i < 2; ++i) {
-    if (laneLoops[i] > 1) {
-      majorAxis = i;
-      vecWidth = laneLoops[i];
-      maxLanesMajor = shapeOfLanes[i];
-      maxThreadsMajor = shapeOfWarps[i] * shapeOfLanes[i];
-      break;
-    }
-  }
-  assert(vecWidth > 1);
+  auto vecWidth = laneLoops[majorAxis];
+  auto maxLanesMajor = shapeOfLanes[majorAxis];
+  auto maxThreadsMajor = shapeOfWarps[majorAxis] * maxLanesMajor;
 
   auto restLoops =
       std::max<int64_t>(numElems / (numWarps * numLanes * vecWidth), 1);
@@ -193,8 +189,10 @@ static SetVector<Attribute> getCandidateLayouts2d(MLIRContext *context,
     }
   }
 
-  unsigned minorAxis = majorAxis == 1 ? 0 : 1;
   auto bitWidth = getIntOrFloatBitWidth(type);
+  // We try to make each warp access global memory that is at least 128 bytes
+  // contiguous if possible.
+  // TODO: This may not be a necessary condition.
   auto minLanesMajor = 1024 / (vecWidth * bitWidth);
 
   SetVector<Attribute> layouts;
@@ -229,52 +227,11 @@ static SetVector<Attribute> getCandidateLayouts2d(MLIRContext *context,
   return layouts;
 }
 
-static SetVector<Attribute> getCandidateLayouts(LoadOp loadOp,
-                                                int64_t numWarps) {
-  auto resultType = cast<RankedTensorType>(loadOp.getType());
-  if (resultType.getRank() == 1)
-    return getCandidateLayouts1d(loadOp.getContext(), resultType, numWarps);
-  if (resultType.getRank() == 2)
-    return getCandidateLayouts2d(loadOp.getContext(), resultType, numWarps);
-  llvm_unreachable("invalid tensor rank");
-}
-
-static SetVector<Attribute> getCandidateLayouts(StoreOp storeOp,
-                                                int64_t numWarps) {
-  auto valueType = cast<RankedTensorType>(storeOp.getValue().getType());
-  if (valueType.getRank() == 1)
-    return getCandidateLayouts1d(storeOp.getContext(), valueType, numWarps);
-  if (valueType.getRank() == 2)
-    return getCandidateLayouts2d(storeOp.getContext(), valueType, numWarps);
-  llvm_unreachable("invalid tensor rank");
-}
-
-static SetVector<Attribute> getCandidateLayouts(AtomicRMWOp rmwOp,
-                                                int64_t numWarps) {
-  auto valueType = cast<RankedTensorType>(rmwOp.getValue().getType());
-  if (valueType.getRank() == 1)
-    return getCandidateLayouts1d(rmwOp.getContext(), valueType, numWarps);
-  if (valueType.getRank() == 2)
-    return getCandidateLayouts2d(rmwOp.getContext(), valueType, numWarps);
-  llvm_unreachable("invalid tensor rank");
-}
-
-static SetVector<Attribute> getCandidateLayouts(AtomicCASOp casOp,
-                                                int64_t numWarps) {
-  auto valueType = cast<RankedTensorType>(casOp.getValue().getType());
-  if (valueType.getRank() == 1)
-    return getCandidateLayouts1d(casOp.getContext(), valueType, numWarps);
-  if (valueType.getRank() == 2)
-    return getCandidateLayouts2d(casOp.getContext(), valueType, numWarps);
-  llvm_unreachable("invalid tensor rank");
-}
-
 static SetVector<Attribute> getCandidateLayouts(MatmulOp matmulOp,
                                                 int64_t numWarps) {
   auto resultType = matmulOp.getType();
   if (isa<FragmentsLayoutAttr>(resultType.getEncoding())) {
-    auto layouts =
-        getCandidateLayouts2d(matmulOp.getContext(), resultType, numWarps);
+    auto layouts = getCandidateLayouts2d(resultType, numWarps);
     for (auto layout : layouts) {
       auto laneLoops = cast<FragmentsLayoutAttr>(layout).getLaneLoopsRef();
       if (laneLoops[0] != laneLoops[1])
@@ -315,17 +272,27 @@ static SetVector<Attribute> getCandidateLayouts(MatmulOp matmulOp,
   return layouts;
 }
 
+static SetVector<Attribute> getCandidateLayouts(RankedTensorType type,
+                                                int64_t numWarps) {
+  auto rank = type.getRank();
+  if (rank == 1)
+    return getCandidateLayouts1d(type, numWarps);
+  if (rank == 2)
+    return getCandidateLayouts2d(type, numWarps);
+  llvm_unreachable("unsupported tensor rank");
+}
+
 SetVector<Attribute> kapy::getCandidateLayouts(Operation *op,
                                                int64_t numWarps) {
-  if (auto loadOp = dyn_cast<LoadOp>(op))
-    return ::getCandidateLayouts(loadOp, numWarps);
-  if (auto storeOp = dyn_cast<StoreOp>(op))
-    return ::getCandidateLayouts(storeOp, numWarps);
-  if (auto rmwOp = dyn_cast<AtomicRMWOp>(op))
-    return ::getCandidateLayouts(rmwOp, numWarps);
-  if (auto casOp = dyn_cast<AtomicCASOp>(op))
-    return ::getCandidateLayouts(casOp, numWarps);
   if (auto matmulOp = dyn_cast<MatmulOp>(op))
     return ::getCandidateLayouts(matmulOp, numWarps);
+  if (isExpensiveMemoryRead(op))
+    for (auto result : op->getResults())
+      if (auto tensorType = dyn_cast<RankedTensorType>(result.getType()))
+        return ::getCandidateLayouts(tensorType, numWarps);
+  if (isExpensiveMemoryWrite(op))
+    for (auto operand : op->getOperands())
+      if (auto tensorType = dyn_cast<RankedTensorType>(operand.getType()))
+        return ::getCandidateLayouts(tensorType, numWarps);
   llvm_unreachable("unsupported operation");
 }

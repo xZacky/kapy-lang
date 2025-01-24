@@ -38,8 +38,6 @@ include "kapy/Dialect/Kgpu/IR/Dialect.td"
 include "kapy/Dialect/Kgpu/IR/Attrs.td"
 include "kapy/Dialect/Kgpu/IR/Types.td"
 
-def SharedMemory : Resource<"mlir::kapy::SharedMemory">;
-
 class Kgpu_Op<string keyword, list<Trait> traits = []>
     : Op<Kgpu_Dialect, keyword, traits # [ValidTensorShape]>;
 
@@ -164,7 +162,7 @@ def Kgpu_LocalAllocOp : Kgpu_Op<
 }
 
 def Kgpu_LocalFreeOp : Kgpu_Op<
-  "local_free", [MemoryEffects<[MemFree<SharedMemory>]>]
+  "local_free", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]
 > {
   let arguments = (ins Kapy_IntFpMemRef:$operand);
 

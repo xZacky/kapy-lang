@@ -88,6 +88,7 @@ public:
 
   int64_t getOffset(BufferId id) const { return buffers.at(id).offset; }
   int64_t getSize(BufferId id) const { return buffers.at(id).size; }
+
   Interval<int64_t> getInterval(BufferId id) const {
     const auto &buffer = buffers.at(id);
     return Interval(buffer.offset, buffer.offset + buffer.size);

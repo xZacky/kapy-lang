@@ -88,7 +88,7 @@ public:
       initialize(funcOp);
       funcOp.walk([&](CallOpInterface caller) {
         auto *callable = caller.resolveCallable(&symbolTable);
-        auto callee = dyn_cast_or_null<FunctionOpInterface>(callable);
+        auto callee = dyn_cast_if_present<FunctionOpInterface>(callable);
         update(caller, callee);
       });
     }

@@ -51,4 +51,10 @@ def KapyUpdateMemRefType : Pass<"kapy-update-memref-type", "ModuleOp"> {
   let dependentDialects = ["kapy::KapyDialect"];
 }
 
+def KapyAnalyzeAlignment : Pass<"kapy-analyze-alignment", "ModuleOp"> {
+  let constructor = "kapy::createKapyAnalyzeAlignmentPass()";
+
+  let dependentDialects = ["kapy::KapyDialect"];
+}
+
 #endif // KAPY_DIALECT_KAPY_TRANSFORM_PASSES

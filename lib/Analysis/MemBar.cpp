@@ -130,7 +130,7 @@ void MemBarAnalysis::visit(
     // Inter-function dependencies.
     auto callOp = dyn_cast<CallOpInterface>(op);
     auto *callable = callOp.resolveCallable();
-    if (auto funcOp = dyn_cast_or_null<FunctionOpInterface>(callable))
+    if (auto funcOp = dyn_cast_if_present<FunctionOpInterface>(callable))
       info = funcToInfo.lookup(funcOp);
   } else {
     // Intra-function dependencies.

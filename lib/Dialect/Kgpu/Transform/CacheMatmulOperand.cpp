@@ -65,9 +65,7 @@ public:
       if (!fragsLayout)
         return;
       bool needTranspose = fragsLayout.getMajorAxis() == 0;
-      auto shmemLayout =
-          getSharedMemLayout(changeOp.getContext(), mmopdLayout,
-                             operandType.getShape(), needTranspose);
+      auto shmemLayout = getSharedMemLayout(resultType, needTranspose);
       auto memrefType = KapyMemRefType::get(
           resultType.getShape(), resultType.getElementType(), shmemLayout);
       auto allocOp = builder.create<LocalAllocOp>(loc, memrefType, operand);

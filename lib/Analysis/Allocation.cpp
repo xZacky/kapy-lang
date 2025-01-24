@@ -40,14 +40,11 @@ namespace kapy {
 
 class AllocationAnalysis {
 public:
-  AllocationAnalysis(
-      FunctionOpInterface funcOp, Allocation *allocation,
-      DenseMap<FunctionOpInterface, Allocation> *funcToAllocation)
-      : funcOp(funcOp), allocation(allocation),
-        funcToAllocation(funcToAllocation) {}
+  AllocationAnalysis(FunctionOpInterface funcOp, Allocation *allocation)
+      : funcOp(funcOp), allocation(allocation) {}
 
-  void run() {
-    addBuffers();
+  void run(DenseMap<FunctionOpInterface, Allocation> &funcToAllocation) {
+    addBuffers(funcToAllocation);
     resolveLiveness();
     computeAndAllocate();
   }
@@ -55,15 +52,13 @@ public:
 private:
   using Buffer = Allocation::Buffer;
   using OpId = int64_t;
+
   FunctionOpInterface funcOp;
   Allocation *allocation;
-  DenseMap<FunctionOpInterface, Allocation> *funcToAllocation;
   llvm::MapVector<Buffer *, Interval<OpId>> bufferToLiveness;
 
-  void addBuffers();
+  void addBuffers(DenseMap<FunctionOpInterface, Allocation> &funcToAllocation);
 
-  void resolveExplicits(function_ref<Interval<OpId>(Value)> getLiveness);
-  void resolveScratchsAndVirtuals(const DenseMap<Operation *, OpId> &opToId);
   void resolveLiveness();
 
   // Compute the shared memory offsets and allocate for all the related buffers
@@ -81,10 +76,11 @@ using namespace mlir::kapy;
 
 void Allocation::run(
     DenseMap<FunctionOpInterface, Allocation> &funcToAllocation) {
-  AllocationAnalysis(funcOp, this, &funcToAllocation).run();
+  AllocationAnalysis(funcOp, this).run(funcToAllocation);
 }
 
-void AllocationAnalysis::addBuffers() {
+void AllocationAnalysis::addBuffers(
+    DenseMap<FunctionOpInterface, Allocation> &funcToAllocation) {
   funcOp->walk<WalkOrder::PreOrder>([&](Operation *op) {
     if (auto allocOp = dyn_cast<LocalAllocOp>(op)) {
       auto memrefType = allocOp.getType();
@@ -105,32 +101,14 @@ void AllocationAnalysis::addBuffers() {
         allocation->addBuffer<Buffer::BufferKind::SCRATCH>(op, size);
     } else if (auto callOp = dyn_cast<CallOpInterface>(op)) {
       auto *callable = callOp.resolveCallable();
-      auto funcOp = dyn_cast_or_null<FunctionOpInterface>(callable);
+      auto funcOp = dyn_cast_if_present<FunctionOpInterface>(callable);
       if (!funcOp)
         return;
-      auto size = (*funcToAllocation)[funcOp].getAllocatedSize();
+      auto size = funcToAllocation[funcOp].getAllocatedSize();
       if (size > 0)
         allocation->addBuffer<Buffer::BufferKind::VIRTUAL>(op, size);
     }
   });
-}
-
-void AllocationAnalysis::resolveExplicits(
-    function_ref<Interval<OpId>(Value)> getLiveness) {
-  for (auto [value, buffer] : allocation->explicits)
-    bufferToLiveness[buffer] = getLiveness(value);
-}
-
-void AllocationAnalysis::resolveScratchsAndVirtuals(
-    const DenseMap<Operation *, OpId> &opToId) {
-  auto processBuffers = [&](const DenseMap<Operation *, Buffer *> &buffers) {
-    for (auto [op, buffer] : buffers) {
-      auto opId = opToId.lookup(op);
-      bufferToLiveness.insert({buffer, Interval(opId, opId + 1)});
-    }
-  };
-  processBuffers(allocation->scratchs);
-  processBuffers(allocation->virtuals);
 }
 
 void AllocationAnalysis::resolveLiveness() {
@@ -169,14 +147,23 @@ void AllocationAnalysis::resolveLiveness() {
     });
     return Interval(minId, maxId);
   };
+  for (auto [value, buffer] : allocation->explicits)
+    bufferToLiveness[buffer] = getLiveness(value);
 
-  resolveExplicits(getLiveness);
-  resolveScratchsAndVirtuals(opToId);
+  // Analyze liveness of scratch and virtual buffers.
+  auto processBuffers = [&](const DenseMap<Operation *, Buffer *> &buffers) {
+    for (auto [op, buffer] : buffers) {
+      auto opId = opToId.lookup(op);
+      bufferToLiveness.insert({buffer, Interval(opId, opId + 1)});
+    }
+  };
+  processBuffers(allocation->scratchs);
+  processBuffers(allocation->virtuals);
 }
 
 void AllocationAnalysis::computeAndAllocate() {
   SmallVector<Buffer *> buffers;
-  for (auto *buffer : llvm::make_first_range(bufferToLiveness))
+  for (auto [buffer, liveness] : bufferToLiveness)
     buffers.emplace_back(buffer);
 
   // NOTE: The original paper doesn't consider interference between the bumped
@@ -251,7 +238,7 @@ void AllocationAnalysis::computeAndAllocate() {
     }
   };
 
-  // Keep reducing conflicts.
+  // Keep reducing conflicts until reach a fixed point.
   buildGraph();
   do {
     tryToAllocate();

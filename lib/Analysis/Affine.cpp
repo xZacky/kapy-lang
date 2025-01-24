@@ -14,7 +14,7 @@ FlatLinearConstraints FlatAffineRelation::getDomainSet() const {
   FlatLinearConstraints domainSet = *this;
   // Convert all range variables to local variables.
   domainSet.convertToLocal(VarKind::SetDim, getNumDomainVars(),
-                           getNumDomainVars() + getNumRangeVars());
+                           getNumDimVars());
   return domainSet;
 }
 

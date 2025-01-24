@@ -7,13 +7,14 @@
 #ifndef KAPY_ANALYSIS_LAYOUT_H
 #define KAPY_ANALYSIS_LAYOUT_H
 
-#include "mlir/IR/Attributes.h"
-#include "mlir/IR/Operation.h"
-#include "llvm/ADT/ArrayRef.h"
+#include "mlir/Support/LLVM.h"
 
 namespace mlir {
 
-using llvm::ArrayRef;
+class MLIRContext;
+class Operation;
+class Attribute;
+class RankedTensorType;
 
 namespace kapy {
 
@@ -21,7 +22,6 @@ class MatmulOp;
 class SharedMemLayoutAttr;
 class FragmentsLayoutAttr;
 class NvidiaMmaLayoutAttr;
-class MmOperandLayoutAttr;
 
 FragmentsLayoutAttr getFragmentsLayout(MLIRContext *context,
                                        ArrayRef<int64_t> laneLoops,
@@ -34,9 +34,7 @@ FragmentsLayoutAttr getFragmentsLayout(MLIRContext *context,
 
 NvidiaMmaLayoutAttr getNvidiaMmaLayout(MatmulOp matmulOp, int64_t numWarps);
 
-SharedMemLayoutAttr getSharedMemLayout(MLIRContext *context,
-                                       MmOperandLayoutAttr mmopdLayout,
-                                       ArrayRef<int64_t> shape,
+SharedMemLayoutAttr getSharedMemLayout(RankedTensorType tensorType,
                                        bool needTranspose = false);
 
 SetVector<Attribute> getCandidateLayouts(Operation *op, int64_t numWarps);

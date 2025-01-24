@@ -3,8 +3,8 @@
 #glmem = #kapy.glmem<[?, ?]>
 // CHECK: #[[FRAGS0:.*]] = #kgpu.frags<[2, 2], [1, 1], [1, 32], [1, 1], 1>
 // CHECK: #[[FRAGS1:.*]] = #kgpu.frags<[4, 1], [1, 1], [2, 16], [4, 4], 1>
-// CHECK: #[[MMOPD0:.*]] = #kgpu.mmopd<#frags1, 0, 16>
-// CHECK: #[[MMOPD1:.*]] = #kgpu.mmopd<#frags1, 1, 16>
+// CHECK: #[[MMOPD0:.*]] = #kgpu.mmopd<#frags1, 0>
+// CHECK: #[[MMOPD1:.*]] = #kgpu.mmopd<#frags1, 1>
 // CHECK: module attributes
 // CHECK-SAME: kgpu.num_warps = 4
 // CHECK-SAME: kgpu.nvidia_cc = 80

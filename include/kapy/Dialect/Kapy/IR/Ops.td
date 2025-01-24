@@ -43,8 +43,6 @@ include "kapy/Dialect/Kapy/IR/Enums.td"
 include "kapy/Dialect/Kapy/IR/OpTraits.td"
 include "kapy/Dialect/Kapy/IR/Types.td"
 
-def GlobalMemory : Resource<"mlir::kapy::GlobalMemory">;
-
 class Kapy_Op<string keyword, list<Trait> traits = []>
     : Op<Kapy_Dialect, keyword, traits # [ValidTensorShape]>;
 
@@ -190,7 +188,9 @@ def Kapy_LoadOp : Kapy_Op<
   let hasVerifier = 1;
 }
 
-def Kapy_StoreOp : Kapy_Op<"store", [MemoryEffects<[MemWrite<GlobalMemory>]>]> {
+def Kapy_StoreOp : Kapy_Op<
+  "store", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]
+> {
   let description = [{
     For each element, stores `$value` to `$target`, for memory access out of
     range, do nothing.
@@ -214,8 +214,7 @@ def Kapy_AtomicRMWOp : Kapy_Op<
   "atomic_rmw",
   [
     SameOperandsAndResultLayout,
-    MemoryEffects<[MemRead<GlobalMemory>]>,
-    MemoryEffects<[MemWrite<GlobalMemory>]>,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
     TypesMatchWith<"from value type infer result type",
                    "value", "result", "$_self">
   ]
@@ -246,8 +245,7 @@ def Kapy_AtomicCASOp : Kapy_Op<
   "atomic_cas",
   [
     SameOperandsAndResultLayout,
-    MemoryEffects<[MemRead<GlobalMemory>]>,
-    MemoryEffects<[MemWrite<GlobalMemory>]>,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
     TypesMatchWith<"from value type infer result type",
                    "value", "result", "$_self">,
     TypesMatchWith<"from value type infer flag type",

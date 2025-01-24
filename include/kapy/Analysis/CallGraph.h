@@ -85,7 +85,7 @@ private:
       auto funcOp = op->getParentOfType<FunctionOpInterface>();
       if (auto caller = dyn_cast<CallOpInterface>(op)) {
         auto *callable = caller.resolveCallable(&symbolTable);
-        auto callee = dyn_cast_or_null<FunctionOpInterface>(callable);
+        auto callee = dyn_cast_if_present<FunctionOpInterface>(callable);
         if (callee) {
           graph[funcOp].emplace_back(caller, callee);
           seen.insert(callee);

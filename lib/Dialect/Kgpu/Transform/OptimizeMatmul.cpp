@@ -38,42 +38,6 @@
 using namespace mlir;
 using namespace mlir::kapy;
 
-/// Find the first different element bit-width in the chain of shape preserving
-/// unary operations that `value` depends on.
-///
-/// There are two primary scenarios:
-/// 1. Upcasting:
-///    Sequence such as loading a f16, followed by arithmetic operations, then
-///    bitcasting to f32, and finally computed in f32.
-/// 2. Downcasting:
-///    Sequence such as loading a f32, followed by arithmetic operations, then
-///    bitcasting to f16, and finally computed in f16.
-///
-/// In the upcasting scenarios, element reordering converts the original
-/// elements distribution to the order of higher precision primitives, as a
-/// result, bit-width can follow the lower precision primitive.
-/// Conversely, in the downcasting scenarios, no reordering is performed, making
-/// it directly use the lower precision primitive.
-static unsigned getOriginalBitWidth(Value value) {
-  SetVector<Operation *> slice;
-  BackwardSliceOptions options;
-  options.omitBlockArguments = true;
-  auto filter = [](Operation *op) {
-    if (op->getNumOperands() != 1)
-      return false;
-    return isa<FpToFpOp, ChangeOp>(op) || fromDialect<arith::ArithDialect>(op);
-  };
-  options.filter = filter;
-  getBackwardSlice(value, &slice, options);
-
-  auto bitWidth = getIntOrFloatBitWidth(value.getType());
-  for (auto *op : slice)
-    if (auto operand = op->getOperand(0))
-      if (auto tensorType = dyn_cast<RankedTensorType>(operand.getType()))
-        bitWidth = std::min(bitWidth, getIntOrFloatBitWidth(tensorType));
-  return bitWidth;
-}
-
 static Value castOperand(OpBuilder &builder, Value operand, Type elementType) {
   auto newType =
       cloneWith(cast<RankedTensorType>(operand.getType()), elementType);
@@ -138,19 +102,14 @@ public:
     accum = rewriter.create<ChangeOp>(accum.getLoc(), accumType, accum);
 
     auto lhs = op.getLhs();
-    auto rhs = op.getRhs();
     auto lhsType = lhs.getType();
-    auto rhsType = rhs.getType();
-    auto bitWidth =
-        std::min(getOriginalBitWidth(lhs), getOriginalBitWidth(rhs));
-
-    auto lhsLayout =
-        MmOperandLayoutAttr::get(op.getContext(), accumLayout, 0, bitWidth);
+    auto lhsLayout = MmOperandLayoutAttr::get(op.getContext(), accumLayout, 0);
     lhsType = cloneWith(lhsType, lhsLayout);
     lhs = rewriter.create<ChangeOp>(lhs.getLoc(), lhsType, lhs);
 
-    auto rhsLayout =
-        MmOperandLayoutAttr::get(op.getContext(), accumLayout, 1, bitWidth);
+    auto rhs = op.getRhs();
+    auto rhsType = rhs.getType();
+    auto rhsLayout = MmOperandLayoutAttr::get(op.getContext(), accumLayout, 1);
     rhsType = cloneWith(rhsType, rhsLayout);
     rhs = rewriter.create<ChangeOp>(rhs.getLoc(), rhsType, rhs);
 

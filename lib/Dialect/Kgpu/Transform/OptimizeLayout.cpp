@@ -8,7 +8,6 @@
 #include "kapy/Dialect/Kapy/IR/Kapy.h"
 #include "kapy/Dialect/Kgpu/IR/Kgpu.h"
 #include "kapy/Dialect/Kgpu/Transform/Utils.h"
-#include "llvm/ADT/MapVector.h"
 
 using namespace mlir;
 using namespace mlir::kapy;
@@ -44,8 +43,21 @@ public:
 
 private:
   FuncOp funcOp;
-  llvm::MapVector<Value, SetVector<Attribute>> valueToLayouts;
+  SmallVector<Operation *> anchorOps;
+  DenseMap<Value, SetVector<Attribute>> valueToLayouts;
   DenseMap<OpOperand *, Value> operandMapping;
+
+  struct LayoutResolver {
+    // Layout choosed for each tensor.
+    DenseMap<Value, Attribute> valueToLayout;
+    // Layout for each operand that need to be changed.
+    DenseMap<OpOperand *, Attribute> operandToLayout;
+    // The minimum cost, we represent cost by three integers that corresponding
+    // to global memory transactions, shared memory usage, and warp shuffles.
+    // We always try to minimize global memory transactions first, then shared
+    // memory usage, and warp shuffles last.
+    std::array<int64_t, 3> minCost;
+  };
 
   /// Propagate layouts from `value`, return all the changed values.
   SmallVector<Value> propagateToUsers(Value value,
@@ -62,7 +74,8 @@ private:
                            const SetVector<Attribute> &layouts,
                            SmallVectorImpl<Value> &changedValues);
 
-  void update(Region *region);
+  void computeCost(LayoutResolver &resolver);
+
   void update(Operation *op);
   void update(scf::ForOp op);
   void update(scf::WhileOp op);
@@ -74,35 +87,43 @@ private:
 
 void LayoutPropagation::initialize() {
   auto numWarps = getNumWarps(funcOp->getParentOfType<ModuleOp>());
-  auto addAnchor = [&](Value value, Operation *op = nullptr) {
-    if (auto tensorType = dyn_cast<RankedTensorType>(value.getType())) {
-      SetVector<Attribute> layouts;
-      if (op)
-        layouts = getCandidateLayouts(op, numWarps);
-      layouts.insert(tensorType.getEncoding());
-      valueToLayouts.insert({value, layouts});
-    }
-  };
-
-  // Consider function arguments as anchors. This makes it easier to write test.
-  for (auto funcArg : funcOp.getArguments())
-    addAnchor(funcArg);
-
   funcOp.walk([&](Operation *op) {
-    if (isExpensiveMemoryRead(op) || isa<MatmulOp>(op))
-      for (auto result : op->getResults())
-        addAnchor(result, op);
-    if (isExpensiveMemoryWrite(op))
-      for (auto operand : op->getOperands())
-        addAnchor(operand, op);
+    if (isExpensiveMemoryRead(op) || isExpensiveMemoryWrite(op)) {
+      anchorOps.push_back(op);
+      auto layouts = getCandidateLayouts(op, numWarps);
+      for (auto operand : op->getOperands()) {
+        if (auto tensorType = dyn_cast<RankedTensorType>(operand.getType())) {
+          valueToLayouts[operand] = layouts;
+          valueToLayouts[operand].insert(tensorType.getEncoding());
+        }
+      }
+      for (auto result : op->getResults()) {
+        if (auto tensorType = dyn_cast<RankedTensorType>(result.getType())) {
+          valueToLayouts[result] = layouts;
+          valueToLayouts[result].insert(tensorType.getEncoding());
+        }
+      }
+    } else if (isa<MatmulOp>(op)) {
+      anchorOps.push_back(op);
+      auto layouts = getCandidateLayouts(op, numWarps);
+      for (auto result : op->getResults()) {
+        if (auto tensorType = dyn_cast<RankedTensorType>(result.getType())) {
+          valueToLayouts[result] = layouts;
+          valueToLayouts[result].insert(tensorType.getEncoding());
+        }
+      }
+    }
   });
 }
 
 void LayoutPropagation::propagate() {
   SmallVector<Value> list;
   // Forward propagation.
-  for (auto value : llvm::make_first_range(valueToLayouts))
-    list.push_back(value);
+  for (auto *op : anchorOps)
+    if (isExpensiveMemoryRead(op) || isa<MatmulOp>(op))
+      for (auto result : op->getResults())
+        if (isa<RankedTensorType>(result.getType()))
+          list.push_back(result);
   while (!list.empty()) {
     auto value = list.pop_back_val();
     const auto &layouts = valueToLayouts[value];
@@ -110,8 +131,11 @@ void LayoutPropagation::propagate() {
     list.insert(list.end(), changedValues.begin(), changedValues.end());
   }
   // Backward propagation.
-  for (auto value : llvm::make_first_range(valueToLayouts))
-    list.push_back(value);
+  for (auto *op : anchorOps)
+    if (isExpensiveMemoryWrite(op))
+      for (auto operand : op->getOperands())
+        if (isa<RankedTensorType>(operand.getType()))
+          list.push_back(operand);
   while (!list.empty()) {
     auto value = list.pop_back_val();
     const auto &layouts = valueToLayouts[value];
@@ -120,7 +144,53 @@ void LayoutPropagation::propagate() {
   }
 }
 
-void LayoutPropagation::update() { update(&funcOp.getBody()); }
+void LayoutPropagation::resolve() {
+  LayoutResolver resolver;
+  for (auto *op : anchorOps) {
+    // if (isExpensiveMemoryRead(op) || isExpensiveMemoryWrite(op)) {
+    //   SmallVector<Value> values;
+    //   for (auto operand : op->getOperands())
+    //     if (isa<RankedTensorType>(operand.getType()))
+    //       values.push_back(operand);
+    //   for (auto result : op->getResults())
+    //     if (isa<RankedTensorType>(result.getType()))
+    //       values.push_back(result);
+    //   SetVector<Attribute> layouts;
+    //   for (auto value : values)
+    //     if (valueToLayouts.contains(value))
+    //       layouts.insert(valueToLayouts[value].begin(),
+    //                      valueToLayouts[value].end());
+    // }
+  }
+  computeCost(resolver);
+}
+
+void LayoutPropagation::update() {
+  SmallVector<Region *> list;
+  list.push_back(&funcOp.getBody());
+  while (!list.empty()) {
+    auto *region = list.pop_back_val();
+    for (auto &op : region->getOps()) {
+      bool updateResults = false;
+      for (auto result : op.getResults()) {
+        if (!valueToLayouts.contains(result))
+          continue;
+        const auto &layouts = valueToLayouts[result];
+        assert(layouts.size() == 1);
+        auto tensorType = cast<RankedTensorType>(result.getType());
+        if (tensorType.getEncoding() == *layouts.begin())
+          continue;
+        updateResults = true;
+      }
+      if (updateResults)
+        update(&op);
+      else
+        updateOperands(&op);
+      for (auto &subRegion : op.getRegions())
+        list.push_back(&subRegion);
+    }
+  }
+}
 
 SmallVector<Value>
 LayoutPropagation::propagateToUsers(Value value,
@@ -225,7 +295,7 @@ LayoutPropagation::propagateToDefOp(Value value,
   if (auto *defOp = value.getDefiningOp()) {
     if (defOp->hasTrait<OpTrait::SameOperandsAndResultLayout>() ||
         defOp->hasTrait<OpTrait::Elementwise>() ||
-        isa<ReduceOp, UnsqueezeOp, ChangeOp>(defOp)) {
+        isa<ReduceOp, UnsqueezeOp, TransposeOp, ChangeOp>(defOp)) {
       propagateToOperands(defOp, defOp->getOperands(), layouts, changedValues);
       return changedValues;
     }
@@ -268,11 +338,8 @@ void LayoutPropagation::propagateToOperands(
     bool changed = false;
     for (auto layout : layouts) {
       Attribute newLayout;
-      // Do not propagate through free change.
-      if (isFreeChangeOp(op))
-        newLayout = cast<ChangeOp>(op).getOperand().getType().getEncoding();
       // Try to remove the change by making the operand layout same as result.
-      else if (isa<ChangeOp>(op))
+      if (isa<ChangeOp>(op))
         newLayout = layout;
       else
         newLayout = inferOperandLayout(op, layout);
@@ -284,29 +351,19 @@ void LayoutPropagation::propagateToOperands(
   }
 }
 
-void LayoutPropagation::update(Region *region) {
+void LayoutPropagation::computeCost(LayoutResolver &resolver) {
   SmallVector<Region *> list;
-  list.push_back(region);
+  list.push_back(&funcOp.getBody());
   while (!list.empty()) {
     auto *region = list.pop_back_val();
     for (auto &op : region->getOps()) {
-      bool updateResults = false;
-      for (auto result : op.getResults()) {
-        if (!valueToLayouts.contains(result))
-          continue;
-        const auto &layouts = valueToLayouts[result];
-        assert(layouts.size() == 1);
-        auto tensorType = cast<RankedTensorType>(result.getType());
-        if (tensorType.getEncoding() == *layouts.begin())
-          continue;
-        updateResults = true;
-      }
-      if (updateResults)
-        update(&op);
-      else
-        updateOperands(&op);
-      for (auto &subRegion : op.getRegions())
-        list.push_back(&subRegion);
+      // if (isExpensiveMemoryRead(&op) || isExpensiveMemoryWrite(&op)) {
+      //   auto result = op.getResult(0);
+      //   resolver.valueToLayout[result] = *valueToLayouts[result].begin();
+      //   for (auto operand : op.getOperands()) {
+      //
+      //   }
+      // }
     }
   }
 }

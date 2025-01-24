@@ -39,6 +39,7 @@ namespace kapy {
 std::unique_ptr<Pass> createKapyCombinePass();
 std::unique_ptr<Pass> createKapyReorderBroadcastPass();
 std::unique_ptr<Pass> createKapyUpdateMemRefTypePass();
+std::unique_ptr<Pass> createKapyAnalyzeAlignmentPass();
 
 } // namespace kapy
 

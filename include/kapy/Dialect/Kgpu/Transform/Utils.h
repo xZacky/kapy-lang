@@ -37,9 +37,6 @@
 namespace mlir {
 namespace kapy {
 
-bool isExpensiveMemoryRead(Operation *op);
-bool isExpensiveMemoryWrite(Operation *op);
-
 Attribute inferResultLayout(Operation *op, Attribute operandLayout);
 Attribute inferOperandLayout(Operation *op, Attribute resultLayout);
 

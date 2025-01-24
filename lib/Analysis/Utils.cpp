@@ -78,12 +78,12 @@ struct SetQueue {
 /// multiple invocations, to help implement topological sort on multi-root DAG.
 /// We traverse all the operations but only add those appear in `ops` to the
 /// final result.
-struct DFSState {
+struct DfsState {
   const SetVector<Operation *> &ops;
   DenseSet<Operation *> processedOps;
   SetVector<Operation *> sortedOps;
 
-  DFSState(const SetVector<Operation *> &ops)
+  DfsState(const SetVector<Operation *> &ops)
       : ops(ops), processedOps(), sortedOps() {}
 
   /// We mark each operation as ready if all its operands and parent operations
@@ -116,7 +116,7 @@ struct DFSState {
 
 } // namespace
 
-static void postOrderDFS(Operation *rootOp, DFSState &state) {
+static void postOrderDfs(Operation *rootOp, DfsState &state) {
   SetQueue list;
   list.push_back(rootOp);
   while (!list.empty()) {
@@ -150,9 +150,9 @@ kapy::multiRootTopoSort(const SetVector<Operation *> &ops) {
   if (ops.empty())
     return ops;
   // Run from each root with global state.
-  DFSState state(ops);
+  DfsState state(ops);
   for (auto *op : ops)
-    postOrderDFS(op, state);
+    postOrderDfs(op, state);
   return state.sortedOps;
 }
 

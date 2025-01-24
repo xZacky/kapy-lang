@@ -37,24 +37,6 @@
 using namespace mlir;
 using namespace mlir::kapy;
 
-static bool hasMoreThreadsThanElements(Operation *op) {
-  auto memrefType = cast<KapyMemRefType>(op->getOperandTypes()[0]);
-  return memrefType.getNumElements() <
-         numLanes * getNumWarps(op->getParentOfType<ModuleOp>());
-}
-
-bool kapy::isExpensiveMemoryRead(Operation *op) {
-  if (!isa<LoadOp, AtomicRMWOp, AtomicCASOp>(op))
-    return false;
-  return !hasMoreThreadsThanElements(op);
-}
-
-bool kapy::isExpensiveMemoryWrite(Operation *op) {
-  if (!isa<StoreOp, AtomicRMWOp, AtomicCASOp>(op))
-    return false;
-  return !hasMoreThreadsThanElements(op);
-}
-
 static Attribute inferResultLayout(ReduceOp op, Attribute operandLayout) {
   return AxisSliceLayoutAttr::get(op.getContext(), operandLayout, op.getAxis());
 }
@@ -80,6 +62,7 @@ static Attribute inferResultLayout(TransposeOp op, Attribute operandLayout) {
 
 Attribute kapy::inferResultLayout(Operation *op, Attribute operandLayout) {
   if (op->hasTrait<OpTrait::SameOperandsAndResultLayout>() ||
+      op->hasTrait<OpTrait::SameOperandsAndResultType>() ||
       op->hasTrait<OpTrait::Elementwise>() ||
       isa<scf::ForOp, scf::WhileOp, scf::YieldOp, scf::ConditionOp>(op))
     return operandLayout;
@@ -117,6 +100,7 @@ static Attribute inferOperandLayout(TransposeOp op, Attribute resultLayout) {
 
 Attribute kapy::inferOperandLayout(Operation *op, Attribute resultLayout) {
   if (op->hasTrait<OpTrait::SameOperandsAndResultLayout>() ||
+      op->hasTrait<OpTrait::SameOperandsAndResultType>() ||
       op->hasTrait<OpTrait::Elementwise>() ||
       isa<scf::ForOp, scf::WhileOp, scf::IfOp>(op))
     return resultLayout;

@@ -591,7 +591,7 @@ private:
 IntegerInfo IntegerInfo::getPessimisticState(FunctionOpInterface funcOp,
                                              unsigned argIndex) {
   auto attr = funcOp.getArgAttr(argIndex, divisibilityAttrName);
-  if (auto intAttr = dyn_cast_or_null<IntegerAttr>(attr))
+  if (auto intAttr = dyn_cast_if_present<IntegerAttr>(attr))
     return IntegerInfo(intAttr.getInt());
   return IntegerInfo();
 }

@@ -34,7 +34,9 @@
 include "mlir/IR/EnumAttr.td"
 
 class Kapy_EnumAttr<string name, list<I32EnumAttrCase> cases>
-    : I32EnumAttr<name, "", cases> { let cppNamespace = "mlir::kapy"; }
+    : I32EnumAttr<name, "", cases> {
+  let cppNamespace = "mlir::kapy";
+}
 
 def Kapy_PaddingOptionAttr : Kapy_EnumAttr<
   "PaddingOption",

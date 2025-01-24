@@ -58,7 +58,7 @@ static bool isCombinable(Value offsetA, Value offsetB) {
       } else if (matchPattern(defOp, m_Constant(&denseAttr)) &&
                  denseAttr.isSplat()) {
         auto splatValue = denseAttr.getSplatValue<Attribute>();
-        if (auto intAttr = dyn_cast_or_null<IntegerAttr>(splatValue))
+        if (auto intAttr = dyn_cast_if_present<IntegerAttr>(splatValue))
           return intAttr.getValue();
       }
     }
@@ -176,23 +176,23 @@ public:
                        isAddF32(&*body->getOperations().begin());
     if (!isReduceSum)
       return failure();
-    auto mulfOp =
-        dyn_cast_or_null<arith::MulFOp>(reduceOp.getOperand().getDefiningOp());
+    auto mulfOp = dyn_cast_if_present<arith::MulFOp>(
+        reduceOp.getOperand().getDefiningOp());
     if (!mulfOp)
       return failure();
     auto lhsBroadcastOp =
-        dyn_cast_or_null<BroadcastOp>(mulfOp.getLhs().getDefiningOp());
+        dyn_cast_if_present<BroadcastOp>(mulfOp.getLhs().getDefiningOp());
     if (!lhsBroadcastOp)
       return failure();
     auto rhsBroadcastOp =
-        dyn_cast_or_null<BroadcastOp>(mulfOp.getRhs().getDefiningOp());
+        dyn_cast_if_present<BroadcastOp>(mulfOp.getRhs().getDefiningOp());
     if (!rhsBroadcastOp)
       return failure();
-    auto lhsUnsqueezeOp = dyn_cast_or_null<UnsqueezeOp>(
+    auto lhsUnsqueezeOp = dyn_cast_if_present<UnsqueezeOp>(
         lhsBroadcastOp.getOperand().getDefiningOp());
     if (!lhsUnsqueezeOp)
       return failure();
-    auto rhsUnsqueezeOp = dyn_cast_or_null<UnsqueezeOp>(
+    auto rhsUnsqueezeOp = dyn_cast_if_present<UnsqueezeOp>(
         rhsBroadcastOp.getOperand().getDefiningOp());
     if (!rhsUnsqueezeOp)
       return failure();
@@ -219,7 +219,7 @@ public:
   }
 
   static bool isAddF32(Operation *op) {
-    if (auto addfOp = dyn_cast_or_null<arith::AddFOp>(op))
+    if (auto addfOp = dyn_cast_if_present<arith::AddFOp>(op))
       return addfOp.getType().getIntOrFloatBitWidth() <= 32;
     return false;
   }

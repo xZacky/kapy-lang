@@ -71,7 +71,10 @@ bool isNvidiaMmaToMmOperandShortcut(NvidiaMmaLayoutAttr nvmmaLayout,
 bool isNvidiaMmaToFragmentsShortcut(NvidiaMmaLayoutAttr nvmmaLayout,
                                     FragmentsLayoutAttr fragsLayout);
 
-bool isLayoutShortcut(Attribute oldLayout, Attribute newLayout);
+bool isLayoutShortcut(Attribute srcLayout, Attribute dstLayout);
+
+bool isExpensiveMemoryRead(Operation *op);
+bool isExpensiveMemoryWrite(Operation *op);
 
 /// Get an AffineMap from tensor indices to the minimum thread id hold it.
 AffineMap getTensorMap(ArrayRef<int64_t> shape, Attribute layout);

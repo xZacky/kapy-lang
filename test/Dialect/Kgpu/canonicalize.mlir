@@ -5,7 +5,7 @@
 #frags1 = #kgpu.frags<[4, 1], [1, 1], [1, 32], [1, 4], 1>
 #frags2 = #kgpu.frags<[4], [1], [32], [1], 0>
 #frags3 = #kgpu.frags<[4], [1], [32], [4], 0>
-#shmem = #kgpu.shmem<[128, 1], 32, 4>
+#shmem = #kgpu.shmem<[128, 1], 4>
 module {
   // CHECK-LABEL: canonicalize_change_op
   kapy.func @canonicalize_change_op(%arg0: tensor<32x128xf32, #frags>) -> tensor<32x128xf32, #frags> {

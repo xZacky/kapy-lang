@@ -109,9 +109,9 @@ public:
       return failure();
 
     BroadcastOp matchOp;
-    auto haveSameOperandShape = [](BroadcastOp op0, BroadcastOp op1) {
-      return op0.getOperand().getType().getShape() ==
-             op1.getOperand().getType().getShape();
+    auto haveSameOperandShape = [](BroadcastOp opA, BroadcastOp opB) {
+      return opA.getOperand().getType().getShape() ==
+             opB.getOperand().getType().getShape();
     };
     for (auto operand : op->getOperands()) {
       auto *defOp = operand.getDefiningOp();

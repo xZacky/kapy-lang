@@ -1,9 +1,9 @@
 // RUN: kapy-opt %s  -kgpu-cache-matmul-operand | FileCheck %s
 
-// CHECK: #[[SHMEM:.*]] = #kgpu.shmem<[256, 1], 16, 8>
+// CHECK: #[[SHMEM:.*]] = #kgpu.shmem<[256, 1], 8>
 #nvmma = #kgpu.nvmma<[1, 4], [2, 1]>
 #frags = #kgpu.frags<[1, 4], [1, 1], [16, 2], [1, 1], 1>
-#mmopd = #kgpu.mmopd<#nvmma, 0, 16>
+#mmopd = #kgpu.mmopd<#nvmma, 0>
 module attributes {kgpu.num_warps = 4 : i64, kgpu.nvidia_cc = 80 : i64} {
   kapy.func @cache_matmul_operand(%arg0: tensor<16x256xf16, #frags>) {
     // CHECK: kgpu.local_alloc

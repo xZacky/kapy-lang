@@ -254,7 +254,7 @@ LogicalResult MakeMemRefOp::verify() {
     return emitOpError(
         "result rank must same as number of operands for strides");
   auto glmemLayout =
-      dyn_cast_or_null<GlobalMemLayoutAttr>(resultType.getEncoding());
+      dyn_cast_if_present<GlobalMemLayoutAttr>(resultType.getEncoding());
   if (!glmemLayout)
     return emitOpError("result must have global memory layout");
   if (resultType.getRank() != glmemLayout.getStrides().size())
@@ -312,6 +312,13 @@ LogicalResult LoadOp::verify() {
   return success();
 }
 
+void StoreOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Write::get(), &getTargetMutable(),
+                       GlobalMemory::get());
+}
+
 LogicalResult StoreOp::verify() {
   auto targetType = cast<KapyMemRefType>(getTarget().getType());
   if (!hasLayout<GlobalMemLayoutAttr>(targetType))
@@ -331,6 +338,15 @@ LogicalResult StoreOp::verify() {
   return success();
 }
 
+void AtomicRMWOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(), &getSourceMutable(),
+                       GlobalMemory::get());
+  effects.emplace_back(MemoryEffects::Write::get(), &getSourceMutable(),
+                       GlobalMemory::get());
+}
+
 LogicalResult AtomicRMWOp::verify() {
   auto sourceType = cast<KapyMemRefType>(getSource().getType());
   if (!hasLayout<GlobalMemLayoutAttr>(sourceType))
@@ -348,6 +364,15 @@ LogicalResult AtomicRMWOp::verify() {
       return emitOpError("source element type must be same as value type");
   }
   return success();
+}
+
+void AtomicCASOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(), &getSourceMutable(),
+                       GlobalMemory::get());
+  effects.emplace_back(MemoryEffects::Write::get(), &getSourceMutable(),
+                       GlobalMemory::get());
 }
 
 LogicalResult AtomicCASOp::verify() {
@@ -550,9 +575,9 @@ LogicalResult UnsqueezeOp::canonicalize(UnsqueezeOp op,
 
 OpFoldResult UnsqueezeOp::fold(FoldAdaptor adaptor) {
   auto operand = adaptor.getOperand();
-  if (auto splatAttr = dyn_cast_or_null<SplatElementsAttr>(operand))
+  if (auto splatAttr = dyn_cast_if_present<SplatElementsAttr>(operand))
     return splatAttr.resizeSplat(cast<ShapedType>(getType()));
-  if (auto denseAttr = dyn_cast_or_null<DenseElementsAttr>(operand))
+  if (auto denseAttr = dyn_cast_if_present<DenseElementsAttr>(operand))
     return denseAttr.reshape(cast<ShapedType>(getType()));
   return OpFoldResult();
 }
@@ -589,7 +614,7 @@ LogicalResult BroadcastOp::canonicalize(BroadcastOp op,
 
 OpFoldResult BroadcastOp::fold(FoldAdaptor adaptor) {
   auto operand = adaptor.getOperand();
-  if (auto splatAttr = dyn_cast_or_null<SplatElementsAttr>(operand))
+  if (auto splatAttr = dyn_cast_if_present<SplatElementsAttr>(operand))
     return splatAttr.resizeSplat(cast<ShapedType>(getType()));
   return OpFoldResult();
 }
@@ -650,7 +675,7 @@ LogicalResult TransposeOp::canonicalize(TransposeOp op,
 
 OpFoldResult TransposeOp::fold(FoldAdaptor adaptor) {
   auto operand = adaptor.getOperand();
-  if (auto splatAttr = dyn_cast_or_null<SplatElementsAttr>(operand))
+  if (auto splatAttr = dyn_cast_if_present<SplatElementsAttr>(operand))
     return splatAttr.resizeSplat(cast<ShapedType>(getType()));
   return OpFoldResult();
 }
@@ -797,4 +822,11 @@ KapyMemRefType kapy::cloneWith(KapyMemRefType memrefType, Type elementType) {
 KapyMemRefType kapy::cloneWith(KapyMemRefType memrefType, Attribute layout) {
   return KapyMemRefType::get(memrefType.getShape(), memrefType.getElementType(),
                              layout);
+}
+
+int64_t kapy::getAlignment(OpOperand *memref) {
+  auto *op = memref->getOwner();
+  if (!op->hasAttr(alignmentAttrName))
+    llvm_unreachable("alignment of this memref has not been analyzed yet");
+  return cast<IntegerAttr>(op->getDiscardableAttr(alignmentAttrName)).getInt();
 }

@@ -172,18 +172,16 @@ public:
     auto numWarps = getTypeConverter<KgpuTypeConverter>()->getNumWarps();
     auto numThreads = numLanes * numWarps;
     auto type = op.getType();
-    auto rank = type.getRank();
     auto shape = type.getShape();
     auto numElems = product(shape);
 
-    SmallVector<int64_t, 4> laneLoops(rank, 1);
-    if (shape[rank - 1] >= 32 && shape[rank - 2] >= 32 &&
-        numElems / numThreads >= 16) {
-      laneLoops[rank - 1] = 4;
-      laneLoops[rank - 2] = 4;
+    SmallVector<int64_t, 4> laneLoops{1, 1};
+    if (shape[0] >= 32 && shape[1] >= 32 && numElems / numThreads >= 16) {
+      laneLoops[0] = 4;
+      laneLoops[1] = 4;
     } else {
-      laneLoops[rank - 1] = 2;
-      laneLoops[rank - 2] = 2;
+      laneLoops[0] = 2;
+      laneLoops[1] = 2;
     }
 
     auto accumLayout =
@@ -194,15 +192,13 @@ public:
 
     auto lhs = adaptor.getLhs();
     auto lhsType = cast<RankedTensorType>(lhs.getType());
-    auto lhsLayout = MmOperandLayoutAttr::get(op.getContext(), accumLayout, 0,
-                                              lhsType.getElementType());
+    auto lhsLayout = MmOperandLayoutAttr::get(op.getContext(), accumLayout, 0);
     lhsType = cloneWith(lhsType, lhsLayout);
     lhs = rewriter.create<ChangeOp>(lhs.getLoc(), lhsType, lhs);
 
     auto rhs = adaptor.getRhs();
     auto rhsType = cast<RankedTensorType>(rhs.getType());
-    auto rhsLayout = MmOperandLayoutAttr::get(op.getContext(), accumLayout, 1,
-                                              rhsType.getElementType());
+    auto rhsLayout = MmOperandLayoutAttr::get(op.getContext(), accumLayout, 1);
     rhsType = cloneWith(rhsType, rhsLayout);
     rhs = rewriter.create<ChangeOp>(rhs.getLoc(), rhsType, rhs);
 

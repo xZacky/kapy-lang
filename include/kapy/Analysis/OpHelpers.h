@@ -31,42 +31,40 @@
 #ifndef KAPY_ANALYSIS_OPHELPERS_H
 #define KAPY_ANALYSIS_OPHELPERS_H
 
-#include "mlir/IR/Operation.h"
+#include <cstdint>
 
 namespace mlir {
+
+class Operation;
+
 namespace kapy {
 
 class ReduceOpHelper {
 public:
-  explicit ReduceOpHelper(Operation *op) : operation(op) {}
+  explicit ReduceOpHelper(Operation *op);
 
-  unsigned getAxis() const;
-  RankedTensorType getOperandType() const;
-
-  bool isSupportedLayout() const;
-  bool isLaneSynchronous() const;
-  bool isWarpSynchronous() const;
-
-  int64_t getScratchSizeInBytes() const;
+  bool isLaneSynchronous() const { return laneSynchronous; }
+  bool isWarpSynchronous() const { return warpSynchronous; }
+  int64_t getScratchSizeInBytes() const { return scratchSize; }
 
 private:
-  Operation *operation;
+  bool laneSynchronous;
+  bool warpSynchronous;
+  int64_t scratchSize;
 };
 
 class ChangeOpHelper {
 public:
-  explicit ChangeOpHelper(Operation *op) : operation(op) {}
+  explicit ChangeOpHelper(Operation *op);
 
-  RankedTensorType getOperandType() const;
-  RankedTensorType getResultType() const;
-
-  bool isLaneSynchronous() const;
-  bool isWarpSynchronous() const;
-
-  int64_t getScratchSizeInBytes() const;
+  bool isLaneSynchronous() const { return laneSynchronous; }
+  bool isWarpSynchronous() const { return warpSynchronous; }
+  int64_t getScratchSizeInBytes() const { return scratchSize; }
 
 private:
-  Operation *operation;
+  bool laneSynchronous;
+  bool warpSynchronous;
+  int64_t scratchSize;
 };
 
 } // namespace kapy
