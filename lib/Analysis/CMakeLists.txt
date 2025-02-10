@@ -1,11 +1,9 @@
 add_mlir_library(KapyAnalysis
-  Affine.cpp
-  Allocation.cpp
-  Integer.cpp
-  Layout.cpp
-  MemBar.cpp
+  AllocAnalysis.cpp
+  AnalysisUtils.cpp
+  IntegerAnalysis.cpp
+  LayoutUtils.cpp
   OpHelpers.cpp
-  Utils.cpp
 
   DEPENDS
   KapyIRIncGen

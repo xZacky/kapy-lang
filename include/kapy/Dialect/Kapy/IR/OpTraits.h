@@ -49,7 +49,7 @@ constexpr int64_t maxElements = 1048576;
 /// These functions are out-of-line implementations of the methods in the
 /// corresponding trait calsses. This avoids them being template
 /// instantiated/duplicated.
-LogicalResult verifyTensorShape(Operation *op);
+LogicalResult verifyValidTensorShape(Operation *op);
 LogicalResult verifySameOperandsLayout(Operation *op);
 LogicalResult verifySameOperandsAndResultLayout(Operation *op);
 
@@ -59,7 +59,7 @@ template <typename ConcreteT>
 class ValidTensorShape : public TraitBase<ConcreteT, ValidTensorShape> {
 public:
   static LogicalResult verifyTrait(Operation *op) {
-    return impl::verifyTensorShape(op);
+    return impl::verifyValidTensorShape(op);
   }
 };
 

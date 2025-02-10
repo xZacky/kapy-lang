@@ -1,6 +1,6 @@
 //===- Attrs.td --------------------------------------------*- tablegen -*-===//
 //
-// This file defines the attributes used by the Kgpu dialect.
+// This file defines the attributes used by the KgpuDialect.
 //
 //===----------------------------------------------------------------------===//
 
@@ -14,45 +14,41 @@ class Kgpu_AttrDef<string name, string keyword, list<Trait> traits = []>
   let attrName = "kgpu." # keyword;
 }
 
-def Kgpu_SharedMemLayoutAttr : Kgpu_AttrDef<"SharedMemLayout", "shmem"> {
-  let mnemonic = "shmem";
-  let parameters = (ins
-    ArrayRefParameter<"int64_t">:$strides, "unsigned":$maxPhase
-  );
+def SwizzlingLayoutAttr : Kgpu_AttrDef<"SwizzlingLayout", "swizzling"> {
+  let summary = "memory swizzling layout";
 
-  let assemblyFormat = "`<` `[` $strides `]` `,` $maxPhase `>`";
+  let mnemonic = "swizzling";
+  let parameters = (ins "int64_t":$unitSize, "int64_t":$maxPhase);
 
-  let extraClassDeclaration = [{
-    /// Get an AffineMap from memref indices to the relative offset from the
-    /// first element of this memref before swizzling.
-    AffineMap getMemRefMap() const;
-  }];
+  let assemblyFormat = "`<` `(` $unitSize `,` $maxPhase `)` `>`";
 }
 
-def Kgpu_FragmentsLayoutAttr : Kgpu_AttrDef<"FragmentsLayout", "frags"> {
+def FragmentsLayoutAttr : Kgpu_AttrDef<"FragmentsLayout", "fragments"> {
+  let summary = "fragments layout";
+
   let description = [{
-    FragmentsLayout has 5 parameters:
-    1. `$shape_of_warps`: Shape of warps.
-    3. `$warp_loops`: Loops executed by each warp.
-    2. `$shape_of_lanes`: Shape of lanes.
-    4. `$lane_loops`: Loops executed by each lane.
-    5. `$major_axis`: Which axis is major.
+    FragmentsLayoutAttr has 6 parameters:
+    1. `$warp_array`: The number of warps on each axis.
+    3. `$warp_loops`: Loop executed by each warp on each axis.
+    2. `$lane_array`: The number of lanes on each axis.
+    4. `$lane_loops`: Loop executed by each lane on each axis.
+    5. `$minor_axis`: The axis on which thread is not contiguous.
+    5. `$major_axis`: The axis on which thread is continuous.
 
     We will build a layout from these parameters.
     For example:
     ```
-    #frags<[2, 2], [2, 1], [2, 4], [1, 2], 1>
+    #kgpu.blocked<[2, 2], [2, 1], [2, 4], [1, 2], (0, 1)>
     ```
-    We first compute the layout of threads by `$major_axis`, `$shape_of_lanes`
-    and `$shape_of_warps`:
+    We first build the layout of threads from `$warp_array, $lane_array`, and
+    `$minor_axis, $major_axis`:
     ```
     [ 0,  1,  2,  3,  8,  9, 10, 11]
     [ 4,  5,  6,  7, 12, 13, 14, 15]
     [16, 17, 18, 19, 24, 25, 26, 27]
     [20, 21, 22, 23, 28, 29, 30, 31]
     ```
-    then we execute loop on each axis by `$lane_loops` and `$warp_loops` to get
-    the final layout:
+    then we execute loop on each axis by `$warp_loops` and `$lane_loops`:
     ```
     [ 0,  0,  1,  1,  2,  2,  3,  3,  8,  8,  9,  9, 10, 10, 11, 11]
     [ 4,  4,  5,  5,  6,  6,  7,  7, 12, 12, 13, 13, 14, 14, 15, 15]
@@ -82,134 +78,72 @@ def Kgpu_FragmentsLayoutAttr : Kgpu_AttrDef<"FragmentsLayout", "frags"> {
     We first broadcast both of them to shape [4, 8], and then we will distribute
     elements to threads as:
     ```
-    A -> {0, 4}; B -> {0, 4}; C -> {1, 5}; D -> {1, 5};
-    E -> {0, 4}; F -> {0, 4}; G -> {1, 5}; H -> {1, 5};
-    I -> {2, 6}; J -> {2, 6}; K -> {3, 7}; L -> {3, 7};
-    M -> {2, 6}; N -> {2, 6}; O -> {3, 7}; P -> {3, 7};
+    A -> (0, 4); B -> (0, 4); C -> (1, 5); D -> (1, 5);
+    E -> (0, 4); F -> (0, 4); G -> (1, 5); H -> (1, 5);
+    I -> (2, 6); J -> (2, 6); K -> (3, 7); L -> (3, 7);
+    M -> (2, 6); N -> (2, 6); O -> (3, 7); P -> (3, 7);
     ```
   }];
 
-  let mnemonic = "frags";
+  let mnemonic = "fragments";
   let parameters = (ins
-    ArrayRefParameter<"int64_t">:$shapeOfWarpsRef,
+    ArrayRefParameter<"int64_t">:$warpArrayRef,
     ArrayRefParameter<"int64_t">:$warpLoopsRef,
-    ArrayRefParameter<"int64_t">:$shapeOfLanesRef,
+    ArrayRefParameter<"int64_t">:$laneArrayRef,
     ArrayRefParameter<"int64_t">:$laneLoopsRef,
+    "unsigned":$minorAxis,
     "unsigned":$majorAxis
   );
 
   let builders = [
     AttrBuilder<
       (ins
-        "ArrayRef<int64_t>":$shapeOfWarps,
+        "ArrayRef<int64_t>":$warpArray,
         "ArrayRef<int64_t>":$warpLoops,
-        "ArrayRef<int64_t>":$shapeOfLanes,
-        "ArrayRef<int64_t>":$laneLoops
-      )
+        "ArrayRef<int64_t>":$laneArray,
+        "ArrayRef<int64_t>":$laneLoops,
+        CArg<"bool", "true">:$rowMajor
+      ),
+      [{
+        unsigned i = rowMajor ? 0 : 1;
+        unsigned j = rowMajor ? 1 : 0;
+        return get(context, warpArray, warpLoops, laneArray, laneLoops, i, j);
+      }]
     >
   ];
 
   let assemblyFormat = [{
-    `<` `[` $shapeOfWarpsRef `]` `,` `[` $warpLoopsRef `]` `,`
-        `[` $shapeOfLanesRef `]` `,` `[` $laneLoopsRef `]` `,` $majorAxis `>`
+    `<` `[` $warpArrayRef `]` `,` `[` $warpLoopsRef `]` `,`
+        `[` $laneArrayRef `]` `,` `[` $laneLoopsRef `]` `,`
+        `(` $minorAxis `,` $majorAxis `)` `>`
   }];
 
   let extraClassDeclaration = [{
-    unsigned getRank() const { return getShapeOfWarpsRef().size(); }
-    SmallVector<int64_t, 2> getShape() const;
-
-    SmallVector<int64_t, 2> getShapeOfWarps() const {
-      return llvm::to_vector<2>(getShapeOfWarpsRef());
+    SmallVector<int64_t, 2> getWarpArray() const {
+      return llvm::to_vector<2>(getWarpArrayRef());
     }
     SmallVector<int64_t, 2> getWarpLoops() const {
       return llvm::to_vector<2>(getWarpLoopsRef());
     }
-    SmallVector<int64_t, 2> getShapeOfLanes() const {
-      return llvm::to_vector<2>(getShapeOfLanesRef());
+    SmallVector<int64_t, 2> getLaneArray() const {
+      return llvm::to_vector<2>(getLaneArrayRef());
     }
     SmallVector<int64_t, 2> getLaneLoops() const {
       return llvm::to_vector<2>(getLaneLoopsRef());
     }
 
-    /// Get an AffineMap from layout indices to the thread id for this layout.
-    AffineMap getLayoutMap() const;
-  }];
-}
+    bool isRowMajor() const { return getMajorAxis() == 1; }
 
-def Kgpu_AxisSliceLayoutAttr : Kgpu_AttrDef<"AxisSliceLayout", "slice"> {
-  let description = [{
-    AxisSliceLayout is build from slicing a layout `$parent` on `$axis`.
-    For example, we have a layout:
-    ```
-    [ 0,  1,  2,  3]
-    [ 4,  5,  6,  7]
-    ```
-    slice it on axis 1 will get 4 layouts:
-    ```
-    [ 0]  [ 1]  [ 2]  [ 3]
-    [ 4], [ 5], [ 6], [ 7]
-    ```
-    We always choose the one with minimum thread id, here we finally got:
-    ```
-    [0, 4]
-    ```
-  }];
+    /// Get loop executed by each thread on each axis when apply to a tensor.
+    SmallVector<int64_t, 2> getLoopSpace(ArrayRef<int64_t> shape) const;
 
-  let mnemonic = "slice";
-  let parameters = (ins "Attribute":$parent, "unsigned":$axis);
+    /// Get an AffineMap `(warpId, laneId, loopIv) -> (rowIdx, colIdx)`.
+    /// If `unique == true`, instead of map to same position, we will map to the
+    /// position in the broadcasted tensor.
+    AffineMap getAffineMap(ArrayRef<int64_t> shape, bool unique = false) const;
 
-  let assemblyFormat = "`<` $parent `,` $axis `>`";
-
-  let extraClassDeclaration = [{
-    unsigned getRank() const;
-    SmallVector<int64_t, 2> getShape() const;
-
-    /// Get an AffineMap from layout indices to the thread id for this layout.
-    AffineMap getLayoutMap() const;
-  }];
-}
-
-def Kgpu_NvidiaMmaLayoutAttr : Kgpu_AttrDef<"NvidiaMmaLayout", "nvmma"> {
-  let mnemonic = "nvmma";
-  let parameters = (ins
-    ArrayRefParameter<"int64_t">:$shapeOfWarpsRef,
-    ArrayRefParameter<"int64_t">:$warpLoopsRef
-  );
-
-  let assemblyFormat = [{
-    `<` `[` $shapeOfWarpsRef `]` `,` `[` $warpLoopsRef `]` `>`
-  }];
-
-  let extraClassDeclaration = [{
-    FragmentsLayoutAttr toFragmentsLayout() const;
-
-    unsigned getRank() const { return getShapeOfWarpsRef().size(); }
-    SmallVector<int64_t, 2> getShape() const;
-
-    SmallVector<int64_t, 2> getShapeOfWarps() const {
-      return llvm::to_vector<2>(getShapeOfWarpsRef());
-    }
-    SmallVector<int64_t, 2> getWarpLoops() const {
-      return llvm::to_vector<2>(getWarpLoopsRef());
-    }
-    SmallVector<int64_t, 2> getShapeOfLanes() const;
-    SmallVector<int64_t, 2> getLaneLoops() const;
-
-    static constexpr unsigned getMajorAxis() { return 1; }
-
-    /// Get an AffineMap from layout indices to the thread id for this layout.
-    AffineMap getLayoutMap() const;
-  }];
-}
-
-def Kgpu_MmOperandLayoutAttr : Kgpu_AttrDef<"MmOperandLayout", "mmopd"> {
-  let mnemonic = "mmopd";
-  let parameters = (ins "Attribute":$parent, "unsigned":$operandIndex);
-
-  let assemblyFormat = "`<` $parent `,` $operandIndex`>`";
-
-  let extraClassDeclaration = [{
-    unsigned getRank() const;
+    /// Transpose this layout to get a new layout.
+    FragmentsLayoutAttr transpose() const;
   }];
 }
 

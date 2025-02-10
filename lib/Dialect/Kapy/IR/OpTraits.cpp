@@ -33,26 +33,19 @@
 
 using namespace mlir;
 
-LogicalResult OpTrait::impl::verifyTensorShape(Operation *op) {
-  for (auto type : op->getOperandTypes()) {
+static SmallVector<Type> getOperandsAndResultType(Operation *op) {
+  auto types = llvm::to_vector(op->getOperandTypes());
+  types.append(op->getResultTypes().begin(), op->getResultTypes().end());
+  return types;
+}
+
+static LogicalResult verifyValidTensorShapeImpl(Operation *op) {
+  using OpTrait::impl::maxElements;
+
+  for (auto type : getOperandsAndResultType(op)) {
     if (auto tensorType = dyn_cast<RankedTensorType>(type)) {
-      auto rank = tensorType.getRank();
-      if (rank != 1 && rank != 2)
-        return op->emitError("tensor can only be 1d or 2d");
-      auto numElements = tensorType.getNumElements();
-      if (numElements > maxElements)
-        return op->emitError("maximum allowed number of elements is")
-               << maxElements << ", but " << *op << " has more than that";
-      if ((numElements & (numElements - 1)) != 0)
-        return op->emitError("number of elements must be power of 2, but ")
-               << *op << " has " << numElements << " doesn't follow the rule";
-    }
-  }
-  for (auto type : op->getResultTypes()) {
-    if (auto tensorType = dyn_cast<RankedTensorType>(type)) {
-      auto rank = tensorType.getRank();
-      if (rank != 1 && rank != 2)
-        return op->emitError("tensor can only be 1d or 2d");
+      if (tensorType.getRank() != 2)
+        return op->emitError("tensor can only have rank 2");
       auto numElements = tensorType.getNumElements();
       if (numElements > maxElements)
         return op->emitError("maximum allowed number of elements is")
@@ -65,7 +58,16 @@ LogicalResult OpTrait::impl::verifyTensorShape(Operation *op) {
   return success();
 }
 
-static LogicalResult verifySameLayout(Type typeA, Type typeB) {
+LogicalResult OpTrait::impl::verifyValidTensorShape(Operation *op) {
+  bool noInvalid = true;
+  op->walk([&](Operation *op) {
+    if (failed(verifyValidTensorShapeImpl(op)))
+      noInvalid = false;
+  });
+  return success(noInvalid);
+}
+
+static LogicalResult verifySameLayoutImpl(Type typeA, Type typeB) {
   auto getLayout = [](Type type) {
     if (auto tensorType = dyn_cast<RankedTensorType>(type))
       return tensorType.getEncoding();
@@ -79,29 +81,26 @@ static LogicalResult verifySameLayout(Type typeA, Type typeB) {
 }
 
 LogicalResult OpTrait::impl::verifySameOperandsLayout(Operation *op) {
-  if (failed(verifyAtLeastNOperands(op, 1)))
-    return failure();
+  if (op->getNumOperands() == 0)
+    return success();
 
-  auto firstType = op->getOperand(0).getType();
-  for (auto type : op->getOperandTypes())
-    if (failed(verifySameLayout(firstType, type)))
-      return op->emitOpError("requires same layout for all tensor operands");
+  auto types = op->getOperandTypes();
+  for (auto type : types)
+    if (failed(verifySameLayoutImpl(types[0], type)))
+      return op->emitError("requires same layout for all operands");
 
   return success();
 }
 
 LogicalResult OpTrait::impl::verifySameOperandsAndResultLayout(Operation *op) {
-  if (op->getNumOperands() == 0)
+  if (op->getNumOperands() + op->getNumResults() == 0)
     return success();
 
-  if (failed(verifyAtLeastNResults(op, 1)))
-    return failure();
-
-  auto firstType = op->getOperand(0).getType();
-  for (auto type : op->getResultTypes())
-    if (failed(verifySameLayout(firstType, type)))
+  auto types = getOperandsAndResultType(op);
+  for (auto type : types)
+    if (failed(verifySameLayoutImpl(types[0], type)))
       return op->emitOpError(
-          "requires same layout for all tensor operands and results");
+          "requires same layout for all operands and result");
 
-  return verifySameOperandsLayout(op);
+  return success();
 }

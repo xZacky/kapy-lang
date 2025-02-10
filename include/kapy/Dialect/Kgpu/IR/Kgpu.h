@@ -47,39 +47,40 @@
 namespace mlir {
 namespace kapy {
 
+/// This class represents the shared memory resource.
 class SharedMemory : public SideEffects::Resource::Base<SharedMemory> {
 public:
   virtual StringRef getName() override { return "<SharedMemory>"; }
 };
 
+constexpr int64_t numLanes = 32;
+constexpr int64_t maxWarps = 32;
+
 constexpr char nvidiaCCAttrName[] = "kgpu.nvidia_cc";
 constexpr char numWarpsAttrName[] = "kgpu.num_warps";
-constexpr char shmemNeededAttrName[] = "kgpu.shmem_needed";
-constexpr char shmemOffsetAttrName[] = "kgpu.shmem_offset";
-constexpr int64_t numLanes = 32;
 
+constexpr char sharedNeededAttrName[] = "kgpu.shared_needed";
+constexpr char sharedOffsetAttrName[] = "kgpu.shared_offset";
+
+/// Get nvidia compute capability from module attributes, this should be used
+/// after running ConvertKapyToKgpuPass.
 int64_t getNvidiaCC(ModuleOp module);
+
+/// Get the number of warps from module attributes, this should be used after
+/// running ConvertKapyToKgpuPass.
 int64_t getNumWarps(ModuleOp module);
-int64_t getSharedMemNeeded(ModuleOp module);
-int64_t getSharedMemOffset(Operation *op);
 
-bool supportNvidiaMma(MatmulOp matmulOp);
-bool supportNvidiaMma(Type elementType);
+/// Get shared memory needed from module attributes, this should be used after
+/// running KgpuAllocateSharedMemoryPass.
+int64_t getSharedMemoryNeeded(ModuleOp module);
 
-bool isNvidiaMmaToMmOperandShortcut(NvidiaMmaLayoutAttr nvmmaLayout,
-                                    MmOperandLayoutAttr mmopdLayout);
-bool isNvidiaMmaToFragmentsShortcut(NvidiaMmaLayoutAttr nvmmaLayout,
-                                    FragmentsLayoutAttr fragsLayout);
+/// Get shared memory offset for an operation, this should be used after running
+/// KgpuAllocateSharedMemoryPass.
+/// For operations do not use shared memory, always returns 0.
+int64_t getSharedMemoryOffset(Operation *op);
 
-bool isLayoutShortcut(Attribute srcLayout, Attribute dstLayout);
-
-bool isExpensiveMemoryRead(Operation *op);
-bool isExpensiveMemoryWrite(Operation *op);
-
-/// Get an AffineMap from tensor indices to the minimum thread id hold it.
-AffineMap getTensorMap(ArrayRef<int64_t> shape, Attribute layout);
-
-std::string getLayoutString(RankedTensorType tensorType);
+/// Get a string to show how we distribute elements to threads.
+std::string getTensorLayoutString(RankedTensorType tensorType);
 
 } // namespace kapy
 } // namespace mlir

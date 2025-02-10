@@ -1,4 +1,4 @@
-//===- TestAllocation.cpp ---------------------------------------*- C++ -*-===//
+//===- TestAllocAnalysis.cpp ------------------------------------*- C++ -*-===//
 //
 // Copyright 2018-2020 Philippe Tillet
 // Copyright 2020-2022 OpenAI
@@ -28,7 +28,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "kapy/Analysis/Allocation.h"
+#include "kapy/Analysis/AllocAnalysis.h"
 #include "kapy/Dialect/Kapy/IR/Kapy.h"
 #include "mlir/Pass/Pass.h"
 
@@ -37,26 +37,26 @@ using namespace kapy;
 
 namespace {
 
-class KapyTestAllocationPass
-    : public PassWrapper<KapyTestAllocationPass, OperationPass<ModuleOp>> {
+class TestAllocAnalysisPass
+    : public PassWrapper<TestAllocAnalysisPass, OperationPass<ModuleOp>> {
 public:
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(KapyTestAllocationPass);
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(TestAllocAnalysisPass);
 
   virtual StringRef getArgument() const override {
-    return "kapy-test-allocation";
+    return "test-alloc-analysis";
   }
 
   virtual void runOnOperation() override {
     auto &os = llvm::outs();
     auto module = getOperation();
-    ModuleAllocationAnalysis analysis(module);
+    ModuleAllocAnalysis analysis(module);
     module.walk([&](FuncOp funcOp) {
       auto funcName = SymbolTable::getSymbolName(funcOp).getValue();
       os << "@" << funcName << "\n";
       auto *allocation = analysis.getData(funcOp);
       funcOp.walk([&](Operation *op) {
         auto id = allocation->getBufferId(op);
-        if (id != Allocation::invalidId) {
+        if (id != AllocInfo::INVALID_ID) {
           auto offset = allocation->getOffset(id);
           auto size = allocation->getSize(id);
           if (allocation->isScratch(id))
@@ -70,7 +70,7 @@ public:
           return;
         for (auto result : op->getResults()) {
           auto id = allocation->getBufferId(result);
-          if (id != Allocation::invalidId) {
+          if (id != AllocInfo::INVALID_ID) {
             auto offset = allocation->getOffset(id);
             auto size = allocation->getSize(id);
             os << "explicit: { offset = " << offset << ", size = " << size
@@ -88,8 +88,8 @@ public:
 namespace mlir {
 namespace test {
 
-void registerKapyTestAllocationPass() {
-  PassRegistration<KapyTestAllocationPass>();
+void registerTestAllocAnalysisPass() {
+  PassRegistration<TestAllocAnalysisPass>();
 }
 
 } // namespace test

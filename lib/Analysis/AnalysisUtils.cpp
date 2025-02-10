@@ -1,4 +1,4 @@
-//===- Utils.cpp ------------------------------------------------*- C++ -*-===//
+//===- AnalysisUtils.cpp ----------------------------------------*- C++ -*-===//
 //
 // Copyright 2018-2020 Philippe Tillet
 // Copyright 2020-2022 OpenAI
@@ -28,9 +28,11 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "kapy/Analysis/Utils.h"
+#include "kapy/Analysis/AnalysisUtils.h"
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
+#include "mlir/Analysis/DataFlowFramework.h"
+#include "mlir/Analysis/SliceAnalysis.h"
 #include "mlir/IR/Matchers.h"
 
 using namespace mlir;
@@ -78,13 +80,13 @@ struct SetQueue {
 /// multiple invocations, to help implement topological sort on multi-root DAG.
 /// We traverse all the operations but only add those appear in `ops` to the
 /// final result.
-struct DfsState {
-  const SetVector<Operation *> &ops;
+struct DFSState {
+  const SetVector<Operation *> &opsToSort;
   DenseSet<Operation *> processedOps;
   SetVector<Operation *> sortedOps;
 
-  DfsState(const SetVector<Operation *> &ops)
-      : ops(ops), processedOps(), sortedOps() {}
+  explicit DFSState(const SetVector<Operation *> &ops)
+      : opsToSort(ops), processedOps(), sortedOps() {}
 
   /// We mark each operation as ready if all its operands and parent operations
   /// are processed.
@@ -116,7 +118,7 @@ struct DfsState {
 
 } // namespace
 
-static void postOrderDfs(Operation *rootOp, DfsState &state) {
+static void postOrderDFS(Operation *rootOp, DFSState &state) {
   SetQueue list;
   list.push_back(rootOp);
   while (!list.empty()) {
@@ -131,13 +133,13 @@ static void postOrderDfs(Operation *rootOp, DfsState &state) {
       if (!state.processedOps.insert(readyOp).second)
         continue;
       // If we want to sort it, add it to sorted operations.
-      if (state.ops.contains(readyOp))
+      if (state.opsToSort.contains(readyOp))
         state.sortedOps.insert(readyOp);
       // Now it is processed. Try to mark all its users and child operations as
       // ready.
       for (auto result : readyOp->getResults())
-        for (auto *useOp : result.getUsers())
-          state.tryToMarkReady(useOp, list, readyOps);
+        for (auto *user : result.getUsers())
+          state.tryToMarkReady(user, list, readyOps);
       for (auto &region : readyOp->getRegions())
         for (auto &childOp : region.getOps())
           state.tryToMarkReady(&childOp, list, readyOps);
@@ -150,15 +152,16 @@ kapy::multiRootTopoSort(const SetVector<Operation *> &ops) {
   if (ops.empty())
     return ops;
   // Run from each root with global state.
-  DfsState state(ops);
+  DFSState state(ops);
   for (auto *op : ops)
-    postOrderDfs(op, state);
+    postOrderDFS(op, state);
   return state.sortedOps;
 }
 
-SetVector<Operation *> kapy::multiRootGetSlice(Operation *op,
-                                               TransitiveFilter bwFilter,
-                                               TransitiveFilter fwFilter) {
+SetVector<Operation *>
+kapy::multiRootGetSlice(Operation *op,
+                        std::function<bool(Operation *)> bwFilter,
+                        std::function<bool(Operation *)> fwFilter) {
   SetVector<Operation *> slice;
   slice.insert(op);
   unsigned i = 0;
@@ -182,22 +185,22 @@ SetVector<Operation *> kapy::multiRootGetSlice(Operation *op,
   return multiRootTopoSort(slice);
 }
 
-bool kapy::hasRestrictedPath(Operation *srcOp, Operation *dstOp,
+bool kapy::hasRestrictedPath(Operation *sourceOp, Operation *targetOp,
                              const SetVector<Operation *> &slice,
-                             function_ref<bool(Operation *)> filter) {
-  SetVector<Operation *> list;
+                             std::function<bool(Operation *)> filter) {
+  SmallVector<Operation *> list;
   DenseSet<Operation *> seen;
-  list.insert(srcOp);
+  list.push_back(sourceOp);
   while (!list.empty()) {
     auto *op = list.pop_back_val();
     for (auto result : op->getResults()) {
-      for (auto *useOp : result.getUsers()) {
-        if (!seen.insert(useOp).second)
+      for (auto *user : result.getUsers()) {
+        if (!seen.insert(user).second)
           continue;
-        if (useOp == dstOp)
+        if (user == targetOp)
           return true;
-        if (slice.contains(useOp) && filter(useOp))
-          list.insert(useOp);
+        if (slice.contains(user) && filter(user))
+          list.push_back(user);
       }
     }
   }
@@ -213,8 +216,8 @@ class ConstantAnalysis : public DataFlowAnalysis {
 public:
   using DataFlowAnalysis::DataFlowAnalysis;
 
-  virtual LogicalResult initialize(Operation *srcOp) override {
-    auto result = srcOp->walk([&](Operation *op) -> WalkResult {
+  virtual LogicalResult initialize(Operation *rootOp) override {
+    auto result = rootOp->walk([&](Operation *op) -> WalkResult {
       ProgramPoint point(op);
       if (failed(visit(point)))
         return WalkResult::interrupt();

@@ -34,6 +34,8 @@
 include "mlir/IR/OpBase.td"
 
 def Kapy_Dialect : Dialect {
+  let summary = "kapy dialect";
+
   let name = "kapy";
   let cppNamespace = "mlir::kapy";
 
@@ -44,9 +46,9 @@ def Kapy_Dialect : Dialect {
     "scf::SCFDialect"
   ];
 
+  let hasConstantMaterializer = 1;
   let useDefaultAttributePrinterParser = 1;
   let useDefaultTypePrinterParser = 1;
-  let hasConstantMaterializer = 1;
 }
 
 #endif // KAPY_DIALECT_KAPY_IR_DIALECT

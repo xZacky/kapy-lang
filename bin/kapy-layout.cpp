@@ -35,7 +35,9 @@ static cl::opt<std::string> TensorStr("t",                       //
 LogicalResult printImpl(RankedTensorType tensorType, llvm::raw_ostream &os) {
   auto dialectName = tensorType.getEncoding().getDialect().getNamespace();
   if (dialectName == "kgpu") {
-    os << kapy::getLayoutString(tensorType);
+    auto layout = cast<kapy::FragmentsLayoutAttr>(tensorType.getEncoding());
+    os << layout.getAffineMap(tensorType.getShape()) << "\n";
+    os << kapy::getTensorLayoutString(tensorType);
     return success();
   }
   llvm::errs() << "Unsuported layout: " << tensorType.getEncoding() << "\n";
@@ -69,7 +71,9 @@ LogicalResult printFromFile(MLIRContext *context, StringRef fileName,
   auto printLambda = [&](StringRef name, Attribute layout) {
     ss << "Layout: " << layout << "\n";
     ss << "Tensor: " << tensorType << "\n";
-    return printImpl(kapy::cloneWith(tensorType, layout), ss);
+    tensorType = RankedTensorType::get(tensorType.getShape(),
+                                       tensorType.getElementType(), layout);
+    return printImpl(tensorType, ss);
   };
 
   for (const auto &aliasDef : asmState.getAttributeAliasDefs())
@@ -92,7 +96,9 @@ LogicalResult printFromString(MLIRContext *context, StringRef layoutStr,
 
   ss << "Layout: " << layout << "\n";
   ss << "Tensor: " << tensorType << "\n";
-  return printImpl(kapy::cloneWith(tensorType, layout), ss);
+  tensorType = RankedTensorType::get(tensorType.getShape(),
+                                     tensorType.getElementType(), layout);
+  return printImpl(tensorType, ss);
 }
 
 int main(int argc, char **argv) {
@@ -121,8 +127,8 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  std::string str;
-  llvm::raw_string_ostream ss(str);
+  std::string string;
+  llvm::raw_string_ostream ss(string);
 
   if (failed(printFromFile(&context, InputFileName, tensorType, ss)))
     return 1;

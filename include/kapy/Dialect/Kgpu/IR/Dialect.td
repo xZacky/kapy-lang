@@ -34,6 +34,8 @@
 include "mlir/IR/OpBase.td"
 
 def Kgpu_Dialect : Dialect {
+  let summary = "kgpu dialect";
+
   let name = "kgpu";
   let cppNamespace = "mlir::kapy";
 

@@ -31,27 +31,66 @@
 #ifndef KAPY_DIALECT_KGPU_IR_TYPES
 #define KAPY_DIALECT_KGPU_IR_TYPES
 
+include "mlir/IR/BuiltinTypeInterfaces.td"
 include "kapy/Dialect/Kgpu/IR/Dialect.td"
 
 class Kgpu_TypeDef<string name, string keyword, list<Trait> traits = []>
-    : TypeDef<Kgpu_Dialect, name, traits> { let mnemonic = keyword; }
-
-def Kgpu_TokenType : Kgpu_TypeDef<"KgpuToken", "tok"> {
-  let parameters = (ins "unsigned":$kind);
-
-  let skipDefaultBuilders = 1;
-  let builders = [
-    TypeBuilder<(ins "unsigned":$kind), "return $_get($_ctxt, kind);">
-  ];
-
-  let assemblyFormat = "`<` $kind `>`";
+    : TypeDef<Kgpu_Dialect, name, traits> {
+  let mnemonic = keyword;
 }
 
-def Kgpu_Tok : DialectType<
+def Kgpu_Int : AnyTypeOf<[I1, I8, I16, I32, I64], "integer">;
+def Kgpu_Float : AnyTypeOf<
+    [F8E4M3FNUZ, F8E5M2FNUZ, F8E5M2, F16, BF16, F32, F64], "floating-point">;
+def Kgpu_Number : AnyTypeOf<[Kgpu_Int, Kgpu_Float]>;
+
+def SharedMemRefType
+    : Kgpu_TypeDef<"SharedMemRef", "shared", [ShapedTypeInterface]> {
+  let summary = "shared memref (memory reference) type";
+
+  let parameters = (ins
+    ArrayRefParameter<"int64_t">:$shape,
+    "Type":$elementType,
+    "Attribute":$encoding
+  );
+
+  let builders = [
+    TypeBuilderWithInferredContext<
+      (ins
+        "ArrayRef<int64_t>":$shape,
+        "Type":$elementType,
+        "Attribute":$encoding
+      ),
+      "return $_get(elementType.getContext(), shape, elementType, encoding);"
+    >
+  ];
+
+  let hasCustomAssemblyFormat = 1;
+
+  let extraClassDeclaration = [{
+    SharedMemRefType
+    cloneWith(std::optional<ArrayRef<int64_t>> shape, Type elementType) const {
+      return get(shape.value_or(getShape()), elementType, getEncoding());
+    }
+
+    bool hasRank() const { return true; }
+  }];
+}
+
+class SharedMemRefOf<list<Type> types> : DialectType<
   Kgpu_Dialect,
-  CPred<"isa<KgpuTokenType>($_self)">,
-  "token",
-  "KgpuTokenType"
+  And<
+    [
+      CPred<"isa<SharedMemRefType>($_self)">,
+      Concat<"[](Type elementType) { return ",
+             SubstLeaves<"$_self", "elementType", AnyTypeOf<types>.predicate>,
+             "; }(cast<SharedMemRefType>($_self).getElementType())">
+    ]
+  >,
+  "shared memref",
+  "SharedMemRefType"
 >;
+
+def Kgpu_Shared : SharedMemRefOf<[Kgpu_Number]>;
 
 #endif // KAPY_DIALECT_KGPU_IR_TYPES

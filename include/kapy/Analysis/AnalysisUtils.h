@@ -1,4 +1,4 @@
-//===- Utils.h --------------------------------------------------*- C++ -*-===//
+//===- AnalysisUtils.h ------------------------------------------*- C++ -*-===//
 //
 // Copyright 2018-2020 Philippe Tillet
 // Copyright 2020-2022 OpenAI
@@ -28,21 +28,44 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef KAPY_DIALECT_KGPU_TRANSFORM_LAYOUT_UTILS_H
-#define KAPY_DIALECT_KGPU_TRANSFORM_LAYOUT_UTILS_H
+#ifndef KAPY_ANALYSIS_ANALYSISUTILS_H
+#define KAPY_ANALYSIS_ANALYSISUTILS_H
 
-#include "mlir/IR/Attributes.h"
-#include "mlir/IR/Operation.h"
+#include "mlir/Support/LLVM.h"
+#include <functional>
 
 namespace mlir {
+
+class DataFlowSolver;
+class Operation;
+
 namespace kapy {
 
-Attribute inferResultLayout(Operation *op, Attribute operandLayout);
-Attribute inferOperandLayout(Operation *op, Attribute resultLayout);
+/// Multi-root DAG topological sort.
+/// Perform a topological sort of operations in the `ops` SetVector and return a
+/// topologically sorted SetVector.
+/// It is faster than mlir::topologicalSort because it prunes nodes that have
+/// been visited before.
+SetVector<Operation *> multiRootTopoSort(const SetVector<Operation *> &ops);
 
-bool isFreeChangeOp(Operation *op);
+/// Get a SetVector for slice of the given operation and topological sort it use
+/// the function above.
+SetVector<Operation *>
+multiRootGetSlice(Operation *op,
+                  std::function<bool(Operation *)> bwFilter = nullptr,
+                  std::function<bool(Operation *)> fwFilter = nullptr);
+
+/// Return true if there is a path from `sourceOp` to `targetOp` in `slice`, and
+/// all the operations on this path meet with `filter`.
+bool hasRestrictedPath(Operation *sourceOp, Operation *targetOp,
+                       const SetVector<Operation *> &slice,
+                       std::function<bool(Operation *)> filter = nullptr);
+
+/// Create a basic DataFlowSolver that contains DeadCodeAnalysis and
+/// ConstantAnalysis.
+std::unique_ptr<DataFlowSolver> createDataFlowSolver();
 
 } // namespace kapy
 } // namespace mlir
 
-#endif // KAPY_DIALECT_KGPU_TRANSFORM_LAYOUT_UTILS_H
+#endif // KAPY_ANALYSIS_ANALYSISUTILS_H

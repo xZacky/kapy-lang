@@ -1,4 +1,4 @@
-//===- TypeConverter.cpp ----------------------------------------*- C++ -*-===//
+//===- TestIntegerAnalysis.cpp ----------------------------------*- C++ -*-===//
 //
 // Copyright 2018-2020 Philippe Tillet
 // Copyright 2020-2022 OpenAI
@@ -28,30 +28,58 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "kapy/Conversion/KapyToKgpu/TypeConverter.h"
-#include "kapy/Analysis/Layout.h"
+#include "kapy/Analysis/IntegerAnalysis.h"
 #include "kapy/Dialect/Kapy/IR/Kapy.h"
-#include "kapy/Dialect/Kgpu/IR/Kgpu.h"
+#include "mlir/Pass/Pass.h"
 
 using namespace mlir;
 using namespace mlir::kapy;
 
-KgpuTypeConverter::KgpuTypeConverter(MLIRContext *context, int64_t numWarps)
-    : context(context), numWarps(numWarps) {
-  addConversion([](Type type) { return type; });
+namespace {
 
-  addConversion([this](RankedTensorType tensorType) {
-    // RankedTensorType with layout are already in the right format.
-    if (tensorType.getEncoding())
-      return tensorType;
-    auto shape = tensorType.getShape();
-    auto fragsLayout = getFragmentsLayout(this->context, shape, this->numWarps);
-    return cloneWith(tensorType, fragsLayout);
-  });
+class TestIntegerAnalysisPass
+    : public PassWrapper<TestIntegerAnalysisPass, OperationPass<ModuleOp>> {
+public:
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(TestIntegerAnalysisPass);
 
-  addTargetMaterialization([](OpBuilder &builder, RankedTensorType tensorType,
-                              ValueRange values, Location loc) {
-    return std::optional<Value>(
-        builder.create<ChangeOp>(loc, tensorType, values));
-  });
+  virtual StringRef getArgument() const override {
+    return "test-integer-analysis";
+  }
+
+  virtual void runOnOperation() override {
+    auto &os = llvm::outs();
+    auto module = getOperation();
+    ModuleIntegerAnalysis analysis(module);
+    module.walk([&](FuncOp funcOp) {
+      auto funcName = SymbolTable::getSymbolName(funcOp).getValue();
+      os << "@" << funcName << "\n";
+      funcOp.walk([&](Operation *op) {
+        if (op->getNumResults() < 1)
+          return;
+        for (auto result : op->getResults()) {
+          if (!result.getType().isInteger())
+            continue;
+          auto *info = analysis.getIntegerInfo(result);
+          if (!info || info->isEntryState())
+            continue;
+          result.print(os);
+          os << " // ";
+          info->print(os);
+          os << "\n";
+        }
+      });
+    });
+  }
+};
+
+} // namespace
+
+namespace mlir {
+namespace test {
+
+void registerTestIntegerAnalysisPass() {
+  PassRegistration<TestIntegerAnalysisPass>();
 }
+
+} // namespace test
+} // namespace mlir

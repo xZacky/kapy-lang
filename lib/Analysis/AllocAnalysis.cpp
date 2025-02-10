@@ -1,4 +1,4 @@
-//===- Allocation.cpp -------------------------------------------*- C++ -*-===//
+//===- AllocAnalysis.cpp ----------------------------------------*- C++ -*-===//
 //
 // Copyright 2018-2020 Philippe Tillet
 // Copyright 2020-2022 OpenAI
@@ -28,36 +28,36 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "kapy/Analysis/Allocation.h"
+#include "kapy/Analysis/AllocAnalysis.h"
 #include "kapy/Analysis/OpHelpers.h"
 #include "kapy/Dialect/Kapy/IR/Kapy.h"
-#include "kapy/Dialect/Kapy/IR/Utils.h"
 #include "kapy/Dialect/Kgpu/IR/Kgpu.h"
+#include "kapy/Support/CommonUtils.h"
 #include "mlir/Analysis/Liveness.h"
 
 namespace mlir {
 namespace kapy {
 
-class AllocationAnalysis {
+class AllocAnalysis {
 public:
-  AllocationAnalysis(FunctionOpInterface funcOp, Allocation *allocation)
-      : funcOp(funcOp), allocation(allocation) {}
+  AllocAnalysis(FunctionOpInterface funcOp, AllocInfo *info)
+      : funcOp(funcOp), info(info) {}
 
-  void run(DenseMap<FunctionOpInterface, Allocation> &funcToAllocation) {
-    addBuffers(funcToAllocation);
+  void run(DenseMap<FunctionOpInterface, AllocInfo> &funcToInfo) {
+    addBuffers(funcToInfo);
     resolveLiveness();
     computeAndAllocate();
   }
 
 private:
-  using Buffer = Allocation::Buffer;
-  using OpId = int64_t;
+  using Buffer = AllocInfo::Buffer;
+  using OpId = int;
 
   FunctionOpInterface funcOp;
-  Allocation *allocation;
+  AllocInfo *info;
   llvm::MapVector<Buffer *, Interval<OpId>> bufferToLiveness;
 
-  void addBuffers(DenseMap<FunctionOpInterface, Allocation> &funcToAllocation);
+  void addBuffers(DenseMap<FunctionOpInterface, AllocInfo> &funcToInfo);
 
   void resolveLiveness();
 
@@ -74,47 +74,45 @@ private:
 using namespace mlir;
 using namespace mlir::kapy;
 
-void Allocation::run(
-    DenseMap<FunctionOpInterface, Allocation> &funcToAllocation) {
-  AllocationAnalysis(funcOp, this).run(funcToAllocation);
+void AllocInfo::run(DenseMap<FunctionOpInterface, AllocInfo> &funcToInfo) {
+  AllocAnalysis(funcOp, this).run(funcToInfo);
 }
 
-void AllocationAnalysis::addBuffers(
-    DenseMap<FunctionOpInterface, Allocation> &funcToAllocation) {
+void AllocAnalysis::addBuffers(
+    DenseMap<FunctionOpInterface, AllocInfo> &funcToInfo) {
   funcOp->walk<WalkOrder::PreOrder>([&](Operation *op) {
-    if (auto allocOp = dyn_cast<LocalAllocOp>(op)) {
-      auto memrefType = allocOp.getType();
-      auto numElems = product(memrefType.getShape());
-      auto bitWidth = getIntOrFloatBitWidth(memrefType);
-      auto size = numElems * ceilDiv<unsigned>(bitWidth, 8);
-      Value result = allocOp.getResult();
-      allocation->addBuffer<Buffer::BufferKind::EXPLICIT>(result, size);
+    if (auto allocOp = dyn_cast<AllocSharedOp>(op)) {
+      auto sharedType = allocOp.getType();
+      auto bitWidth = getIntOrFloatBitWidth(sharedType);
+      auto size = sharedType.getNumElements() * ceilDiv<unsigned>(bitWidth, 8);
+      auto result = allocOp.getResult();
+      info->addBuffer<Buffer::BufferKind::EXPLICIT>(result, size);
     } else if (auto reduceOp = dyn_cast<ReduceOp>(op)) {
       ReduceOpHelper helper(reduceOp);
       auto size = helper.getScratchSizeInBytes();
       if (size > 0)
-        allocation->addBuffer<Buffer::BufferKind::SCRATCH>(op, size);
+        info->addBuffer<Buffer::BufferKind::SCRATCH>(op, size);
     } else if (auto changeOp = dyn_cast<ChangeOp>(op)) {
       ChangeOpHelper helper(changeOp);
       auto size = helper.getScratchSizeInBytes();
       if (size > 0)
-        allocation->addBuffer<Buffer::BufferKind::SCRATCH>(op, size);
+        info->addBuffer<Buffer::BufferKind::SCRATCH>(op, size);
     } else if (auto callOp = dyn_cast<CallOpInterface>(op)) {
       auto *callable = callOp.resolveCallable();
       auto funcOp = dyn_cast_if_present<FunctionOpInterface>(callable);
       if (!funcOp)
         return;
-      auto size = funcToAllocation[funcOp].getAllocatedSize();
+      auto size = funcToInfo[funcOp].getAllocatedSize();
       if (size > 0)
-        allocation->addBuffer<Buffer::BufferKind::VIRTUAL>(op, size);
+        info->addBuffer<Buffer::BufferKind::VIRTUAL>(op, size);
     }
   });
 }
 
-void AllocationAnalysis::resolveLiveness() {
+void AllocAnalysis::resolveLiveness() {
   // Assign an id to each operation using post-order traversal.
   // To achieve the correct liveness, the parent operation's id should be larger
-  // than each of its child operation's id.
+  // than each its child operation's id.
   //
   // Example:
   //
@@ -126,20 +124,18 @@ void AllocationAnalysis::resolveLiveness() {
   //   }
   //
   // %5 is defined in the parent region and used in the child region, and is not
-  // passed as a block argument. %6 should have an id larger than its child
-  // operations, otherwise %5's liveness ends before the child operation's
-  // liveness ends.
+  // passed as a block argument. %6 should have an id larger than each its child
+  // operation, otherwise %5's liveness ends before its child operations.
   DenseMap<Operation *, OpId> opToId;
-  funcOp->walk<WalkOrder::PostOrder>(
-      [&](Operation *op) { opToId[op] = opToId.size(); });
+  funcOp->walk([&](Operation *op) { opToId[op] = opToId.size(); });
 
   // Analyze liveness of explicit buffers.
   Liveness liveness(funcOp);
   auto getLiveness = [&](Value value) {
-    auto liveOps = liveness.resolveLiveness(value);
+    auto ops = liveness.resolveLiveness(value);
     auto minId = std::numeric_limits<OpId>::max();
     auto maxId = std::numeric_limits<OpId>::min();
-    std::for_each(liveOps.begin(), liveOps.end(), [&](Operation *op) {
+    std::for_each(ops.begin(), ops.end(), [&](Operation *op) {
       if (opToId[op] < minId)
         minId = opToId[op];
       if (opToId[op] + 1 > maxId)
@@ -147,24 +143,24 @@ void AllocationAnalysis::resolveLiveness() {
     });
     return Interval(minId, maxId);
   };
-  for (auto [value, buffer] : allocation->explicits)
+  for (auto [value, buffer] : info->explicits)
     bufferToLiveness[buffer] = getLiveness(value);
 
   // Analyze liveness of scratch and virtual buffers.
   auto processBuffers = [&](const DenseMap<Operation *, Buffer *> &buffers) {
     for (auto [op, buffer] : buffers) {
-      auto opId = opToId.lookup(op);
-      bufferToLiveness.insert({buffer, Interval(opId, opId + 1)});
+      auto id = opToId.lookup(op);
+      bufferToLiveness.insert({buffer, Interval(id, id + 1)});
     }
   };
-  processBuffers(allocation->scratchs);
-  processBuffers(allocation->virtuals);
+  processBuffers(info->scratchs);
+  processBuffers(info->virtuals);
 }
 
-void AllocationAnalysis::computeAndAllocate() {
+void AllocAnalysis::computeAndAllocate() {
   SmallVector<Buffer *> buffers;
-  for (auto [buffer, liveness] : bufferToLiveness)
-    buffers.emplace_back(buffer);
+  for (auto *buffer : llvm::make_first_range(bufferToLiveness))
+    buffers.push_back(buffer);
 
   // NOTE: The original paper doesn't consider interference between the bumped
   // ranges. Buffers that previously do not interference with could interfere
@@ -182,11 +178,11 @@ void AllocationAnalysis::computeAndAllocate() {
       for (auto *bufferB : buffers) {
         if (bufferA == bufferB)
           continue;
-        auto memoryA = allocation->getInterval(bufferA->id);
-        auto memoryB = allocation->getInterval(bufferB->id);
         auto livenessA = bufferToLiveness.lookup(bufferA);
         auto livenessB = bufferToLiveness.lookup(bufferB);
-        if (livenessA.intersects(livenessB) && memoryA.intersects(memoryB))
+        auto memRangeA = info->getInterval(bufferA->id);
+        auto memRangeB = info->getInterval(bufferB->id);
+        if (livenessA.intersects(livenessB) && memRangeA.intersects(memRangeB))
           graph[bufferA].insert(bufferB);
       }
     }
@@ -195,16 +191,15 @@ void AllocationAnalysis::computeAndAllocate() {
   // Try to allocate shared memory while considering interference.
   auto tryToAllocate = [&]() {
     // Reset allocated size.
-    allocation->allocatedSize = 0;
+    info->allocatedSize = 0;
     // First-fit graph coloring.
     // Neighbors are nodes that interference with each other. We color a node by
-    // finding the position of the first available non-neighboring node or the
-    // first neighboring node without any color.
+    // finding the position of the first available non-neighboring node or first
+    // neighboring node without any color.
     DenseMap<Buffer *, int> bufferToColor;
-    for (auto *buffer : buffers) {
-      // color < 0 means uncolored
+    // color < 0 means uncolored
+    for (auto *buffer : buffers)
       bufferToColor[buffer] = buffer == buffers[0] ? 0 : -1;
-    }
     SmallVector<bool> available(buffers.size());
     for (auto *bufferA : buffers) {
       std::fill(available.begin(), available.end(), true);
@@ -225,16 +220,16 @@ void AllocationAnalysis::computeAndAllocate() {
     //   color2: [8, 12) -> [18, 18 + 12 - 8) -> [18, 22)
     //
     for (auto *bufferA : buffers) {
-      int64_t newOffset = 0;
+      uint64_t offset = 0;
       if (bufferToColor.lookup(bufferA) == 0) {
-        bufferA->setOffsetAligned(newOffset);
+        bufferA->setOffsetAligned(offset);
       } else {
         for (auto *bufferB : graph.lookup(bufferA))
-          newOffset = std::max(newOffset, bufferB->offset + bufferB->size);
-        bufferA->setOffsetAligned(newOffset);
+          offset = std::max(offset, bufferB->offset + bufferB->size);
+        bufferA->setOffsetAligned(offset);
       }
-      allocation->allocatedSize =
-          std::max(allocation->allocatedSize, bufferA->offset + bufferA->size);
+      info->allocatedSize =
+          std::max(info->allocatedSize, bufferA->offset + bufferA->size);
     }
   };
 

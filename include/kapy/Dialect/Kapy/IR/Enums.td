@@ -33,42 +33,42 @@
 
 include "mlir/IR/EnumAttr.td"
 
-class Kapy_EnumAttr<string name, list<I32EnumAttrCase> cases>
-    : I32EnumAttr<name, "", cases> {
+class Kapy_EnumAttr<
+  string name, string description, list<I32EnumAttrCase> cases
+> : I32EnumAttr<name, description, cases> {
   let cppNamespace = "mlir::kapy";
 }
 
-def Kapy_PaddingOptionAttr : Kapy_EnumAttr<
-  "PaddingOption",
-  [
-    I32EnumAttrCase<"PAD_ZERO", 0, "pad_zero">,
-    I32EnumAttrCase<"PAD_NAN", 1, "pad_nan">
-  ]
->;
-
 def Kapy_CacheModifierAttr : Kapy_EnumAttr<
   "CacheModifier",
+  "cache operator on load and store instrutions",
   [
     I32EnumAttrCase<"NONE", 0, "none">,
     I32EnumAttrCase<"CA", 1, "ca">,
     I32EnumAttrCase<"CG", 2, "cg">,
-    I32EnumAttrCase<"WB", 3, "wb">,
-    I32EnumAttrCase<"CS", 4, "cs">,
-    I32EnumAttrCase<"WT", 5, "wt">
+    I32EnumAttrCase<"CS", 3, "cs">,
+    I32EnumAttrCase<"WB", 4, "wb">,
+    I32EnumAttrCase<"WT", 5, "wt">,
+    I32EnumAttrCase<"LU", 6, "lu">,
+    I32EnumAttrCase<"CV", 7, "cv">,
   ]
 >;
 
 def Kapy_EvictPriorityAttr : Kapy_EnumAttr<
   "EvictPriority",
+  "cache eviction priority hints on load and store instructions",
   [
-    I32EnumAttrCase<"NORMAL", 0, "normal">,
+    I32EnumAttrCase<"EVICT_NORMAL", 0, "evict_normal">,
     I32EnumAttrCase<"EVICT_FIRST", 1, "evict_first">,
-    I32EnumAttrCase<"EVICT_LAST", 2, "ecict_last">
+    I32EnumAttrCase<"EVICT_LAST", 2, "evict_last">,
+    I32EnumAttrCase<"EVICT_UNCHANGED", 3, "evict_unchanged">,
+    I32EnumAttrCase<"NO_ALLOCATE", 4, "no_allocate">
   ]
 >;
 
 def Kapy_AtomicRMWKindAttr : Kapy_EnumAttr<
   "AtomicRMWKind",
+  "kind of AtomicRMWOp",
   [
     I32EnumAttrCase<"AND", 1, "and">,
     I32EnumAttrCase<"OR", 2, "or">,
@@ -85,16 +85,28 @@ def Kapy_AtomicRMWKindAttr : Kapy_EnumAttr<
 
 def Kapy_MemSemanticAttr : Kapy_EnumAttr<
   "MemSemantic",
+  "memory synchronization semantic",
   [
     I32EnumAttrCase<"RELAXED", 1, "relaxed">,
     I32EnumAttrCase<"ACQUIRE", 2, "acquire">,
     I32EnumAttrCase<"RELEASE", 3, "release">,
-    I32EnumAttrCase<"ACQUIRE_RELEASE", 4, "acquire_release">
+    I32EnumAttrCase<"ACQ_REL", 4, "acq_rel">
+  ]
+>;
+
+def Kapy_MemoryScopeAttr : Kapy_EnumAttr<
+  "MemoryScope",
+  "memory synchronization scope",
+  [
+    I32EnumAttrCase<"CTA", 1, "cta">,
+    I32EnumAttrCase<"GPU", 2, "gpu">,
+    I32EnumAttrCase<"SYS", 3, "sys">
   ]
 >;
 
 def Kapy_ProgramAxisAttr : Kapy_EnumAttr<
   "ProgramAxis",
+  "program grid axis",
   [
     I32EnumAttrCase<"X", 0, "x">,
     I32EnumAttrCase<"Y", 1, "y">,
@@ -104,6 +116,7 @@ def Kapy_ProgramAxisAttr : Kapy_EnumAttr<
 
 def Kapy_RoundingModeAttr : Kapy_EnumAttr<
   "RoundingMode",
+  "rounding mode for floating-point cast instructions",
   [
     I32EnumAttrCase<"RTZ", 0, "rtz">,
     I32EnumAttrCase<"RTNE", 1, "rtne">
@@ -112,31 +125,30 @@ def Kapy_RoundingModeAttr : Kapy_EnumAttr<
 
 def Kapy_PropagateNanAttr : Kapy_EnumAttr<
   "PropagateNan",
+  "whether propagate NaN for ClampFOp",
   [
     I32EnumAttrCase<"NONE", 0, "none">,
     I32EnumAttrCase<"ALL", 1, "all">
   ]
 >;
 
-def Kapy_MatmulFormatAttr : Kapy_EnumAttr<
-  "MatmulFormat",
+def Kapy_MatmulImplWayAttr : Kapy_EnumAttr<
+  "MatmulImplWay",
+  "how to implement matmul",
   [
-    I32EnumAttrCase<"IEEE", 0, "ieee">,
-    I32EnumAttrCase<"TF32", 1, "tf32">,
-    I32EnumAttrCase<"TF32X3", 2, "tf32x3">
+    I32EnumAttrCase<"FMA", 0, "fma">,
+    I32EnumAttrCase<"MMA_M16N8K8_F16", 1, "mma_m16n8k8_f16">,
+    I32EnumAttrCase<"MMA_M16N8K16_F16", 2, "mma_m16n8k16_f16">,
+    I32EnumAttrCase<"MMA_M16N8K8_TF32", 3, "mma_m16n8k8_tf32">,
+    I32EnumAttrCase<"MMA_M16N8K16_F8", 4, "mma_m16n8k16_f8">
+    // TODO: Support more.
   ]
 >;
-
-def Kapy_DefaultValuedPaddingOptionAttr
-    : DefaultValuedAttr<Kapy_PaddingOptionAttr, "PaddingOption::PAD_ZERO">;
 
 def Kapy_DefaultValuedCacheModifierAttr
     : DefaultValuedAttr<Kapy_CacheModifierAttr, "CacheModifier::NONE">;
 
 def Kapy_DefaultValuedEvictPriorityAttr
-    : DefaultValuedAttr<Kapy_EvictPriorityAttr, "EvictPriority::NORMAL">;
-
-def Kapy_DefaultValuedMatmulFormatAttr
-    : DefaultValuedAttr<Kapy_MatmulFormatAttr, "MatmulFormat::TF32">;
+    : DefaultValuedAttr<Kapy_EvictPriorityAttr, "EvictPriority::EVICT_NORMAL">;
 
 #endif // KAPY_DIALECT_KAPY_IR_ENUMS

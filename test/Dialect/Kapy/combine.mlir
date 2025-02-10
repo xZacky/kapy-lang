@@ -50,15 +50,15 @@ module {
     kapy.return %1 : !kapy.memref<128xf32, #glmem>
   }
   // CHECK-LABEL: combine_select_op_and_if_op
-  kapy.func @combine_select_op_and_if_op(%arg0: tensor<128xf32>, %arg1: !kapy.memref<128xf32, #glmem>, %arg2: i1) {
-    %cst = arith.constant dense<0.000000e+00> : tensor<128xf32>
-    %cst_0 = arith.constant dense<1.000000e+00> : tensor<128xf32>
+  kapy.func @combine_select_op_and_if_op(%arg0: tensor<32x128xf32>, %arg1: !kapy.memref<32x128xf32, #glmem>, %arg2: i1) {
+    %cst = arith.constant dense<0.000000e+00> : tensor<32x128xf32>
+    %cst_0 = arith.constant dense<1.000000e+00> : tensor<32x128xf32>
     // CHECK-NOT: arith.select
-    %0 = arith.select %arg2, %cst, %cst_0 : tensor<128xf32>
+    %0 = arith.select %arg2, %cst, %cst_0 : tensor<32x128xf32>
     scf.if %arg2 {
-      kapy.store %arg1, %arg0 : !kapy.memref<128xf32, #glmem>, tensor<128xf32>
+      kapy.store %arg1, %arg0 : !kapy.memref<32x128xf32, #glmem>, tensor<32x128xf32>
     }
-    kapy.store %arg1, %0 : !kapy.memref<128xf32, #glmem>, tensor<128xf32>
+    kapy.store %arg1, %0 : !kapy.memref<32x128xf32, #glmem>, tensor<32x128xf32>
     kapy.return
   }
   // CHECK-LABEL: combine_two_select_ops_and_if_op

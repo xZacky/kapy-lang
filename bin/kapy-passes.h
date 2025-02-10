@@ -1,18 +1,16 @@
 #ifndef KAPY_PASSES_H
 #define KAPY_PASSES_H
 
-#include "kapy/Conversion/KapyToKgpu/Passes.h"
-#include "kapy/Dialect/Kapy/Transform/Passes.h"
-#include "kapy/Dialect/Kgpu/Transform/Passes.h"
-
+// #include "kapy/Conversion/KapyToKgpu/Passes.h"
+// #include "kapy/Dialect/Kapy/Transforms/Passes.h"
+// #include "kapy/Dialect/Kgpu/Transforms/Passes.h"
 #include "mlir/InitAllPasses.h"
 
 namespace mlir {
 namespace test {
 
-void registerKapyTestAllocationPass();
-void registerKapyTestIntegerPass();
-void registerKapyTestMemBarPass();
+void registerTestIntegerAnalysisPass();
+void registerTestAllocAnalysisPass();
 
 } // namespace test
 } // namespace mlir
@@ -21,12 +19,11 @@ using namespace mlir;
 
 inline void registerAllKapyPasses() {
   registerAllPasses();
-  registerKapyTransformPasses();
-  registerKapyToKgpuPasses();
-  registerKgpuTransformPasses();
-  test::registerKapyTestAllocationPass();
-  test::registerKapyTestIntegerPass();
-  test::registerKapyTestMemBarPass();
+  // kapy::registerKapyPasses();
+  // kapy::registerKgpuPasses();
+  // kapy::registerConvertKapyToKgpuPass();
+  test::registerTestIntegerAnalysisPass();
+  test::registerTestAllocAnalysisPass();
 }
 
 #endif // KAPY_PASSES_H

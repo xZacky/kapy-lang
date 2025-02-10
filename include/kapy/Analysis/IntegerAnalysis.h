@@ -1,11 +1,11 @@
-//===- Integer.h ------------------------------------------------*- C++ -*-===//
+//===- IntegerAnalysis.h ----------------------------------------*- C++ -*-===//
 //
 // This file defines classes used by data flow analysis for integers.
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef KAPY_ANALYSIS_INTEGER_H
-#define KAPY_ANALYSIS_INTEGER_H
+#ifndef KAPY_ANALYSIS_INTEGERANALYSIS_H
+#define KAPY_ANALYSIS_INTEGERANALYSIS_H
 
 #include "kapy/Analysis/CallGraph.h"
 
@@ -57,7 +57,7 @@ public:
   }
 
 private:
-  // Divisibility is the greatest power of two divisor of the integer.
+  // Divisibility is the greatest power of 2 divisor of the integer.
   int64_t divisibility = 0;
   // Constant of the integer if we can infer it.
   std::optional<int64_t> constant;
@@ -65,16 +65,13 @@ private:
 
 /// Module level IntegerInfo analysis based on the call graph, assuming that we
 /// do not have recursive functions.
-///
 /// Since each function will be called multiple times, we need to calculate the
 /// IntegerInfo based on all the callers.
-///
 /// In the future, we can perform optimization using function cloning so that
 /// each call site will have unique IntegerInfo.
-class ModuleIntegerInfoAnalysis
-    : public CallGraph<DenseMap<Value, IntegerInfo>> {
+class ModuleIntegerAnalysis : public CallGraph<DenseMap<Value, IntegerInfo>> {
 public:
-  explicit ModuleIntegerInfoAnalysis(ModuleOp module)
+  explicit ModuleIntegerAnalysis(ModuleOp module)
       : CallGraph<DenseMap<Value, IntegerInfo>>(module) {
     SmallVector<FunctionOpInterface> funcOps;
     walk<WalkOrder::PreOrder, WalkOrder::PostOrder>(
@@ -114,4 +111,4 @@ private:
 } // namespace kapy
 } // namespace mlir
 
-#endif // KAPY_ANALYSIS_INTEGER_H
+#endif // KAPY_ANALYSIS_INTEGERANALYSIS_H

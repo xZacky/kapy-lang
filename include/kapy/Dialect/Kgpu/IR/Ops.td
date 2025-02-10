@@ -27,168 +27,87 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef KAPY_DIALECT_KGPU_IR_OPS
-#define KAPY_DIALECT_KGPU_IR_OPS
+#ifndef KAPY_DIALECT_KGPU_IR_KGPUOPS
+#define KAPY_DIALECT_KGPU_IR_KGPUOPS
 
 include "mlir/Interfaces/SideEffectInterfaces.td"
 include "kapy/Dialect/Kapy/IR/Enums.td"
-include "kapy/Dialect/Kapy/IR/OpTraits.td"
 include "kapy/Dialect/Kapy/IR/Types.td"
 include "kapy/Dialect/Kgpu/IR/Dialect.td"
-include "kapy/Dialect/Kgpu/IR/Attrs.td"
 include "kapy/Dialect/Kgpu/IR/Types.td"
 
 class Kgpu_Op<string keyword, list<Trait> traits = []>
-    : Op<Kgpu_Dialect, keyword, traits # [ValidTensorShape]>;
+    : Op<Kgpu_Dialect, keyword, traits>;
 
 def Kgpu_ChangeOp : Kgpu_Op<
   "change", [Pure, SameOperandsAndResultShape, SameOperandsAndResultElementType]
 > {
-  let arguments = (ins Kapy_IntFpTensor:$operand);
-  let results = (outs Kapy_IntFpTensor:$result);
+  let arguments = (ins Kapy_Tensor:$source);
+  let results = (outs Kapy_Tensor:$result);
 
   let assemblyFormat = [{
-    $operand attr-dict `:` type($operand) `to` type($result)
+    $source attr-dict `:` type($source) `to` type($result)
   }];
 
   let hasCanonicalizeMethod = 1;
 }
 
-def Kgpu_AsyncWaitOp : Kgpu_Op<"async_wait", [Pure]> {
-  let arguments = (ins Variadic<Kgpu_Tok>:$input_tokens, I32Attr:$number);
-  let results = (outs Kgpu_Tok:$token);
-
-  let builders = [
-    OpBuilder<
-      (ins "int32_t":$number),
-      [{
-        auto tokenType = KgpuTokenType::get($_builder.getContext(), 2);
-        build($_builder, $_state, tokenType, ValueRange(), number);
-      }]
-    >,
-    OpBuilder<
-      (ins "ValueRange":$inputTokens, "int32_t":$number),
-      [{
-        auto tokenType = KgpuTokenType::get($_builder.getContext(), 2);
-        build($_builder, $_state, tokenType, inputTokens, number);
-      }]
-    >
-  ];
-
-  let assemblyFormat = [{
-    $input_tokens attr-dict `:` functional-type($input_tokens, $token)
-  }];
-}
-
-def Kgpu_AsyncCommitOp : Kgpu_Op<"async_commit", [Pure]> {
-  let arguments = (ins Variadic<Kgpu_Tok>:$input_tokens);
-  let results = (outs Kgpu_Tok:$token);
-
-  let builders = [
-    OpBuilder<
-      (ins "ValueRange":$inputTokens),
-      [{
-        auto tokenType = KgpuTokenType::get($_builder.getContext(), 1);
-        build($_builder, $_state, tokenType, inputTokens);
-      }]
-    >
-  ];
-
-  let assemblyFormat = [{
-    $input_tokens attr-dict `:` functional-type($input_tokens, $token)
-  }];
-}
-
-def Kgpu_AsyncCopyOp : Kgpu_Op<
-  "async_copy", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]
+def Kgpu_CpAsyncGlobalToSharedOp : Kgpu_Op<
+  "cp_async_global_to_shared",
+  [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]
 > {
-  let description = [{
-    For each element, copies asynchronously from global memref `$source` to
-    shared memref `$target`, for memory access out of range, pad `$target` with
-    zero.
-  }];
-
   let arguments = (ins
-    Kapy_IntFpMemRef:$source,
-    Kapy_IntFpMemRef:$target,
-    Kgpu_FragmentsLayoutAttr:$layout,
+    Kapy_Global:$source,
+    I32:$offset0,
+    I32:$offset1,
+    Kgpu_Shared:$target,
+    Kapy_Tensor:$other,
     Kapy_DefaultValuedCacheModifierAttr:$cache_modifier,
     Kapy_DefaultValuedEvictPriorityAttr:$evict_priority,
     DefaultValuedAttr<BoolAttr, "false">:$is_volatile
   );
-  let results = (outs Kgpu_Tok:$token);
-
-  let builders = [
-    OpBuilder<
-      (ins
-        "Value":$source,
-        "Value":$target,
-        "FragmentsLayoutAttr":$layout,
-        "CacheModifier":$cacheModifier,
-        "EvictPriority":$evictPriority,
-        "bool":$isVolatile
-      ),
-      [{
-        auto tokenType = KgpuTokenType::get($_builder.getContext(), 0);
-        build($_builder, $_state, tokenType, source, target, layout,
-              cacheModifier, evictPriority, isVolatile);
-      }]
-    >
-  ];
 
   let assemblyFormat = [{
-    $source `,` $target attr-dict `:` functional-type(operands, $token)
+    $source `[` $offset0 `,` $offset1 `]` `,` $target `,` $other attr-dict `:`
+    qualified(type($source)) `,` qualified(type($target)) `,` type($other)
   }];
 
-  let hasVerifier = 1;
+  let extraClassDeclaration = [{
+    ValueRange getOffsets() { return {getOffset0(), getOffset1()}; }
+  }];
 }
 
-def Kgpu_LocalAllocOp : Kgpu_Op<
-  "local_alloc", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]
+def Kgpu_AllocSharedOp : Kgpu_Op<
+  "alloc_shared",
+  [
+    SameOperandsAndResultShape,
+    SameOperandsAndResultElementType,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]
 > {
-  let arguments = (ins Optional<Kapy_IntFpTensor>:$operand);
-  let results = (outs Kapy_IntFpMemRef:$result);
-
-  let builders = [
-    OpBuilder<(ins "Type":$type),
-              "build($_builder, $_state, type, std::nullopt);">
-  ];
+  let arguments = (ins Optional<Kapy_Tensor>:$source);
+  let results = (outs Kgpu_Shared:$result);
 
   let assemblyFormat = [{
-    ($operand^)? attr-dict `:` functional-type($operand, $result)
+    ($source^)? attr-dict `:` functional-type($source, $result)
   }];
-
-  let hasVerifier = 1;
 }
 
-def Kgpu_LocalFreeOp : Kgpu_Op<
-  "local_free", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]
+def Kgpu_LoadSharedOp : Kgpu_Op<
+  "load_shared",
+  [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]
 > {
-  let arguments = (ins Kapy_IntFpMemRef:$operand);
-
-  let assemblyFormat = "$operand attr-dict `:` qualified(type($operand))";
-
-  let hasVerifier = 1;
-}
-
-def Kgpu_LocalLoadOp : Kgpu_Op<
-  "local_load", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]
-> {
-  let arguments = (ins
-    Kapy_IntFpMemRef:$source, Optional<Kgpu_Tok>:$input_token
-  );
-  let results = (outs Kapy_IntFpTensor:$result);
-
-  let builders = [
-    OpBuilder<(ins "Type":$type, "Value":$source),
-              "build($_builder, $_state, type, source, std::nullopt);">
-  ];
+  let arguments = (ins Kgpu_Shared:$source, I32:$offset0, I32:$offset1);
+  let results = (outs Kapy_Tensor:$result);
 
   let assemblyFormat = [{
-    $source(`,` $input_token^)? attr-dict `:` functional-type(operands, $result)
+    $source `[` $offset0 `,` $offset1 `]` attr-dict `:` qualified(type($source))
+    `->` type($result)
   }];
 
-  let hasVerifier = 1;
+  let extraClassDeclaration = [{
+    ValueRange getOffsets() { return {getOffset0(), getOffset1()}; }
+  }];
 }
 
 #endif // KAPY_DIALECT_KGPU_IR_OPS

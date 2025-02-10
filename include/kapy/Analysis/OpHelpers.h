@@ -1,70 +1,77 @@
 //===- OpHelpers.h ----------------------------------------------*- C++ -*-===//
 //
-// Copyright 2018-2020 Philippe Tillet
-// Copyright 2020-2022 OpenAI
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in
-// all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
-//
-//===----------------------------------------------------------------------===//
-//
-// This file is modified from the triton project.
-// https://github.com/triton-lang/triton
+// This file defines helpers for operations that need shared memory as scratch.
 //
 //===----------------------------------------------------------------------===//
 
 #ifndef KAPY_ANALYSIS_OPHELPERS_H
 #define KAPY_ANALYSIS_OPHELPERS_H
 
-#include <cstdint>
+#include "mlir/IR/BuiltinTypes.h"
 
 namespace mlir {
-
-class Operation;
-
 namespace kapy {
+
+class ReduceOp;
+class ChangeOp;
 
 class ReduceOpHelper {
 public:
-  explicit ReduceOpHelper(Operation *op);
+  explicit ReduceOpHelper(ReduceOp reduceOp);
+  explicit ReduceOpHelper(RankedTensorType sourceType, unsigned axis);
 
-  bool isLaneSynchronous() const { return laneSynchronous; }
-  bool isWarpSynchronous() const { return warpSynchronous; }
-  int64_t getScratchSizeInBytes() const { return scratchSize; }
+  /// Get the minimum offset for "shfl.sync.bfly...".
+  int64_t getMinShflBflyOffset() const;
+
+  /// We represent lane sync cost by the number of shuffles for each warp.
+  int64_t getLaneSyncCost() const { return laneSyncCost; }
+  /// We represent warp sync cost by the number of shared memory transactions
+  /// for each warp.
+  int64_t getWarpSyncCost() const { return warpSyncCost; }
+
+  SmallVector<int64_t, 2> getScratchShape() const;
+
+  uint64_t getScratchSizeInBytes() const;
 
 private:
-  bool laneSynchronous;
-  bool warpSynchronous;
-  int64_t scratchSize;
+  RankedTensorType sourceType;
+  unsigned axis;
+  int64_t laneSyncCost = 0;
+  int64_t warpSyncCost = 0;
+
+  void runRelationAnalysis();
+
+  int64_t getScratchNumCols() const;
 };
 
 class ChangeOpHelper {
 public:
-  explicit ChangeOpHelper(Operation *op);
+  explicit ChangeOpHelper(ChangeOp changeOp);
+  explicit ChangeOpHelper(RankedTensorType sourceType,
+                          RankedTensorType resultType);
 
-  bool isLaneSynchronous() const { return laneSynchronous; }
-  bool isWarpSynchronous() const { return warpSynchronous; }
-  int64_t getScratchSizeInBytes() const { return scratchSize; }
+  /// Return true if we use a transposed scratch.
+  bool useTransposedScratch() const;
+
+  /// We represent lane sync cost by the number of shuffles for each warp.
+  int64_t getLaneSyncCost() const { return laneSyncCost; }
+  /// We represent warp sync cost by the number of shared memory transactions
+  /// for each warp.
+  int64_t getWarpSyncCost() const { return warpSyncCost; }
+
+  SmallVector<int64_t, 2> getScratchShape() const;
+
+  uint64_t getScratchSizeInBytes() const;
 
 private:
-  bool laneSynchronous;
-  bool warpSynchronous;
-  int64_t scratchSize;
+  RankedTensorType sourceType;
+  RankedTensorType resultType;
+  int64_t laneSyncCost = 0;
+  int64_t warpSyncCost = 0;
+
+  void runRelationAnalysis();
+
+  int64_t getScratchNumCols() const;
 };
 
 } // namespace kapy

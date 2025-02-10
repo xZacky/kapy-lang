@@ -1,14 +1,13 @@
-//===- Integer.cpp ----------------------------------------------*- C++ -*-===//
+//===- IntegerAnalysis.cpp --------------------------------------*- C++ -*-===//
 //
 // This file implements classes and functions used by data flow analysis for
 // integers.
 //
 //===----------------------------------------------------------------------===//
 
-#include "kapy/Analysis/Integer.h"
-#include "kapy/Analysis/Utils.h"
+#include "kapy/Analysis/IntegerAnalysis.h"
+#include "kapy/Analysis/AnalysisUtils.h"
 #include "kapy/Dialect/Kapy/IR/Kapy.h"
-#include "kapy/Dialect/Kapy/IR/Utils.h"
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
 
 using namespace mlir;
@@ -16,14 +15,14 @@ using namespace mlir::kapy;
 using namespace mlir::dataflow;
 
 /// Implementation of euclidean algorithm.
-template <typename I> static I gcdImpl(I a, I b, I &x, I &y) {
+template <typename T> static T gcdImpl(T a, T b, T &x, T &y) {
   if (a == 0) {
     x = 0;
     y = 1;
     return b;
   }
-  I x1, y1; // to store results of recursive call
-  I g = gcdImpl(b % a, a, x1, y1);
+  T x1, y1; // to store results of recursive call
+  T g = gcdImpl(b % a, a, x1, y1);
   // update `x` and `y` using results of recursive call
   x = y1 - (b / a) * x1;
   y = x1;
@@ -31,29 +30,29 @@ template <typename I> static I gcdImpl(I a, I b, I &x, I &y) {
 }
 
 /// Greatest common divisor.
-template <typename I> static I gcd(I a, I b) {
-  static_assert(std::is_integral_v<I>);
+template <typename T> static T gcd(T a, T b) {
+  static_assert(std::is_integral_v<T>);
   if (a == 0)
     return b;
   if (b == 0)
     return a;
-  I x, y;
+  T x, y;
   return gcdImpl(a, b, x, y);
 }
 
 /// Greatest power of two divisor. If `x == 0`, return the greatest power of two
 /// for type `I`.
-template <typename I> static I gpd(I x) {
-  static_assert(std::is_integral_v<I>);
+template <typename T> static T gpd(T x) {
+  static_assert(std::is_integral_v<T>);
   if (x == 0)
-    return static_cast<I>(1) << (sizeof(I) * 8 - 2);
+    return static_cast<T>(1) << (sizeof(T) * 8 - 2);
   return x & (~(x - 1));
 }
 
 /// If `a * b` overflows, return greatest the power of two for type `I`.
-template <typename I> static I mul(I a, I b) {
-  static_assert(std::is_integral_v<I>);
-  I g = gpd<I>(0);
+template <typename T> static T mul(T a, T b) {
+  static_assert(std::is_integral_v<T>);
+  T g = gpd<T>(0);
   return a > g / b ? g : a * b;
 }
 
@@ -90,7 +89,8 @@ private:
   std::vector<std::unique_ptr<IntegerInfoVisitor>> visitors;
 };
 
-template <typename OpT> class OpIntegerInfoVisitor : public IntegerInfoVisitor {
+template <typename OpT> //
+class OpIntegerInfoVisitor : public IntegerInfoVisitor {
 public:
   using IntegerInfoVisitor::IntegerInfoVisitor;
 
@@ -468,31 +468,15 @@ public:
   }
 };
 
-class MakeMemRefOpIntegerInfoVisitor
-    : public OpIntegerInfoVisitor<MakeMemRefOp> {
+class MakeGlobalOpIntegerInfoVisitor
+    : public OpIntegerInfoVisitor<MakeGlobalOp> {
 public:
-  using OpIntegerInfoVisitor<MakeMemRefOp>::OpIntegerInfoVisitor;
+  using OpIntegerInfoVisitor<MakeGlobalOp>::OpIntegerInfoVisitor;
 
   virtual IntegerInfo
-  getIntegerInfo(MakeMemRefOp op,
+  getIntegerInfo(MakeGlobalOp op,
                  ArrayRef<const Lattice<IntegerInfo> *> operands) override {
     return operands[0]->getValue();
-  }
-};
-
-class MoveMemRefOpIntegerInfoVisitor
-    : public BinOpIntegerInfoVisitor<MoveMemRefOp> {
-public:
-  using BinOpIntegerInfoVisitor<MoveMemRefOp>::BinOpIntegerInfoVisitor;
-
-private:
-  virtual int64_t getDivisibility(MoveMemRefOp op, //
-                                  const IntegerInfo &lhs,
-                                  const IntegerInfo &rhs) override {
-    auto bitWidth = getIntOrFloatBitWidth(op.getSource().getType());
-    auto rhsDivisibility =
-        mul<int64_t>(rhs.getDivisibility(), ceilDiv<unsigned>(bitWidth, 8));
-    return gcd(lhs.getDivisibility(), rhsDivisibility);
   }
 };
 
@@ -501,14 +485,10 @@ class IntegerInfoAnalysis
 public:
   IntegerInfoAnalysis(DataFlowSolver &solver)
       : SparseForwardDataFlowAnalysis<Lattice<IntegerInfo>>(solver) {
-    // UnrealizedConversionCastOp - This is needed by KgpuToLLVM, to get
-    // IntegerInfo when the graph is in the process of a PartialConversion,
-    // where UnrealizedConversionCastOp may exist.
     visitors.append<CastOpIntegerInfoVisitor<arith::ExtSIOp>,
                     CastOpIntegerInfoVisitor<arith::ExtUIOp>,
                     CastOpIntegerInfoVisitor<arith::TruncIOp>,
-                    CastOpIntegerInfoVisitor<arith::BitcastOp>,
-                    CastOpIntegerInfoVisitor<UnrealizedConversionCastOp>>();
+                    CastOpIntegerInfoVisitor<arith::BitcastOp>>();
     visitors.append<ConstantOpIntegerInfoVisitor>();
     visitors.append<AddSubOpIntegerInfoVisitor<arith::AddIOp>,
                     AddSubOpIntegerInfoVisitor<arith::SubIOp>>();
@@ -529,8 +509,7 @@ public:
                     MaxMinOpIntegerInfoVisitor<arith::MaxUIOp>,
                     MaxMinOpIntegerInfoVisitor<arith::MinSIOp>,
                     MaxMinOpIntegerInfoVisitor<arith::MinUIOp>>();
-    visitors.append<MakeMemRefOpIntegerInfoVisitor,
-                    MoveMemRefOpIntegerInfoVisitor>();
+    visitors.append<MakeGlobalOpIntegerInfoVisitor>();
   }
 
   using SparseForwardDataFlowAnalysis<Lattice<IntegerInfo>>::getLatticeElement;
@@ -631,7 +610,7 @@ IntegerInfo IntegerInfo::join(const IntegerInfo &lhs, const IntegerInfo &rhs) {
   return IntegerInfo(divisibility, constant);
 }
 
-void ModuleIntegerInfoAnalysis::initialize(FunctionOpInterface funcOp) {
+void ModuleIntegerAnalysis::initialize(FunctionOpInterface funcOp) {
   auto solver = createDataFlowSolver();
   auto *analysis = solver->load<IntegerInfoAnalysis>();
   if (failed(solver->initializeAndRun(funcOp)))
@@ -655,8 +634,8 @@ void ModuleIntegerInfoAnalysis::initialize(FunctionOpInterface funcOp) {
   });
 }
 
-void ModuleIntegerInfoAnalysis::update(CallOpInterface caller,
-                                       FunctionOpInterface callee) {
+void ModuleIntegerAnalysis::update(CallOpInterface caller,
+                                   FunctionOpInterface callee) {
   auto i64Type = IntegerType::get(callee.getContext(), 64);
   auto *valueToInfo = getData(caller->getParentOfType<FunctionOpInterface>());
   for (auto it : llvm::enumerate(caller->getOperands())) {

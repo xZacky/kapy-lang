@@ -1,4 +1,4 @@
-//===- Allocation.h ---------------------------------------------*- C++ -*-===//
+//===- AllocAnalysis.h ------------------------------------------*- C++ -*-===//
 //
 // Copyright 2018-2020 Philippe Tillet
 // Copyright 2020-2022 OpenAI
@@ -28,8 +28,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef KAPY_ANALYSIS_ALLOCATION_H
-#define KAPY_ANALYSIS_ALLOCATION_H
+#ifndef KAPY_ANALYSIS_ALLOCANALYSIS_H
+#define KAPY_ANALYSIS_ALLOCANALYSIS_H
 
 #include "kapy/Analysis/CallGraph.h"
 #include "llvm/ADT/MapVector.h"
@@ -37,8 +37,6 @@
 
 namespace mlir {
 namespace kapy {
-
-class AllocationAnalysis;
 
 /// Modified from llvm-15.0: llvm/ADT/AddressRanges.h
 /// A class that represents an interval, sepcified using a start and an end
@@ -74,22 +72,24 @@ private:
 };
 template <typename T> Interval(T, T) -> Interval<T>;
 
-class Allocation {
+class AllocAnalysis;
+
+class AllocInfo {
 public:
-  using BufferId = int64_t;
-  static constexpr BufferId invalidId = -1;
+  using BufferId = int;
+  static constexpr BufferId INVALID_ID = -1;
 
-  Allocation() = default;
-  explicit Allocation(FunctionOpInterface funcOp) : funcOp(funcOp) {}
+  AllocInfo() = default;
+  explicit AllocInfo(FunctionOpInterface funcOp) : funcOp(funcOp) {}
 
-  void run(DenseMap<FunctionOpInterface, Allocation> &funcToAllocation);
+  void run(DenseMap<FunctionOpInterface, AllocInfo> &funcToInfo);
 
   FunctionOpInterface getFunction() const { return funcOp; }
 
-  int64_t getOffset(BufferId id) const { return buffers.at(id).offset; }
-  int64_t getSize(BufferId id) const { return buffers.at(id).size; }
+  uint64_t getOffset(BufferId id) const { return buffers.at(id).offset; }
+  uint64_t getSize(BufferId id) const { return buffers.at(id).size; }
 
-  Interval<int64_t> getInterval(BufferId id) const {
+  Interval<uint64_t> getInterval(BufferId id) const {
     const auto &buffer = buffers.at(id);
     return Interval(buffer.offset, buffer.offset + buffer.size);
   }
@@ -98,7 +98,7 @@ public:
   BufferId getBufferId(Value value) const {
     if (explicits.contains(value))
       return explicits.lookup(value)->id;
-    return invalidId;
+    return INVALID_ID;
   }
   /// This method only return the scratch or virtual buffer id.
   BufferId getBufferId(Operation *op) const {
@@ -106,7 +106,7 @@ public:
       return scratchs.lookup(op)->id;
     if (virtuals.contains(op))
       return virtuals.lookup(op)->id;
-    return invalidId;
+    return INVALID_ID;
   }
 
   bool isExplicit(BufferId id) const {
@@ -119,7 +119,7 @@ public:
     return buffers.at(id).kind == Buffer::BufferKind::VIRTUAL;
   }
 
-  int64_t getAllocatedSize() const { return allocatedSize; }
+  uint64_t getAllocatedSize() const { return allocatedSize; }
 
 private:
   struct Buffer {
@@ -133,17 +133,18 @@ private:
 
     BufferKind kind;
     BufferId id;
-    int64_t size;
-    int64_t alignment;
-    int64_t offset;
+    uint64_t size;
+    uint64_t alignment;
+    uint64_t offset;
 
     Buffer() : Buffer(BufferKind::EXPLICIT, 0) {}
-    Buffer(BufferKind kind, int64_t size)
+
+    Buffer(BufferKind kind, uint64_t size)
         : kind(kind), id(nextId++), size(size), alignment(128), offset(0) {}
 
     bool operator==(const Buffer &other) const { return id == other.id; }
 
-    void setOffsetAligned(int64_t newOffset) {
+    void setOffsetAligned(uint64_t newOffset) {
       offset = llvm::alignTo(newOffset, alignment);
     }
   };
@@ -153,11 +154,11 @@ private:
   DenseMap<Operation *, Buffer *> scratchs;
   DenseMap<Operation *, Buffer *> virtuals;
   std::map<BufferId, Buffer> buffers;
-  int64_t allocatedSize = 0;
+  uint64_t allocatedSize = 0;
 
-  template <Buffer::BufferKind Kind, typename T, typename... Ts>
-  void addBuffer(T &key, Ts &&...args) {
-    auto buffer = Buffer(Kind, std::forward<Ts>(args)...);
+  template <Buffer::BufferKind Kind, typename KeyT>
+  void addBuffer(KeyT key, uint64_t size) {
+    auto buffer = Buffer(Kind, size);
     buffers[buffer.id] = std::move(buffer);
     if constexpr (Kind == Buffer::BufferKind::EXPLICIT)
       explicits[key] = &buffers[buffer.id];
@@ -167,13 +168,12 @@ private:
       virtuals[key] = &buffers[buffer.id];
   }
 
-  friend class AllocationAnalysis;
+  friend class AllocAnalysis;
 };
 
-class ModuleAllocationAnalysis : public CallGraph<Allocation> {
+class ModuleAllocAnalysis : public CallGraph<AllocInfo> {
 public:
-  explicit ModuleAllocationAnalysis(ModuleOp module)
-      : CallGraph<Allocation>(module) {
+  explicit ModuleAllocAnalysis(ModuleOp module) : CallGraph<AllocInfo>(module) {
     walk<WalkOrder::PreOrder, WalkOrder::PostOrder>(
         [](CallOpInterface caller, FunctionOpInterface callee) {},
         [&](FunctionOpInterface funcOp) {
@@ -183,12 +183,12 @@ public:
         });
   }
 
-  int64_t getAllocatedSize(FunctionOpInterface funcOp) {
+  uint64_t getAllocatedSize(FunctionOpInterface funcOp) {
     return getData(funcOp)->getAllocatedSize();
   }
 
-  int64_t getAllocatedSize() {
-    int64_t size = 0;
+  uint64_t getAllocatedSize() {
+    uint64_t size = 0;
     for (auto funcOp : getRoots())
       size = std::max(size, getAllocatedSize(funcOp));
     return size;
@@ -198,4 +198,4 @@ public:
 } // namespace kapy
 } // namespace mlir
 
-#endif // KAPY_ANALYSIS_ALLOCATION_H
+#endif // KAPY_ANALYSIS_ALLOCANALYSIS_H

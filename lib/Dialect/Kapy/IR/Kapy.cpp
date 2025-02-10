@@ -29,7 +29,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "kapy/Dialect/Kapy/IR/Kapy.h"
-#include "kapy/Dialect/Kapy/IR/Utils.h"
+#include "kapy/Support/CommonUtils.h"
 #include "mlir/IR/DialectImplementation.h"
 #include "mlir/Interfaces/FunctionImplementation.h"
 #include "mlir/Transforms/InliningUtils.h"
@@ -58,8 +58,8 @@ public:
 
   virtual AliasResult getAlias(Attribute attr,
                                llvm::raw_ostream &os) const override {
-    if (isa<GlobalMemLayoutAttr>(attr)) {
-      os << "glmem";
+    if (isa<Strided2dLayoutAttr>(attr)) {
+      os << "strided2d";
       return AliasResult::FinalAlias;
     }
     return OpAsmDialectInterface::getAlias(attr, os);
@@ -70,13 +70,15 @@ class KapyInlinerInterface : public DialectInlinerInterface {
 public:
   using DialectInlinerInterface::DialectInlinerInterface;
 
+  static constexpr char inlineAttrName[] = "inline";
+
   virtual bool isLegalToInline(Operation *caller, Operation *callee,
                                bool wouldBeCloned) const override {
     auto funcOp = dyn_cast<FuncOp>(callee);
     if (!funcOp)
       return true;
-    if (funcOp->hasAttr("noinline"))
-      return !funcOp->getAttrOfType<BoolAttr>("noinline").getValue();
+    if (funcOp->hasAttr(inlineAttrName))
+      return funcOp->getAttrOfType<BoolAttr>(inlineAttrName).getValue();
     return true;
   }
 
@@ -102,11 +104,11 @@ public:
   }
 
   virtual void handleTerminator(Operation *op,
-                                ValueRange values) const override {
+                                ValueRange valuesToReplace) const override {
     auto returnOp = cast<ReturnOp>(op);
-    assert(returnOp.getNumOperands() == values.size());
+    assert(returnOp.getNumOperands() == valuesToReplace.size());
     for (auto it : llvm::enumerate(returnOp.getOperands()))
-      values[it.index()].replaceAllUsesWith(it.value());
+      valuesToReplace[it.index()].replaceAllUsesWith(it.value());
   }
 };
 
@@ -134,9 +136,10 @@ Operation *KapyDialect::materializeConstant(OpBuilder &builder, Attribute value,
   return arith::ConstantOp::materialize(builder, value, type, loc);
 }
 
-Attribute GlobalMemLayoutAttr::parse(AsmParser &parser, Type type) {
+Attribute Strided2dLayoutAttr::parse(AsmParser &parser, Type type) {
   if (failed(parser.parseLess()))
     return Attribute();
+
   SmallVector<int64_t, 2> strides;
   auto parseStride = [&]() -> ParseResult {
     auto stride = ShapedType::kDynamic;
@@ -153,24 +156,28 @@ Attribute GlobalMemLayoutAttr::parse(AsmParser &parser, Type type) {
   if (failed(parser.parseCommaSeparatedList(AsmParser::Delimiter::Square,
                                             parseStride)))
     return Attribute();
+
   if (failed(parser.parseGreater()))
     return Attribute();
-  return parser.getChecked<GlobalMemLayoutAttr>(parser.getContext(), strides);
+
+  assert(strides.size() == 2);
+  return Strided2dLayoutAttr::get(parser.getContext(), strides[0], strides[1]);
 }
 
-void GlobalMemLayoutAttr::print(AsmPrinter &printer) const {
-  printer << "<[";
-  auto printStride = [&](int64_t stride) {
-    if (ShapedType::isDynamic(stride))
+void Strided2dLayoutAttr::print(AsmPrinter &printer) const {
+  auto printQuestionOrInt = [&](int64_t value) {
+    if (ShapedType::isDynamic(value))
       printer << "?";
     else
-      printer << stride;
+      printer << value;
   };
-  llvm::interleaveComma(getStrides(), printer, printStride);
+
+  printer << "<[";
+  llvm::interleaveComma(getStrides(), printer, printQuestionOrInt);
   printer << "]>";
 }
 
-AffineMap GlobalMemLayoutAttr::getMemRefMap() const {
+AffineMap Strided2dLayoutAttr::getAffineMap() const {
   auto resultExpr = getAffineConstantExpr(0, getContext());
   unsigned numDims = 0;
   unsigned numSyms = 0;
@@ -187,103 +194,58 @@ AffineMap GlobalMemLayoutAttr::getMemRefMap() const {
   return AffineMap::get(numDims, numSyms, resultExpr);
 }
 
-Type KapyMemRefType::parse(AsmParser &parser) {
+Type GlobalMemRefType::parse(AsmParser &parser) {
   if (failed(parser.parseLess()))
     return Type();
   SmallVector<int64_t, 2> shape;
-  if (failed(parser.parseDimensionList(shape, false)))
+  if (failed(parser.parseDimensionList(shape)))
     return Type();
   Type elementType;
   if (failed(parser.parseType(elementType)))
     return Type();
   Attribute layout;
-  if (succeeded(parser.parseOptionalComma())) {
-    if (parser.parseAttribute(layout))
+  if (succeeded(parser.parseOptionalComma()))
+    if (failed(parser.parseAttribute(layout)))
       return Type();
-  }
   if (failed(parser.parseGreater()))
     return Type();
-  return KapyMemRefType::get(shape, elementType, layout);
+  return GlobalMemRefType::get(shape, elementType, layout);
 }
 
-void KapyMemRefType::print(AsmPrinter &printer) const {
+void GlobalMemRefType::print(AsmPrinter &printer) const {
   printer << "<";
-  for (auto dim : getShape())
-    printer << dim << "x";
+  for (auto size : getShape()) {
+    if (ShapedType::isDynamic(size))
+      printer << "?";
+    else
+      printer << size;
+    printer << "x";
+  }
   printer << getElementType();
   if (getEncoding())
     printer << ", " << getEncoding();
   printer << ">";
 }
 
-LogicalResult FpToFpOp::verify() {
-  auto oldBitWidth = getIntOrFloatBitWidth(getOperand().getType());
+LogicalResult FPToFPOp::verify() {
+  if (isDownCast() && !getRoundingMode())
+    return emitOpError("rounding mode is required for down cast");
+  return success();
+}
+
+bool FPToFPOp::isUpCast() {
+  auto oldBitWidth = getIntOrFloatBitWidth(getSource().getType());
   auto newBitWidth = getIntOrFloatBitWidth(getType());
-  if (oldBitWidth > newBitWidth && !getRoundingMode())
-    return emitOpError("rounding mode is required for floating-point downcast");
-  return success();
+  return newBitWidth > oldBitWidth;
 }
 
-OpFoldResult ArangeOp::fold(FoldAdaptor adaptor) {
-  if (adaptor.getStart() + 1 == adaptor.getEnd())
-    return SplatElementsAttr::get(getType(), adaptor.getStartAttr());
-  return OpFoldResult();
+bool FPToFPOp::isDownCast() {
+  auto oldBitWidth = getIntOrFloatBitWidth(getSource().getType());
+  auto newBitWidth = getIntOrFloatBitWidth(getType());
+  return newBitWidth < oldBitWidth;
 }
 
-LogicalResult ArangeOp::verify() {
-  auto start = getStart();
-  auto end = getEnd();
-  if (start >= end)
-    return emitOpError("start must less than end");
-  auto shape = getType().getShape();
-  if (shape.size() != 1)
-    return emitOpError("result must be a 1d tensor");
-  if (end - start != shape[0])
-    return emitOpError("number of elements in result tensor is ")
-           << shape[0] << ", doesn't match size of range [" << start << ", "
-           << end << ")";
-  return success();
-}
-
-LogicalResult MakeMemRefOp::verify() {
-  auto resultType = getType();
-  if (resultType.getRank() != getParentShape().size())
-    return emitOpError(
-        "result rank must same as number of operands for parent shape");
-  if (resultType.getRank() != getStrides().size())
-    return emitOpError(
-        "result rank must same as number of operands for strides");
-  auto glmemLayout =
-      dyn_cast_if_present<GlobalMemLayoutAttr>(resultType.getEncoding());
-  if (!glmemLayout)
-    return emitOpError("result must have global memory layout");
-  if (resultType.getRank() != glmemLayout.getStrides().size())
-    return emitOpError("result rank must same as layout's strides size");
-  return success();
-}
-
-LogicalResult MoveMemRefOp::canonicalize(MoveMemRefOp op,
-                                         PatternRewriter &rewriter) {
-  auto constantOp = op.getOffset().getDefiningOp<arith::ConstantOp>();
-  if (!constantOp)
-    return failure();
-  auto intAttr = dyn_cast<IntegerAttr>(constantOp.getValue());
-  if (!intAttr)
-    return failure();
-  if (intAttr.getInt() == 0) {
-    op.replaceAllUsesWith(op.getSource());
-    return success();
-  }
-  return failure();
-}
-
-LogicalResult MoveMemRefOp::verify() {
-  if (!hasLayout<GlobalMemLayoutAttr>(getType()))
-    return emitOpError("source must have global memory layout");
-  return success();
-}
-
-void LoadOp::getEffects(
+void LoadGlobalOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
   effects.emplace_back(MemoryEffects::Read::get(), &getSourceMutable(),
@@ -293,140 +255,80 @@ void LoadOp::getEffects(
                          SideEffects::DefaultResource::get());
 }
 
-LogicalResult LoadOp::verify() {
-  auto sourceType = cast<KapyMemRefType>(getSource().getType());
-  if (!hasLayout<GlobalMemLayoutAttr>(sourceType))
-    return emitOpError("source must have global memory layout");
-  auto resultType = getType();
-  if (auto tensorType = dyn_cast<RankedTensorType>(resultType)) {
-    if (sourceType.getShape() != tensorType.getShape())
-      return emitOpError("source and result must have same shape");
-    if (sourceType.getElementType() != tensorType.getElementType())
-      return emitOpError("source and result must have same element type");
-  } else {
-    if (sourceType.getRank() != 0)
-      return emitOpError("source must have rank 0 when result is scalar");
-    if (sourceType.getElementType() != resultType)
-      return emitOpError("source element type must same as result type");
-  }
-  return success();
-}
-
-void StoreOp::getEffects(
+void StoreGlobalOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
   effects.emplace_back(MemoryEffects::Write::get(), &getTargetMutable(),
                        GlobalMemory::get());
 }
 
-LogicalResult StoreOp::verify() {
-  auto targetType = cast<KapyMemRefType>(getTarget().getType());
-  if (!hasLayout<GlobalMemLayoutAttr>(targetType))
-    return emitOpError("target must have global memory layout");
-  auto valueType = getValue().getType();
-  if (auto tensorType = dyn_cast<RankedTensorType>(valueType)) {
-    if (targetType.getShape() != tensorType.getShape())
-      return emitOpError("target and result must have same shape");
-    if (targetType.getElementType() != tensorType.getElementType())
-      return emitOpError("target and result must have same element type");
-  } else {
-    if (targetType.getRank() != 0)
-      return emitOpError("target must have rank 0 when value is scalar");
-    if (targetType.getElementType() != valueType)
-      return emitOpError("target element type must be same as value type");
-  }
-  return success();
-}
-
-void AtomicRMWOp::getEffects(
+void AtomicRMWGlobalOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
   effects.emplace_back(MemoryEffects::Read::get(), &getSourceMutable(),
                        GlobalMemory::get());
   effects.emplace_back(MemoryEffects::Write::get(), &getSourceMutable(),
                        GlobalMemory::get());
-}
-
-LogicalResult AtomicRMWOp::verify() {
-  auto sourceType = cast<KapyMemRefType>(getSource().getType());
-  if (!hasLayout<GlobalMemLayoutAttr>(sourceType))
-    return emitOpError("source must have global memory layout");
-  auto valueType = getValue().getType();
-  if (auto tensorType = dyn_cast<RankedTensorType>(valueType)) {
-    if (sourceType.getShape() != tensorType.getShape())
-      return emitOpError("source and value must have same shape");
-    if (sourceType.getElementType() != tensorType.getElementType())
-      return emitOpError("source and value must have same element type");
-  } else {
-    if (sourceType.getRank() != 0)
-      return emitOpError("source must have rank 0 when value is scalar");
-    if (sourceType.getElementType() != valueType)
-      return emitOpError("source element type must be same as value type");
-  }
-  return success();
-}
-
-void AtomicCASOp::getEffects(
-    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
-        &effects) {
-  effects.emplace_back(MemoryEffects::Read::get(), &getSourceMutable(),
-                       GlobalMemory::get());
-  effects.emplace_back(MemoryEffects::Write::get(), &getSourceMutable(),
-                       GlobalMemory::get());
-}
-
-LogicalResult AtomicCASOp::verify() {
-  auto sourceType = cast<KapyMemRefType>(getSource().getType());
-  if (!hasLayout<GlobalMemLayoutAttr>(sourceType))
-    return emitOpError("source must have global memory layout");
-  auto valueType = getValue().getType();
-  if (auto tensorType = dyn_cast<RankedTensorType>(valueType)) {
-    if (sourceType.getShape() != tensorType.getShape())
-      return emitOpError("source and value must have same shape");
-    if (sourceType.getElementType() != tensorType.getElementType())
-      return emitOpError("source and value must have same element type");
-  } else {
-    if (sourceType.getRank() != 0)
-      return emitOpError("source must have rank 0 when value is scalar");
-    if (sourceType.getElementType() != valueType)
-      return emitOpError("source element type must be same as value type");
-  }
-  return success();
 }
 
 LogicalResult MatmulOp::verify() {
-  if (getNumOperands() != 3)
-    return emitOpError("expected 3 operands");
-
   auto lhsType = getLhs().getType();
   auto rhsType = getRhs().getType();
-  auto accumType = getAccum().getType();
+  auto accType = getAcc().getType();
 
   if (lhsType.getElementTypeBitWidth() != rhsType.getElementTypeBitWidth())
-    return emitOpError("lhs and rhs must have same element bit-width");
+    return emitOpError("lhs and rhs must have same element bit width");
 
-  auto lhsRank = lhsType.getRank();
-  auto rhsRank = rhsType.getRank();
-  auto accumRank = accumType.getRank();
+  auto implWay = getMatmulImplWay();
+  auto lhsElementType = lhsType.getElementType();
+  auto rhsElementType = rhsType.getElementType();
+  auto accElementType = accType.getElementType();
+
+  if (!accElementType.isF16() && !accElementType.isF32())
+    return emitOpError("result must have f16 or f32 element type");
+
+  if (implWay == MatmulImplWay::FMA) {
+    if (lhsElementType != accElementType || rhsElementType != accElementType)
+      return emitOpError("fma operands and result must have same element type");
+  } else if (implWay == MatmulImplWay::MMA_M16N8K8_F16) {
+    if (!lhsElementType.isF16() && !lhsElementType.isBF16())
+      return emitOpError(
+          "mma_m16n8k8_f16 operands must have f16 or bf16 element type");
+    if (!rhsElementType.isF16() && !rhsElementType.isBF16())
+      return emitOpError(
+          "mma_m16n8k8_f16 operands must have f16 or bf16 element type");
+  } else if (implWay == MatmulImplWay::MMA_M16N8K16_F16) {
+    if (!lhsElementType.isF16() && !lhsElementType.isBF16())
+      return emitOpError(
+          "mma_m16n8k16_f16 operands must have f16 or bf16 element type");
+    if (!rhsElementType.isF16() && !rhsElementType.isBF16())
+      return emitOpError(
+          "mma_m16n8k16_f16 operands must have f16 or bf16 element type");
+  } else if (implWay == MatmulImplWay::MMA_M16N8K8_TF32) {
+    if (!lhsElementType.isF32() || !rhsElementType.isF32())
+      return emitOpError(
+          "mma_m16n8k8_tf32 operands must have f32 element type");
+  } else if (implWay == MatmulImplWay::MMA_M16N8K16_F8) {
+    if (!lhsElementType.isFloat8E4M3() && !lhsElementType.isFloat8E5M2())
+      return emitOpError(
+          "mma_m16n8k16_f8 operands must have f8E4M3 or f8E5M2 element type");
+    if (!rhsElementType.isFloat8E4M3() && !rhsElementType.isFloat8E5M2())
+      return emitOpError(
+          "mma_m16n8k16_f8 operands must have f8E4M3 or f8E5M2 element type");
+  }
+
   auto lhsShape = lhsType.getShape();
   auto rhsShape = rhsType.getShape();
-  auto accumShape = accumType.getShape();
-
-  if (accumRank != 2)
-    return emitOpError("operands must be 2d");
-  if (lhsRank != accumRank || rhsRank != accumRank)
-    return emitOpError("requires all operands to have same rank");
-
+  auto accShape = accType.getShape();
   if (lhsShape[1] != rhsShape[0])
-    return emitOpError("the second dimension of lhs must be equal to the first "
-                       "dimension of rhs");
-
-  if (accumShape[0] != lhsShape[0])
-    return emitOpError("the first dimension of accum must be equal to the "
-                       "first dimension of lhs");
-  if (accumShape[1] != rhsShape[1])
-    return emitOpError("the second dimension of accum must be equal to the "
-                       "second dimension of rhs");
+    return emitOpError("the number of columns of lhs must be equal to the "
+                       "number of rows of rhs");
+  if (accShape[0] != lhsShape[0])
+    return emitOpError(
+        "the number of rows of acc must be equal to the number of rows of lhs");
+  if (accShape[1] != rhsShape[1])
+    return emitOpError("the number of columns of acc must be equal to the "
+                       "number of columns of rhs");
 
   auto lhsLayout = lhsType.getEncoding();
   auto rhsLayout = rhsType.getEncoding();
@@ -439,9 +341,9 @@ LogicalResult MatmulOp::verify() {
 }
 
 ParseResult ReduceOp::parse(OpAsmParser &parser, OperationState &state) {
-  OpAsmParser::UnresolvedOperand unresolvedOpd;
-  Type operandType, resultType;
-  if (parser.parseOperand(unresolvedOpd) ||
+  OpAsmParser::UnresolvedOperand source;
+  Type sourceType, resultType;
+  if (parser.parseOperand(source) ||
       parser.parseOptionalAttrDict(state.attributes))
     return failure();
 
@@ -454,9 +356,9 @@ ParseResult ReduceOp::parse(OpAsmParser &parser, OperationState &state) {
   if (parser.parseRegion(*region, bodyArgs))
     return failure();
 
-  if (parser.parseColonType(operandType) || parser.parseArrow() ||
+  if (parser.parseColonType(sourceType) || parser.parseArrow() ||
       parser.parseType(resultType) ||
-      parser.resolveOperand(unresolvedOpd, operandType, state.operands))
+      parser.resolveOperand(source, sourceType, state.operands))
     return failure();
   state.addTypes(resultType);
 
@@ -464,7 +366,7 @@ ParseResult ReduceOp::parse(OpAsmParser &parser, OperationState &state) {
 }
 
 void ReduceOp::print(OpAsmPrinter &printer) {
-  printer << " " << getOperand();
+  printer << " " << getSource();
   printer.printOptionalAttrDict((*this)->getAttrs());
   printer << " lambda(";
   llvm::interleaveComma(getBody()->getArguments(), printer, [&](Value value) {
@@ -472,164 +374,92 @@ void ReduceOp::print(OpAsmPrinter &printer) {
   });
   printer << ") ";
   printer.printRegion(getRegion(), false);
-  printer << " : " << getOperand().getType() << " -> " << getType();
+  printer << " : " << getSource().getType() << " -> " << getType();
 }
 
 LogicalResult
 ReduceOp::inferReturnTypes(MLIRContext *context, std::optional<Location> loc,
                            ValueRange operands, DictionaryAttr attrs,
                            OpaqueProperties props, RegionRange regions,
-                           SmallVectorImpl<Type> &types) {
+                           SmallVectorImpl<Type> &returnTypes) {
   auto axis = props.as<Properties *>()->getAxis().getInt();
-  auto operandType = cast<RankedTensorType>(operands[0].getType());
-  auto elementType = operandType.getElementType();
-  auto shape = llvm::to_vector<4>(operandType.getShape());
-  shape.erase(shape.begin() + axis);
-  if (shape.empty()) {
-    types.push_back(elementType);
-    return success();
-  }
-  auto operandLayout = operandType.getEncoding();
-  if (!operandLayout) {
-    types.push_back(RankedTensorType::get(shape, elementType));
-    return success();
-  }
-  auto *interface = cast<KapyLayoutInterface>(&operandLayout.getDialect());
-  auto inferLayout = interface->inferReduceOpLayout(operandLayout, axis, loc);
-  if (failed(inferLayout))
-    return failure();
-  types.push_back(
-      RankedTensorType::get(shape, elementType, inferLayout.value()));
+  auto sourceType = cast<RankedTensorType>(operands[0].getType());
+  auto shape = llvm::to_vector<2>(sourceType.getShape());
+  if (axis < 0 || axis >= shape.size())
+    return emitOptionalError(loc, "invalid axis");
+  shape[axis] = 1;
+  returnTypes.push_back(RankedTensorType::get(
+      shape, sourceType.getElementType(), sourceType.getEncoding()));
   return success();
 }
 
 LogicalResult ReduceOp::verifyRegions() {
-  auto elementType = getOperand().getType().getElementType();
+  auto elementType = getSource().getType().getElementType();
   auto *body = getBody();
   if (body->getNumArguments() != 2)
-    return emitOpError("block must take 2 arguments");
+    return emitOpError("body must take 2 arguments");
 
   const auto &bodyArgTypes = body->getArgumentTypes();
   for (unsigned i = 0; i < 2; ++i)
     if (bodyArgTypes[i] != elementType)
-      return emitOpError("block argument ") << i << " type mismatch";
+      return emitOpError("body argument ") << i << " type mismatch";
 
-  auto *yieldOp = body->getTerminator();
-  if (yieldOp->getOperand(0).getType() != elementType)
-    return emitOpError("block terminator type mismatch");
+  auto returnOp = dyn_cast<ReturnOp>(body->getTerminator());
+  if (!returnOp)
+    return emitOpError("body must have a ")
+           << ReturnOp::getOperationName() << " as terminator";
+  if (returnOp.getNumOperands() != 1)
+    return emitOpError("body must return one value");
+  if (returnOp.getOperand(0).getType() != elementType)
+    return emitOpError("body return type mismatch");
 
   return success();
 }
 
 OpFoldResult SplatOp::fold(FoldAdaptor adaptor) {
-  if (auto operand = adaptor.getOperand())
-    return SplatElementsAttr::get(getType(), operand);
+  if (auto source = adaptor.getSource())
+    return SplatElementsAttr::get(getType(), source);
   return OpFoldResult();
-}
-
-LogicalResult
-UnsqueezeOp::inferReturnTypes(MLIRContext *context, std::optional<Location> loc,
-                              ValueRange operands, DictionaryAttr attrs,
-                              OpaqueProperties props, RegionRange regions,
-                              SmallVectorImpl<Type> &types) {
-  auto axis = props.as<Properties *>()->getAxis().getInt();
-  auto operandType = cast<RankedTensorType>(operands[0].getType());
-  auto elementType = operandType.getElementType();
-  auto shape = llvm::to_vector<4>(operandType.getShape());
-  shape.insert(shape.begin() + axis, 1);
-  auto operandLayout = operandType.getEncoding();
-  if (!operandLayout) {
-    types.push_back(RankedTensorType::get(shape, elementType));
-    return success();
-  }
-  auto *interface = cast<KapyLayoutInterface>(&operandLayout.getDialect());
-  auto inferLayout =
-      interface->inferUnsqueezeOpLayout(operandLayout, axis, loc);
-  if (failed(inferLayout))
-    return failure();
-  types.push_back(
-      RankedTensorType::get(shape, elementType, inferLayout.value()));
-  return success();
-}
-
-LogicalResult UnsqueezeOp::canonicalize(UnsqueezeOp op,
-                                        PatternRewriter &rewriter) {
-  auto defOp = op.getOperand().getDefiningOp();
-  if (!defOp)
-    return failure();
-  if (auto splatOp = dyn_cast<SplatOp>(defOp)) {
-    rewriter.replaceOpWithNewOp<SplatOp>(op, op.getType(),
-                                         splatOp.getOperand());
-    return success();
-  }
-  if (auto broadcastOp = dyn_cast<BroadcastOp>(defOp)) {
-    auto tmpOp = rewriter.create<UnsqueezeOp>(
-        op.getLoc(), broadcastOp.getOperand(), op.getAxis());
-    auto newOp =
-        rewriter.create<BroadcastOp>(broadcastOp.getLoc(), op.getType(), tmpOp);
-    rewriter.replaceOp(op, newOp);
-    return success();
-  }
-  return failure();
-}
-
-OpFoldResult UnsqueezeOp::fold(FoldAdaptor adaptor) {
-  auto operand = adaptor.getOperand();
-  if (auto splatAttr = dyn_cast_if_present<SplatElementsAttr>(operand))
-    return splatAttr.resizeSplat(cast<ShapedType>(getType()));
-  if (auto denseAttr = dyn_cast_if_present<DenseElementsAttr>(operand))
-    return denseAttr.reshape(cast<ShapedType>(getType()));
-  return OpFoldResult();
-}
-
-LogicalResult UnsqueezeOp::verify() {
-  auto axis = getAxis();
-  if (axis < 0 || axis > getOperand().getType().getRank())
-    return emitOpError("invalid axis");
-  return success();
 }
 
 LogicalResult BroadcastOp::canonicalize(BroadcastOp op,
                                         PatternRewriter &rewriter) {
-  auto operandType = op.getOperand().getType();
-  auto resultType = op.getType();
-  if (resultType == operandType) {
-    op.replaceAllUsesWith(op.getOperand());
+  if (op.getType() == op.getSource().getType()) {
+    op.replaceAllUsesWith(op.getSource());
     return success();
   }
-  auto *defOp = op.getOperand().getDefiningOp();
+  auto *defOp = op.getSource().getDefiningOp();
   if (!defOp)
     return failure();
   if (auto splatOp = dyn_cast<SplatOp>(defOp)) {
-    rewriter.replaceOpWithNewOp<SplatOp>(op, resultType, splatOp.getOperand());
+    rewriter.replaceOpWithNewOp<SplatOp>(op, op.getType(), splatOp.getSource());
     return success();
   }
   if (auto broadcastOp = dyn_cast<BroadcastOp>(defOp)) {
-    rewriter.replaceOpWithNewOp<BroadcastOp>(op, resultType,
-                                             broadcastOp.getOperand());
+    rewriter.replaceOpWithNewOp<BroadcastOp>(op, op.getType(),
+                                             broadcastOp.getSource());
     return success();
   }
   return failure();
 }
 
 OpFoldResult BroadcastOp::fold(FoldAdaptor adaptor) {
-  auto operand = adaptor.getOperand();
-  if (auto splatAttr = dyn_cast_if_present<SplatElementsAttr>(operand))
-    return splatAttr.resizeSplat(cast<ShapedType>(getType()));
+  auto source = adaptor.getSource();
+  if (auto splatAttr = dyn_cast_if_present<SplatElementsAttr>(source))
+    return splatAttr.resizeSplat(getType());
   return OpFoldResult();
 }
 
 LogicalResult BroadcastOp::verify() {
-  auto oldShape = getOperand().getType().getShape();
+  auto oldShape = getSource().getType().getShape();
   auto newShape = getType().getShape();
   if (oldShape.size() != newShape.size())
-    return emitOpError("operand and result must have same rank");
+    return emitOpError("source and result must have same rank");
   for (unsigned i = 0; i < oldShape.size(); ++i) {
     if (oldShape[i] == 1)
       continue;
     if (oldShape[i] != newShape[i])
-      return emitOpError(
-          "non-broadcast dimension of operand and result must be same");
+      return emitOpError("incompatible shape between source and result");
   }
   return success();
 }
@@ -638,53 +468,45 @@ LogicalResult
 TransposeOp::inferReturnTypes(MLIRContext *context, std::optional<Location> loc,
                               ValueRange operands, DictionaryAttr attrs,
                               OpaqueProperties props, RegionRange regions,
-                              SmallVectorImpl<Type> &types) {
-  auto operandType = cast<RankedTensorType>(operands[0].getType());
-  auto elementType = operandType.getElementType();
-  auto shape = transpose(operandType.getShape());
-  auto operandLayout = operandType.getEncoding();
-  if (!operandLayout) {
-    types.push_back(RankedTensorType::get(shape, elementType));
+                              SmallVectorImpl<Type> &returnTypes) {
+  auto sourceType = cast<RankedTensorType>(operands[0].getType());
+  if (sourceType.getRank() != 2)
+    return emitOptionalError(loc, "source must have rank 2");
+  auto shape = transpose(sourceType.getShape());
+  auto sourceLayout = sourceType.getEncoding();
+  if (!sourceLayout) {
+    returnTypes.push_back(
+        RankedTensorType::get(shape, sourceType.getElementType()));
     return success();
   }
-  auto *interface = cast<KapyLayoutInterface>(&operandLayout.getDialect());
-  auto inferLayout = interface->inferTransposeOpLayout(operandLayout, loc);
-  if (failed(inferLayout))
-    return failure();
-  types.push_back(
-      RankedTensorType::get(shape, elementType, inferLayout.value()));
+  auto *interface = cast<KapyLayoutInterface>(&sourceLayout.getDialect());
+  auto resultLayout = interface->inferTransposeOpLayout(sourceLayout);
+  returnTypes.push_back(
+      RankedTensorType::get(shape, sourceType.getElementType(), resultLayout));
   return success();
 }
 
 LogicalResult TransposeOp::canonicalize(TransposeOp op,
                                         PatternRewriter &rewriter) {
-  auto *defOp = op.getOperand().getDefiningOp();
+  auto *defOp = op.getSource().getDefiningOp();
   if (!defOp)
     return failure();
-  if (auto splatOp = dyn_cast<SplatOp>(defOp)) {
-    rewriter.replaceOpWithNewOp<SplatOp>(op, op.getType(),
-                                         splatOp.getOperand());
+  if (auto transposeOp = dyn_cast<TransposeOp>(defOp)) {
+    op.replaceAllUsesWith(transposeOp.getSource());
     return success();
   }
-  if (auto transposeOp = dyn_cast<TransposeOp>(defOp)) {
-    op.replaceAllUsesWith(transposeOp.getOperand());
+  if (auto splatOp = dyn_cast<SplatOp>(defOp)) {
+    rewriter.replaceOpWithNewOp<SplatOp>(op, op.getType(), splatOp.getSource());
     return success();
   }
   return failure();
 }
 
 OpFoldResult TransposeOp::fold(FoldAdaptor adaptor) {
-  auto operand = adaptor.getOperand();
-  if (auto splatAttr = dyn_cast_if_present<SplatElementsAttr>(operand))
-    return splatAttr.resizeSplat(cast<ShapedType>(getType()));
+  auto source = adaptor.getSource();
+  if (auto splatAttr = dyn_cast_if_present<SplatElementsAttr>(source))
+    return splatAttr.resizeSplat(getType());
   return OpFoldResult();
-}
-
-LogicalResult TransposeOp::verify() {
-  auto operandType = getOperand().getType();
-  if (operandType.getRank() != 2)
-    return emitOpError("operand must have rank 2");
-  return success();
 }
 
 void ElementwiseExternOp::getEffects(
@@ -707,19 +529,6 @@ void ElementwiseInlineOp::getEffects(
                        SideEffects::DefaultResource::get());
   effects.emplace_back(MemoryEffects::Write::get(),
                        SideEffects::DefaultResource::get());
-}
-
-LogicalResult ElementwiseInlineOp::verify() {
-  if (getNumOperands() >= 1) {
-    auto tensorType = dyn_cast<RankedTensorType>(getOperand(0).getType());
-    auto numElements = tensorType ? tensorType.getNumElements() : 0;
-    if (numElements % this->getNumPackedValues() != 0)
-      return emitOpError("number of elements")
-             << numElements
-             << "must be a multiple of the attribute num_packed_values = "
-             << getNumPackedValues();
-  }
-  return success();
 }
 
 void FuncOp::build(OpBuilder &builder, OperationState &state, StringRef name,
@@ -784,7 +593,9 @@ LogicalResult CallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 }
 
 LogicalResult ReturnOp::verify() {
-  auto funcOp = cast<FuncOp>((*this)->getParentOp());
+  auto funcOp = dyn_cast<FuncOp>((*this)->getParentOp());
+  if (!funcOp)
+    return success();
   auto results = funcOp.getFunctionType().getResults();
   if (getNumOperands() != results.size())
     return emitOpError("has incorrect number of operands");
@@ -795,38 +606,39 @@ LogicalResult ReturnOp::verify() {
 }
 
 unsigned kapy::getIntOrFloatBitWidth(Type type) {
-  if (auto tensorType = dyn_cast<RankedTensorType>(type))
-    return tensorType.getElementTypeBitWidth();
-  if (auto memrefType = dyn_cast<KapyMemRefType>(type))
-    return memrefType.getElementTypeBitWidth();
+  if (auto shapedType = dyn_cast<ShapedType>(type))
+    return shapedType.getElementTypeBitWidth();
   return type.getIntOrFloatBitWidth();
 }
 
-RankedTensorType kapy::cloneWith(RankedTensorType tensorType,
-                                 Type elementType) {
-  return RankedTensorType::get(tensorType.getShape(), elementType,
-                               tensorType.getEncoding());
+bool kapy::isGlobalMemoryRead(Operation *op) {
+  auto effectOp = dyn_cast<MemoryEffectOpInterface>(op);
+  if (!effectOp)
+    return false;
+  SmallVector<SideEffects::EffectInstance<MemoryEffects::Effect>> effects;
+  effectOp.getEffects(effects);
+  for (auto &effect : effects)
+    if (isa<MemoryEffects::Read>(effect.getEffect()) &&
+        effect.getResource() == GlobalMemory::get())
+      return true;
+  return false;
 }
 
-RankedTensorType kapy::cloneWith(RankedTensorType tensorType,
-                                 Attribute layout) {
-  return RankedTensorType::get(tensorType.getShape(),
-                               tensorType.getElementType(), layout);
+bool kapy::isGlobalMemoryWrite(Operation *op) {
+  auto effectOp = dyn_cast<MemoryEffectOpInterface>(op);
+  if (!effectOp)
+    return false;
+  SmallVector<SideEffects::EffectInstance<MemoryEffects::Effect>> effects;
+  effectOp.getEffects(effects);
+  for (auto &effect : effects)
+    if (isa<MemoryEffects::Write>(effect.getEffect()) &&
+        effect.getResource() == GlobalMemory::get())
+      return true;
+  return false;
 }
 
-KapyMemRefType kapy::cloneWith(KapyMemRefType memrefType, Type elementType) {
-  return KapyMemRefType::get(memrefType.getShape(), elementType,
-                             memrefType.getEncoding());
-}
-
-KapyMemRefType kapy::cloneWith(KapyMemRefType memrefType, Attribute layout) {
-  return KapyMemRefType::get(memrefType.getShape(), memrefType.getElementType(),
-                             layout);
-}
-
-int64_t kapy::getAlignment(OpOperand *memref) {
-  auto *op = memref->getOwner();
+unsigned kapy::getAlignment(Operation *op) {
   if (!op->hasAttr(alignmentAttrName))
-    llvm_unreachable("alignment of this memref has not been analyzed yet");
-  return cast<IntegerAttr>(op->getDiscardableAttr(alignmentAttrName)).getInt();
+    llvm_unreachable("can not get a named attribute");
+  return cast<IntegerAttr>(op->getAttr(alignmentAttrName)).getInt();
 }

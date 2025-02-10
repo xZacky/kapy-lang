@@ -54,6 +54,7 @@
 namespace mlir {
 namespace kapy {
 
+/// This class representes the global memory resource.
 class GlobalMemory : public SideEffects::Resource::Base<GlobalMemory> {
 public:
   virtual StringRef getName() override { return "<GlobalMemory>"; }
@@ -63,41 +64,26 @@ class KapyLayoutInterface : public DialectInterface::Base<KapyLayoutInterface> {
 public:
   KapyLayoutInterface(Dialect *dialect) : Base(dialect) {}
 
-  virtual FailureOr<Attribute>
-  inferReduceOpLayout(Attribute operandLayout, unsigned axis,
-                      std::optional<Location> loc) const = 0;
+  virtual Attribute inferTransposeOpLayout(Attribute sourceLayout) const = 0;
 
-  virtual FailureOr<Attribute>
-  inferUnsqueezeOpLayout(Attribute operandLayout, unsigned axis,
-                         std::optional<Location> loc) const = 0;
-
-  virtual FailureOr<Attribute>
-  inferTransposeOpLayout(Attribute operandLayout,
-                         std::optional<Location> loc) const = 0;
-
-  virtual LogicalResult verifyMatmulOpLayouts(MatmulOp op) const = 0;
+  virtual LogicalResult verifyMatmulOpLayouts(MatmulOp matmulOp) const = 0;
 };
 
+/// Get the integer or floating-point bit width for the given Type, if it is a
+/// ShapedType, get its element bit width.
 unsigned getIntOrFloatBitWidth(Type type);
 
-RankedTensorType cloneWith(RankedTensorType tensorType, Type elementType);
-RankedTensorType cloneWith(RankedTensorType tensorType, Attribute layout);
+/// Return true if this operation is global memory read.
+bool isGlobalMemoryRead(Operation *op);
 
-KapyMemRefType cloneWith(KapyMemRefType memrefType, Type elementType);
-KapyMemRefType cloneWith(KapyMemRefType memrefType, Attribute layout);
-
-template <typename LayoutT> bool hasLayout(RankedTensorType tensorType) {
-  auto layout = tensorType.getEncoding();
-  return layout && isa<LayoutT>(layout);
-}
-template <typename LayoutT> bool hasLayout(KapyMemRefType memrefType) {
-  auto layout = memrefType.getEncoding();
-  return layout && isa<LayoutT>(layout);
-}
+/// Return true if this operation is global memory write.
+bool isGlobalMemoryWrite(Operation *op);
 
 constexpr char alignmentAttrName[] = "kapy.alignment";
 
-int64_t getAlignment(OpOperand *memref);
+/// Get the alignemnt of the given memory access operation, this should be used
+/// after running KapyAnalyzeAlignmentPass.
+unsigned getAlignment(Operation *op);
 
 } // namespace kapy
 } // namespace mlir

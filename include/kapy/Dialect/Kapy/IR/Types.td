@@ -40,42 +40,21 @@ class Kapy_TypeDef<string name, string keyword, list<Trait> traits = []>
 }
 
 def Kapy_Int : AnyTypeOf<[I1, I8, I16, I32, I64], "integer">;
-def Kapy_IntTensor : RankedTensorOf<[Kapy_Int]>;
-def Kapy_IntLike : AnyTypeOf<[Kapy_Int, Kapy_IntTensor]>;
+def Kapy_IntLike : AnyTypeOf<[Kapy_Int, RankedTensorOf<[Kapy_Int]>]>;
 
-def Kapy_I32Tensor : RankedTensorOf<[I32]>;
-def Kapy_I32Like : AnyTypeOf<[I32, Kapy_I32Tensor]>;
+def Kapy_Float : AnyTypeOf<
+    [F8E4M3FNUZ, F8E5M2FNUZ, F8E5M2, F16, BF16, F32, F64], "floating-point">;
+def Kapy_FloatLike : AnyTypeOf<[Kapy_Float, RankedTensorOf<[Kapy_Float]>]>;
 
-def Kapy_Fp : AnyTypeOf<
-  [F8E4M3FNUZ, F8E5M2, F8E5M2FNUZ, F16, BF16, F32, F64], "floating-point"
->;
-def Kapy_FpTensor : RankedTensorOf<[Kapy_Fp]>;
-def Kapy_FpLike : AnyTypeOf<[Kapy_Fp, Kapy_FpTensor]>;
+def Kapy_Number : AnyTypeOf<[Kapy_Int, Kapy_Float]>;
+def Kapy_NumberLike : AnyTypeOf<[Kapy_Number, RankedTensorOf<[Kapy_Number]>]>;
 
-def Kapy_IntFp : AnyTypeOf<[Kapy_Int, Kapy_Fp]>;
-def Kapy_IntFpTensor : RankedTensorOf<[Kapy_IntFp]>;
-def Kapy_IntFpLike : AnyTypeOf<[Kapy_IntFp, Kapy_IntFpTensor]>;
+def Kapy_Tensor : RankedTensorOf<[Kapy_Number]>;
 
-def Kapy_PointerType : Kapy_TypeDef<"KapyPointer", "ptr"> {
-  let parameters = (ins "unsigned":$addressSpace);
+def GlobalMemRefType
+    : Kapy_TypeDef<"GlobalMemRef", "global", [ShapedTypeInterface]> {
+  let summary = "global memref (memory reference) type";
 
-  let skipDefaultBuilders = 1;
-  let builders = [
-    TypeBuilder<(ins "unsigned":$space), "return $_get($_ctxt, space);">
-  ];
-
-  let assemblyFormat = "`<` $addressSpace `>`";
-}
-
-def Kapy_Ptr : DialectType<
-  Kapy_Dialect,
-  CPred<"isa<KapyPointerType>($_self)">,
-  "pointer",
-  "KapyPointerType"
->;
-
-def Kapy_MemRefType
-    : Kapy_TypeDef<"KapyMemRef", "memref", [ShapedTypeInterface]> {
   let parameters = (ins
     ArrayRefParameter<"int64_t">:$shape,
     "Type":$elementType,
@@ -96,30 +75,29 @@ def Kapy_MemRefType
   let hasCustomAssemblyFormat = 1;
 
   let extraClassDeclaration = [{
-    KapyMemRefType
+    GlobalMemRefType
     cloneWith(std::optional<ArrayRef<int64_t>> shape, Type elementType) const {
-      return KapyMemRefType::get(
-          shape.value_or(getShape()), elementType, getEncoding());
+      return get(shape.value_or(getShape()), elementType, getEncoding());
     }
 
     bool hasRank() const { return true; }
   }];
 }
 
-class Kapy_MemRefOf<list<Type> types> : DialectType<
+class GlobalMemRefOf<list<Type> types> : DialectType<
   Kapy_Dialect,
   And<
     [
-      CPred<"isa<KapyMemRefType>($_self)">,
+      CPred<"isa<GlobalMemRefType>($_self)">,
       Concat<"[](Type elementType) { return ",
              SubstLeaves<"$_self", "elementType", AnyTypeOf<types>.predicate>,
-             "; }(cast<KapyMemRefType>($_self).getElementType())">
+             "; }(cast<GlobalMemRefType>($_self).getElementType())">
     ]
   >,
-  "memref",
-  "KapyMemRefType"
+  "global memref",
+  "GlobalMemRefType"
 >;
 
-def Kapy_IntFpMemRef : Kapy_MemRefOf<[Kapy_IntFp]>;
+def Kapy_Global : GlobalMemRefOf<[Kapy_Number]>;
 
 #endif // KAPY_DIALECT_KAPY_IR_TYPES

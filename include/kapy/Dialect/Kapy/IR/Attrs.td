@@ -1,6 +1,6 @@
 //===- Attrs.td --------------------------------------------*- tablegen -*-===//
 //
-// This file defines the attributes used by the Kapy dialect.
+// This file defines the attributes used by the KapyDialect.
 //
 //===----------------------------------------------------------------------===//
 
@@ -14,16 +14,20 @@ class Kapy_AttrDef<string name, string keyword, list<Trait> traits = []>
   let attrName = "kapy." # keyword;
 }
 
-def Kapy_GlobalMemLayoutAttr : Kapy_AttrDef<"GlobalMemLayout", "glmem"> {
-  let mnemonic = "glmem";
-  let parameters = (ins ArrayRefParameter<"int64_t">:$strides);
+def Strided2dLayoutAttr : Kapy_AttrDef<"Strided2dLayout", "strided2d"> {
+  let summary = "strided 2d memory layout";
+
+  let mnemonic = "strided2d";
+  let parameters = (ins "int64_t":$stride0, "int64_t":$stride1);
 
   let hasCustomAssemblyFormat = 1;
 
   let extraClassDeclaration = [{
-    /// Get an AffineMap from memref indices to the relative offset from the
-    /// first element of this memref. Use symbols for dynamic strides.
-    AffineMap getMemRefMap() const;
+    SmallVector<int64_t, 2> getStrides() const {
+      return {getStride0(), getStride1()};
+    }
+
+    AffineMap getAffineMap() const;
   }];
 }
 
