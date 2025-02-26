@@ -30,7 +30,7 @@
 
 #include "kapy/Dialect/Kapy/IR/Kapy.h"
 #include "kapy/Support/CommonUtils.h"
-#include "mlir/IR/DialectImplementation.h"
+#include "mlir/IR//DialectImplementation.h"
 #include "mlir/Interfaces/FunctionImplementation.h"
 #include "mlir/Transforms/InliningUtils.h"
 #include "llvm/ADT/TypeSwitch.h"
@@ -49,6 +49,8 @@ using namespace mlir::kapy;
 
 #define GET_OP_CLASSES
 #include "kapy/Dialect/Kapy/IR/Ops.cpp.inc"
+
+static constexpr char inlineableAttrName[] = "inlineable";
 
 namespace {
 
@@ -70,15 +72,13 @@ class KapyInlinerInterface : public DialectInlinerInterface {
 public:
   using DialectInlinerInterface::DialectInlinerInterface;
 
-  static constexpr char inlineAttrName[] = "inline";
-
   virtual bool isLegalToInline(Operation *caller, Operation *callee,
                                bool wouldBeCloned) const override {
     auto funcOp = dyn_cast<FuncOp>(callee);
     if (!funcOp)
       return true;
-    if (funcOp->hasAttr(inlineAttrName))
-      return funcOp->getAttrOfType<BoolAttr>(inlineAttrName).getValue();
+    if (funcOp->hasAttr(inlineableAttrName))
+      return funcOp->getAttrOfType<BoolAttr>(inlineableAttrName).getValue();
     return true;
   }
 
@@ -138,7 +138,7 @@ Operation *KapyDialect::materializeConstant(OpBuilder &builder, Attribute value,
 
 Attribute Strided2dLayoutAttr::parse(AsmParser &parser, Type type) {
   if (failed(parser.parseLess()))
-    return Attribute();
+    return nullptr;
 
   SmallVector<int64_t, 2> strides;
   auto parseStride = [&]() -> ParseResult {
@@ -155,10 +155,10 @@ Attribute Strided2dLayoutAttr::parse(AsmParser &parser, Type type) {
   };
   if (failed(parser.parseCommaSeparatedList(AsmParser::Delimiter::Square,
                                             parseStride)))
-    return Attribute();
+    return nullptr;
 
   if (failed(parser.parseGreater()))
-    return Attribute();
+    return nullptr;
 
   assert(strides.size() == 2);
   return Strided2dLayoutAttr::get(parser.getContext(), strides[0], strides[1]);
@@ -173,42 +173,44 @@ void Strided2dLayoutAttr::print(AsmPrinter &printer) const {
   };
 
   printer << "<[";
-  llvm::interleaveComma(getStrides(), printer, printQuestionOrInt);
+  printQuestionOrInt(getStrideX());
+  printer << ", ";
+  printQuestionOrInt(getStrideY());
   printer << "]>";
 }
 
 AffineMap Strided2dLayoutAttr::getAffineMap() const {
-  auto resultExpr = getAffineConstantExpr(0, getContext());
+  auto result = getAffineConstantExpr(0, getContext());
   unsigned numDims = 0;
   unsigned numSyms = 0;
-  for (auto stride : getStrides()) {
-    auto dimExpr = getAffineDimExpr(numDims++, getContext());
+  for (auto stride : {getStrideX(), getStrideY()}) {
+    auto dim = getAffineDimExpr(numDims++, getContext());
     if (ShapedType::isDynamic(stride)) {
-      auto symExpr = getAffineSymbolExpr(numSyms++, getContext());
-      resultExpr = resultExpr + dimExpr * symExpr;
+      auto coeff = getAffineSymbolExpr(numSyms++, getContext());
+      result = result + dim * coeff;
     } else {
-      auto intExpr = getAffineConstantExpr(stride, getContext());
-      resultExpr = resultExpr + dimExpr * intExpr;
+      auto coeff = getAffineConstantExpr(stride, getContext());
+      result = result + dim * coeff;
     }
   }
-  return AffineMap::get(numDims, numSyms, resultExpr);
+  return AffineMap::get(numDims, numSyms, result);
 }
 
 Type GlobalMemRefType::parse(AsmParser &parser) {
   if (failed(parser.parseLess()))
-    return Type();
+    return nullptr;
   SmallVector<int64_t, 2> shape;
   if (failed(parser.parseDimensionList(shape)))
-    return Type();
+    return nullptr;
   Type elementType;
   if (failed(parser.parseType(elementType)))
-    return Type();
+    return nullptr;
   Attribute layout;
   if (succeeded(parser.parseOptionalComma()))
     if (failed(parser.parseAttribute(layout)))
-      return Type();
+      return nullptr;
   if (failed(parser.parseGreater()))
-    return Type();
+    return nullptr;
   return GlobalMemRefType::get(shape, elementType, layout);
 }
 
@@ -221,6 +223,34 @@ void GlobalMemRefType::print(AsmPrinter &printer) const {
       printer << size;
     printer << "x";
   }
+  printer << getElementType();
+  if (getEncoding())
+    printer << ", " << getEncoding();
+  printer << ">";
+}
+
+Type SharedMemRefType::parse(AsmParser &parser) {
+  if (failed(parser.parseLess()))
+    return nullptr;
+  SmallVector<int64_t, 2> shape;
+  if (failed(parser.parseDimensionList(shape, false)))
+    return nullptr;
+  Type elementType;
+  if (failed(parser.parseType(elementType)))
+    return nullptr;
+  Attribute layout;
+  if (succeeded(parser.parseOptionalComma()))
+    if (failed(parser.parseAttribute(layout)))
+      return nullptr;
+  if (failed(parser.parseGreater()))
+    return nullptr;
+  return SharedMemRefType::get(shape, elementType, layout);
+}
+
+void SharedMemRefType::print(AsmPrinter &printer) const {
+  printer << "<";
+  for (auto size : getShape())
+    printer << size << "x";
   printer << getElementType();
   if (getEncoding())
     printer << ", " << getEncoding();
@@ -245,17 +275,17 @@ bool FPToFPOp::isDownCast() {
   return newBitWidth < oldBitWidth;
 }
 
-void LoadGlobalOp::getEffects(
+void LdGlobalOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
   effects.emplace_back(MemoryEffects::Read::get(), &getSourceMutable(),
                        GlobalMemory::get());
-  if (getIsVolatile())
+  if (isVolatile())
     effects.emplace_back(MemoryEffects::Write::get(),
                          SideEffects::DefaultResource::get());
 }
 
-void StoreGlobalOp::getEffects(
+void StGlobalOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
   effects.emplace_back(MemoryEffects::Write::get(), &getTargetMutable(),
@@ -271,64 +301,166 @@ void AtomicRMWGlobalOp::getEffects(
                        GlobalMemory::get());
 }
 
+void MkSharedOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  if (std::distance(getResult().use_begin(), getResult().use_end()) == 0)
+    return;
+  effects.emplace_back(MemoryEffects::Allocate::get(), SharedMemory::get());
+}
+
+void LdSharedOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(), &getSourceMutable(),
+                       SharedMemory::get());
+}
+
+void StSharedOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Write::get(), &getTargetMutable(),
+                       SharedMemory::get());
+}
+
+void CpAsyncGlobalToSharedOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(), &getSourceMutable(),
+                       GlobalMemory::get());
+  effects.emplace_back(MemoryEffects::Write::get(), &getTargetMutable(),
+                       SharedMemory::get());
+}
+
+void WarpIdOp::inferResultRanges(ArrayRef<ConstantIntRanges> argRanges,
+                                 SetIntRangeFn setResultRange) {
+  auto numWarps = getNumWarps((*this)->getParentOfType<ModuleOp>());
+  auto minAPInt = APInt(32, 0);
+  auto maxAPInt = APInt(32, numWarps - 1);
+  auto intRange = ConstantIntRanges::range(minAPInt, maxAPInt, false);
+  setResultRange(getResult(), intRange);
+}
+
+OpFoldResult ArangeOp::fold(FoldAdaptor adaptor) {
+  if (adaptor.getStart() + 1 == adaptor.getEnd())
+    return SplatElementsAttr::get(getType(), adaptor.getStartAttr());
+  return nullptr;
+}
+
+LogicalResult ArangeOp::verify() {
+  auto start = getStart();
+  auto end = getEnd();
+  if (start >= end)
+    return emitOpError("start must smaller than end");
+  auto axis = getAxis();
+  auto shape = getType().getShape();
+  if (axis == 0 && shape[1] != 1)
+    return emitOpError("result must be a column vector");
+  if (axis == 1 && shape[0] != 1)
+    return emitOpError("result must be a row vector");
+  if (end - start != shape[axis])
+    return emitOpError("number of elements in result is incorrect");
+  return success();
+}
+
 LogicalResult MatmulOp::verify() {
   auto lhsType = getLhs().getType();
   auto rhsType = getRhs().getType();
   auto accType = getAcc().getType();
 
+  auto lhsShape = lhsType.getShape();
+  auto rhsShape = rhsType.getShape();
+  auto accShape = accType.getShape();
+  if (lhsShape[1] != rhsShape[0])
+    return emitOpError(
+        "number of columns of lhs must be equal to number of rows of rhs");
+  if (accShape[0] != lhsShape[0])
+    return emitOpError(
+        "number of rows of acc must be equal to number of rows of lhs");
+  if (accShape[1] != rhsShape[1])
+    return emitOpError(
+        "number of columns of acc must be equal to number of columns of rhs");
+
   if (lhsType.getElementTypeBitWidth() != rhsType.getElementTypeBitWidth())
     return emitOpError("lhs and rhs must have same element bit width");
 
-  auto implWay = getMatmulImplWay();
   auto lhsElementType = lhsType.getElementType();
   auto rhsElementType = rhsType.getElementType();
   auto accElementType = accType.getElementType();
 
+  // TODO: Support more.
   if (!accElementType.isF16() && !accElementType.isF32())
     return emitOpError("result must have f16 or f32 element type");
 
-  if (implWay == MatmulImplWay::FMA) {
+  switch (getMatmulImplWay()) {
+  case (MatmulImplWay::FMA): {
     if (lhsElementType != accElementType || rhsElementType != accElementType)
       return emitOpError("fma operands and result must have same element type");
-  } else if (implWay == MatmulImplWay::MMA_M16N8K8_F16) {
+    break;
+  }
+
+  case (MatmulImplWay::MMA_M16N8K8_F16): {
     if (!lhsElementType.isF16() && !lhsElementType.isBF16())
       return emitOpError(
           "mma_m16n8k8_f16 operands must have f16 or bf16 element type");
     if (!rhsElementType.isF16() && !rhsElementType.isBF16())
       return emitOpError(
           "mma_m16n8k8_f16 operands must have f16 or bf16 element type");
-  } else if (implWay == MatmulImplWay::MMA_M16N8K16_F16) {
+    if (accShape[0] < 16 || accShape[1] < 8)
+      return emitOpError("mma_m16n8k8_f16 acc is at least 16x8");
+    if (lhsShape[0] < 16 || lhsShape[1] < 8)
+      return emitOpError("mma_m16n8k8_f16 lhs is at least 16x8");
+    if (rhsShape[0] < 8 || rhsShape[1] < 8)
+      return emitOpError("mma_m16n8k8_f16 rhs is at least 8x8");
+    break;
+  }
+
+  case (MatmulImplWay::MMA_M16N8K16_F16): {
     if (!lhsElementType.isF16() && !lhsElementType.isBF16())
       return emitOpError(
           "mma_m16n8k16_f16 operands must have f16 or bf16 element type");
     if (!rhsElementType.isF16() && !rhsElementType.isBF16())
       return emitOpError(
           "mma_m16n8k16_f16 operands must have f16 or bf16 element type");
-  } else if (implWay == MatmulImplWay::MMA_M16N8K8_TF32) {
+    if (accShape[0] < 16 || accShape[1] < 8)
+      return emitOpError("mma_m16n8k16_f16 acc is at least 16x8");
+    if (lhsShape[0] < 16 || lhsShape[1] < 16)
+      return emitOpError("mma_m16n8k16_f16 lhs is at least 16x16");
+    if (rhsShape[0] < 16 || rhsShape[1] < 8)
+      return emitOpError("mma_m16n8k16_f16 rhs is at least 16x8");
+    break;
+  }
+
+  case (MatmulImplWay::MMA_M16N8K8_TF32): {
     if (!lhsElementType.isF32() || !rhsElementType.isF32())
       return emitOpError(
           "mma_m16n8k8_tf32 operands must have f32 element type");
-  } else if (implWay == MatmulImplWay::MMA_M16N8K16_F8) {
+
+    if (accShape[0] < 16 || accShape[1] < 8)
+      return emitOpError("mma_m16n8k8_tf32 acc is at least 16x8");
+    if (lhsShape[0] < 16 || lhsShape[1] < 8)
+      return emitOpError("mma_m16n8k8_tf32 lhs is at least 16x8");
+    if (rhsShape[0] < 8 || rhsShape[1] < 8)
+      return emitOpError("mma_m16n8k8_tf32 rhs is at least 8x8");
+    break;
+  }
+
+  case (MatmulImplWay::MMA_M16N8K16_F8): {
     if (!lhsElementType.isFloat8E4M3() && !lhsElementType.isFloat8E5M2())
       return emitOpError(
           "mma_m16n8k16_f8 operands must have f8E4M3 or f8E5M2 element type");
     if (!rhsElementType.isFloat8E4M3() && !rhsElementType.isFloat8E5M2())
       return emitOpError(
           "mma_m16n8k16_f8 operands must have f8E4M3 or f8E5M2 element type");
+    if (accShape[0] < 16 || accShape[1] < 8)
+      return emitOpError("mma_m16n8k16_f8 acc is at least 16x8");
+    if (lhsShape[0] < 16 || lhsShape[1] < 16)
+      return emitOpError("mma_m16n8k16_f8 lhs is at least 16x16");
+    if (rhsShape[0] < 16 || rhsShape[1] < 8)
+      return emitOpError("mma_m16n8k16_f8 rhs is at least 16x8");
+    break;
   }
-
-  auto lhsShape = lhsType.getShape();
-  auto rhsShape = rhsType.getShape();
-  auto accShape = accType.getShape();
-  if (lhsShape[1] != rhsShape[0])
-    return emitOpError("the number of columns of lhs must be equal to the "
-                       "number of rows of rhs");
-  if (accShape[0] != lhsShape[0])
-    return emitOpError(
-        "the number of rows of acc must be equal to the number of rows of lhs");
-  if (accShape[1] != rhsShape[1])
-    return emitOpError("the number of columns of acc must be equal to the "
-                       "number of columns of rhs");
+  }
 
   auto lhsLayout = lhsType.getEncoding();
   auto rhsLayout = rhsType.getEncoding();
@@ -419,7 +551,7 @@ LogicalResult ReduceOp::verifyRegions() {
 OpFoldResult SplatOp::fold(FoldAdaptor adaptor) {
   if (auto source = adaptor.getSource())
     return SplatElementsAttr::get(getType(), source);
-  return OpFoldResult();
+  return nullptr;
 }
 
 LogicalResult BroadcastOp::canonicalize(BroadcastOp op,
@@ -431,13 +563,13 @@ LogicalResult BroadcastOp::canonicalize(BroadcastOp op,
   auto *defOp = op.getSource().getDefiningOp();
   if (!defOp)
     return failure();
-  if (auto splatOp = dyn_cast<SplatOp>(defOp)) {
-    rewriter.replaceOpWithNewOp<SplatOp>(op, op.getType(), splatOp.getSource());
-    return success();
-  }
   if (auto broadcastOp = dyn_cast<BroadcastOp>(defOp)) {
     rewriter.replaceOpWithNewOp<BroadcastOp>(op, op.getType(),
                                              broadcastOp.getSource());
+    return success();
+  }
+  if (auto splatOp = dyn_cast<SplatOp>(defOp)) {
+    rewriter.replaceOpWithNewOp<SplatOp>(op, op.getType(), splatOp.getSource());
     return success();
   }
   return failure();
@@ -447,7 +579,7 @@ OpFoldResult BroadcastOp::fold(FoldAdaptor adaptor) {
   auto source = adaptor.getSource();
   if (auto splatAttr = dyn_cast_if_present<SplatElementsAttr>(source))
     return splatAttr.resizeSplat(getType());
-  return OpFoldResult();
+  return nullptr;
 }
 
 LogicalResult BroadcastOp::verify() {
@@ -506,13 +638,13 @@ OpFoldResult TransposeOp::fold(FoldAdaptor adaptor) {
   auto source = adaptor.getSource();
   if (auto splatAttr = dyn_cast_if_present<SplatElementsAttr>(source))
     return splatAttr.resizeSplat(getType());
-  return OpFoldResult();
+  return nullptr;
 }
 
-void ElementwiseExternOp::getEffects(
+void ElementwiseExternLibOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
-  if (getIsPure())
+  if (isPure())
     return;
   effects.emplace_back(MemoryEffects::Read::get(),
                        SideEffects::DefaultResource::get());
@@ -520,10 +652,10 @@ void ElementwiseExternOp::getEffects(
                        SideEffects::DefaultResource::get());
 }
 
-void ElementwiseInlineOp::getEffects(
+void ElementwiseInlineAsmOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
-  if (getIsPure())
+  if (isPure())
     return;
   effects.emplace_back(MemoryEffects::Read::get(),
                        SideEffects::DefaultResource::get());
@@ -532,20 +664,21 @@ void ElementwiseInlineOp::getEffects(
 }
 
 void FuncOp::build(OpBuilder &builder, OperationState &state, StringRef name,
-                   FunctionType type, ArrayRef<NamedAttribute> attrs,
+                   FunctionType funcType, bool inlineable,
                    ArrayRef<DictionaryAttr> argAttrs) {
   state.addAttribute(SymbolTable::getSymbolAttrName(),
                      builder.getStringAttr(name));
-  state.addAttribute(getFunctionTypeAttrName(state.name), TypeAttr::get(type));
-  state.attributes.append(attrs.begin(), attrs.end());
+  state.addAttribute(getFunctionTypeAttrName(state.name),
+                     TypeAttr::get(funcType));
+  state.addAttribute(inlineableAttrName, builder.getBoolAttr(inlineable));
   state.addRegion();
 
-  if (argAttrs.empty())
-    return;
-  assert(type.getNumInputs() == argAttrs.size());
-  function_interface_impl::addArgAndResultAttrs(
-      builder, state, argAttrs, {}, getArgAttrsAttrName(state.name),
-      getResAttrsAttrName(state.name));
+  if (!argAttrs.empty()) {
+    assert(funcType.getNumInputs() == argAttrs.size());
+    function_interface_impl::addArgAndResultAttrs(
+        builder, state, argAttrs, {}, getArgAttrsAttrName(state.name),
+        getResAttrsAttrName(state.name));
+  }
 }
 
 ParseResult FuncOp::parse(OpAsmParser &parser, OperationState &state) {
@@ -611,34 +744,82 @@ unsigned kapy::getIntOrFloatBitWidth(Type type) {
   return type.getIntOrFloatBitWidth();
 }
 
-bool kapy::isGlobalMemoryRead(Operation *op) {
-  auto effectOp = dyn_cast<MemoryEffectOpInterface>(op);
-  if (!effectOp)
-    return false;
-  SmallVector<SideEffects::EffectInstance<MemoryEffects::Effect>> effects;
-  effectOp.getEffects(effects);
-  for (auto &effect : effects)
-    if (isa<MemoryEffects::Read>(effect.getEffect()) &&
-        effect.getResource() == GlobalMemory::get())
-      return true;
-  return false;
+int64_t kapy::getNvidiaCC(ModuleOp module) {
+  if (!module->hasAttr(nvidiaCCAttrName))
+    llvm_unreachable("can not get a named attribute");
+  return cast<IntegerAttr>(module->getAttr(nvidiaCCAttrName)).getInt();
 }
 
-bool kapy::isGlobalMemoryWrite(Operation *op) {
-  auto effectOp = dyn_cast<MemoryEffectOpInterface>(op);
-  if (!effectOp)
-    return false;
-  SmallVector<SideEffects::EffectInstance<MemoryEffects::Effect>> effects;
-  effectOp.getEffects(effects);
-  for (auto &effect : effects)
-    if (isa<MemoryEffects::Write>(effect.getEffect()) &&
-        effect.getResource() == GlobalMemory::get())
-      return true;
-  return false;
+int64_t kapy::getNumWarps(ModuleOp module) {
+  if (!module->hasAttr(numWarpsAttrName))
+    llvm_unreachable("can not get a named attribute");
+  return cast<IntegerAttr>(module->getAttr(numWarpsAttrName)).getInt();
 }
 
-unsigned kapy::getAlignment(Operation *op) {
+int64_t kapy::getAlignment(Operation *op) {
   if (!op->hasAttr(alignmentAttrName))
     llvm_unreachable("can not get a named attribute");
   return cast<IntegerAttr>(op->getAttr(alignmentAttrName)).getInt();
+}
+
+static bool thereAreMoreElementsThanLanes(Operation *op, Value value) {
+  return cast<GlobalMemRefType>(value.getType()).getNumElements() > warpSize;
+}
+
+bool kapy::isExpensiveGlobalRead(Operation *op) {
+  auto effectOp = dyn_cast<MemoryEffectOpInterface>(op);
+  if (!effectOp)
+    return false;
+  SmallVector<SideEffects::EffectInstance<MemoryEffects::Effect>> effects;
+  effectOp.getEffects(effects);
+  for (auto &effect : effects)
+    if (effect.getResource() == GlobalMemory::get() &&
+        isa<MemoryEffects::Read>(effect.getEffect()) &&
+        thereAreMoreElementsThanLanes(op, effect.getValue()))
+      return true;
+  return false;
+}
+
+bool kapy::isExpensiveGlobalWrite(Operation *op) {
+  auto effectOp = dyn_cast<MemoryEffectOpInterface>(op);
+  if (!effectOp)
+    return false;
+  SmallVector<SideEffects::EffectInstance<MemoryEffects::Effect>> effects;
+  effectOp.getEffects(effects);
+  for (auto &effect : effects)
+    if (effect.getResource() == GlobalMemory::get() &&
+        isa<MemoryEffects::Write>(effect.getEffect()) &&
+        thereAreMoreElementsThanLanes(op, effect.getValue()))
+      return true;
+  return false;
+}
+
+bool kapy::isExpensiveSharedRead(Operation *op) {
+  auto effectOp = dyn_cast<MemoryEffectOpInterface>(op);
+  if (!effectOp)
+    return false;
+  SmallVector<SideEffects::EffectInstance<MemoryEffects::Effect>> effects;
+  effectOp.getEffects(effects);
+  for (auto &effect : effects)
+    if (effect.getResource() == SharedMemory::get() &&
+        isa<MemoryEffects::Read>(effect.getEffect()) &&
+        thereAreMoreElementsThanLanes(op, effect.getValue()))
+      return true;
+  return false;
+}
+
+bool kapy::isExpensiveSharedWrite(Operation *op) {
+  if (isa<CpAsyncGlobalToSharedOp>(op))
+    return false;
+  auto effectOp = dyn_cast<MemoryEffectOpInterface>(op);
+  if (!effectOp)
+    return false;
+  SmallVector<SideEffects::EffectInstance<MemoryEffects::Effect>> effects;
+  effectOp.getEffects(effects);
+  for (auto &effect : effects)
+    if (effect.getResource() == SharedMemory::get() &&
+        isa<MemoryEffects::Write>(effect.getEffect()) &&
+        thereAreMoreElementsThanLanes(op, effect.getValue()))
+      return true;
+  return false;
 }

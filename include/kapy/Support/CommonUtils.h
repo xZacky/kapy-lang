@@ -8,6 +8,7 @@
 #define KAPY_SUPPORT_COMMON_UTILS_H
 
 #include "mlir/IR/AffineExpr.h"
+#include "mlir/Support/LLVM.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include <numeric>
@@ -20,10 +21,16 @@ template <typename T> T ceilDiv(T a, T b) {
   return (a + b - 1) / b;
 }
 
+template <typename T> T summation(ArrayRef<T> array) {
+  static_assert(std::is_integral_v<T>);
+  return std::accumulate(array.begin(), array.end(), 0, std::plus());
+}
+template <typename ArrayT> auto summation(const ArrayT &array) {
+  return summation(ArrayRef(array));
+}
+
 template <typename T> T product(ArrayRef<T> array) {
   static_assert(std::is_integral_v<T>);
-  if (array.empty())
-    return 1;
   return std::accumulate(array.begin(), array.end(), 1, std::multiplies());
 }
 template <typename ArrayT> auto product(const ArrayT &array) {
@@ -41,87 +48,84 @@ template <typename ArrayT> auto transpose(const ArrayT &array) {
   return transpose(ArrayRef(array));
 }
 
-template <unsigned N = 2, typename T>
-SmallVector<T, N> computeStrides(ArrayRef<T> shape) {
+template <typename T> SmallVector<T> getStrides(ArrayRef<T> shape) {
   static_assert(std::is_integral_v<T>);
-  auto rank = shape.size();
-  SmallVector<T, N> strides(rank, 1);
-  for (unsigned i = 0; i < rank; ++i)
-    for (unsigned j = i + 1; j < rank; ++j)
+  SmallVector<T> strides(shape.size(), 1);
+  for (unsigned i = 0; i < shape.size(); ++i)
+    for (unsigned j = i + 1; j < shape.size(); ++j)
       strides[i] *= shape[j];
   return strides;
 }
-template <unsigned N = 2, typename ArrayT>
-auto computeStrides(const ArrayT &shape) {
-  return computeStrides<N>(ArrayRef(shape));
+template <typename ArrayT> auto getStrides(const ArrayT &shape) {
+  return getStrides(ArrayRef(shape));
 }
 
-template <unsigned N = 2, typename T, typename U>
-T linearize(ArrayRef<T> coords, ArrayRef<U> shape) {
+template <typename T, typename U>
+T linearize(ArrayRef<T> indices, ArrayRef<U> shape) {
   static_assert(std::is_integral_v<T> && std::is_integral_v<U>);
-  auto strides = computeStrides<N>(shape);
-  auto rank = shape.size();
-  T linear = 0;
-  for (unsigned i = 0; i < rank; ++i)
-    linear += coords[i] * strides[i];
-  return linear;
+  auto strides = getStrides(shape);
+  T index = 0;
+  for (unsigned i = 0; i < shape.size(); ++i)
+    index += indices[i] * strides[i];
+  return index;
 }
-template <unsigned N = 2, typename ArrayT, typename ArrayU>
-auto linearize(const ArrayT &coords, const ArrayU &shape) {
-  return linearize<N>(ArrayRef(coords), ArrayRef(shape));
+template <typename ArrayT, typename ArrayU>
+auto linearize(const ArrayT &indices, const ArrayU &shape) {
+  return linearize(ArrayRef(indices), ArrayRef(shape));
 }
 
-template <unsigned N = 2, typename T>
-SmallVector<T, N> delinearize(T linear, ArrayRef<T> shape) {
+template <typename T> SmallVector<T> delinearize(T index, ArrayRef<T> shape) {
   static_assert(std::is_integral_v<T>);
-  auto strides = computeStrides<N>(shape);
-  auto rank = shape.size();
-  SmallVector<T, N> coords(rank, linear);
-  for (unsigned i = 0; i < rank; ++i) {
+  auto strides = getStrides(shape);
+  SmallVector<T> indices(shape.size(), index);
+  for (unsigned i = 0; i < shape.size(); ++i) {
     if (i != 0)
-      coords[i] %= strides[i - 1];
-    if (i != rank - 1)
-      coords[i] /= strides[i];
+      indices[i] %= strides[i - 1];
+    if (i != shape.size() - 1)
+      indices[i] /= strides[i];
   }
-  return coords;
+  return indices;
 }
-template <unsigned N = 2, typename T, typename ArrayT>
-auto delinearize(T linear, const ArrayT &shape) {
-  return delinearize<N>(linear, ArrayRef(shape));
-}
-
-template <unsigned N = 2, typename T>
-AffineExpr linearize(ArrayRef<AffineExpr> coords, ArrayRef<T> shape) {
-  static_assert(std::is_integral_v<T>);
-  auto strides = computeStrides<N>(shape);
-  auto rank = shape.size();
-  auto linear = getAffineConstantExpr(0, coords.begin()->getContext());
-  for (unsigned i = 0; i < rank; ++i)
-    linear = linear + coords[i] * strides[i];
-  return linear;
-}
-template <unsigned N = 2, typename ArrayT>
-auto linearize(ArrayRef<AffineExpr> coords, const ArrayT &shape) {
-  return linearize<N>(coords, ArrayRef(shape));
+template <typename T, typename ArrayT>
+auto delinearize(T index, const ArrayT &shape) {
+  return delinearize(index, ArrayRef(shape));
 }
 
-template <unsigned N = 2, typename T>
-SmallVector<AffineExpr, N> delinearize(AffineExpr linear, ArrayRef<T> shape) {
+template <typename T>
+AffineExpr linearize(ArrayRef<AffineExpr> indices, ArrayRef<T> shape) {
   static_assert(std::is_integral_v<T>);
-  auto strides = computeStrides<N>(shape);
-  auto rank = shape.size();
-  SmallVector<AffineExpr, N> coords(rank, linear);
-  for (unsigned i = 0; i < rank; ++i) {
+  auto strides = getStrides(shape);
+  auto index = getAffineConstantExpr(0, indices.begin()->getContext());
+  for (unsigned i = 0; i < shape.size(); ++i)
+    index = index + indices[i] * strides[i];
+  return index;
+}
+template <typename ArrayT>
+auto linearize(ArrayRef<AffineExpr> indices, const ArrayT &shape) {
+  return linearize(indices, ArrayRef(shape));
+}
+
+template <typename T>
+SmallVector<AffineExpr> delinearize(AffineExpr index, ArrayRef<T> shape) {
+  static_assert(std::is_integral_v<T>);
+  auto strides = getStrides(shape);
+  SmallVector<AffineExpr> indices(shape.size(), index);
+  for (unsigned i = 0; i < shape.size(); ++i) {
     if (i != 0)
-      coords[i] = coords[i] % strides[i - 1];
-    if (i != rank - 1)
-      coords[i] = coords[i].floorDiv(strides[i]);
+      indices[i] = indices[i] % strides[i - 1];
+    if (i != shape.size() - 1)
+      indices[i] = indices[i].floorDiv(strides[i]);
   }
-  return coords;
+  return indices;
 }
-template <unsigned N = 2, typename ArrayT>
-auto delinearize(AffineExpr linear, const ArrayT &shape) {
-  return delinearize<N>(linear, ArrayRef(shape));
+template <typename ArrayT>
+auto delinearize(AffineExpr index, const ArrayT &shape) {
+  return delinearize(index, ArrayRef(shape));
+}
+
+template <typename T> T getSizeInBytes(T numElements, T bitWidth) {
+  static_assert(std::is_integral_v<T>);
+  return numElements * ceilDiv<T>(bitWidth, 8);
 }
 
 } // namespace kapy

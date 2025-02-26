@@ -94,26 +94,6 @@ def Kapy_MemSemanticAttr : Kapy_EnumAttr<
   ]
 >;
 
-def Kapy_MemoryScopeAttr : Kapy_EnumAttr<
-  "MemoryScope",
-  "memory synchronization scope",
-  [
-    I32EnumAttrCase<"CTA", 1, "cta">,
-    I32EnumAttrCase<"GPU", 2, "gpu">,
-    I32EnumAttrCase<"SYS", 3, "sys">
-  ]
->;
-
-def Kapy_ProgramAxisAttr : Kapy_EnumAttr<
-  "ProgramAxis",
-  "program grid axis",
-  [
-    I32EnumAttrCase<"X", 0, "x">,
-    I32EnumAttrCase<"Y", 1, "y">,
-    I32EnumAttrCase<"Z", 2, "z">
-  ]
->;
-
 def Kapy_RoundingModeAttr : Kapy_EnumAttr<
   "RoundingMode",
   "rounding mode for floating-point cast instructions",

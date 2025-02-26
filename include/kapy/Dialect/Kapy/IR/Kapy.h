@@ -54,10 +54,22 @@
 namespace mlir {
 namespace kapy {
 
-/// This class representes the global memory resource.
+constexpr char nvidiaCCAttrName[] = "kapy.nvidia_cc";
+constexpr char numWarpsAttrName[] = "kapy.num_warps";
+
+constexpr int64_t warpSize = 32;
+constexpr int64_t quadSize = 8;
+
+constexpr char alignmentAttrName[] = "kapy.alignment";
+
 class GlobalMemory : public SideEffects::Resource::Base<GlobalMemory> {
 public:
   virtual StringRef getName() override { return "<GlobalMemory>"; }
+};
+
+class SharedMemory : public SideEffects::Resource::Base<SharedMemory> {
+public:
+  virtual StringRef getName() override { return "<SharedMemory>"; }
 };
 
 class KapyLayoutInterface : public DialectInterface::Base<KapyLayoutInterface> {
@@ -73,17 +85,27 @@ public:
 /// ShapedType, get its element bit width.
 unsigned getIntOrFloatBitWidth(Type type);
 
-/// Return true if this operation is global memory read.
-bool isGlobalMemoryRead(Operation *op);
+/// Get nvidia compute capability from module attributes.
+int64_t getNvidiaCC(ModuleOp module);
 
-/// Return true if this operation is global memory write.
-bool isGlobalMemoryWrite(Operation *op);
+/// Get number of warps from module attributes.
+int64_t getNumWarps(ModuleOp module);
 
-constexpr char alignmentAttrName[] = "kapy.alignment";
+/// Get the alignemnt of the given memory access operation, should be used after
+/// running KapyAnalyzeAlignmentPass.
+int64_t getAlignment(Operation *op);
 
-/// Get the alignemnt of the given memory access operation, this should be used
-/// after running KapyAnalyzeAlignmentPass.
-unsigned getAlignment(Operation *op);
+/// Return true if this operation is expensive global memory read.
+bool isExpensiveGlobalRead(Operation *op);
+
+/// Return true if this operation is expensive global memory write.
+bool isExpensiveGlobalWrite(Operation *op);
+
+/// Return true if this operation is expensive shared memory read.
+bool isExpensiveSharedRead(Operation *op);
+
+/// Return true if this operation is expensive shared memory write.
+bool isExpensiveSharedWrite(Operation *op);
 
 } // namespace kapy
 } // namespace mlir

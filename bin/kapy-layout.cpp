@@ -35,8 +35,6 @@ static cl::opt<std::string> TensorStr("t",                       //
 LogicalResult printImpl(RankedTensorType tensorType, llvm::raw_ostream &os) {
   auto dialectName = tensorType.getEncoding().getDialect().getNamespace();
   if (dialectName == "kgpu") {
-    auto layout = cast<kapy::FragmentsLayoutAttr>(tensorType.getEncoding());
-    os << layout.getAffineMap(tensorType.getShape()) << "\n";
     os << kapy::getTensorLayoutString(tensorType);
     return success();
   }

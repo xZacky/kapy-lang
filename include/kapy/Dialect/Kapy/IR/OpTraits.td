@@ -35,7 +35,7 @@ include "mlir/IR/OpBase.td"
 
 // Tensor in kapy can only be 2d (have rank 2), besides, the number of elements
 // should be power of 2.
-def ValidTensorShape : NativeOpTrait<"ValidTensorShape">;
+def ValidShape : NativeOpTrait<"ValidShape">;
 
 // Operations with this trait requires all its operands have same layout.
 def SameOperandsLayout : NativeOpTrait<"SameOperandsLayout">;

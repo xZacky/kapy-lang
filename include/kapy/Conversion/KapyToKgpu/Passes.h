@@ -1,4 +1,4 @@
-//===- TestIntegerAnalysis.cpp ----------------------------------*- C++ -*-===//
+//===- Passes.h -------------------------------------------------*- C++ -*-===//
 //
 // Copyright 2018-2020 Philippe Tillet
 // Copyright 2020-2022 OpenAI
@@ -28,58 +28,18 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "kapy/Analysis/IntegerAnalysis.h"
-#include "kapy/Dialect/Kapy/IR/Kapy.h"
+#ifndef KAPY_CONVERSION_KAPYTOKGPU_PASSES_H
+#define KAPY_CONVERSION_KAPYTOKGPU_PASSES_H
+
 #include "mlir/Pass/Pass.h"
 
-using namespace mlir;
-using namespace mlir::kapy;
-
-namespace {
-
-class TestIntegerAnalysisPass
-    : public PassWrapper<TestIntegerAnalysisPass, OperationPass<ModuleOp>> {
-public:
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(TestIntegerAnalysisPass);
-
-  virtual StringRef getArgument() const override {
-    return "test-integer-analysis";
-  }
-
-  virtual void runOnOperation() override {
-    auto &os = llvm::outs();
-    auto module = getOperation();
-    ModuleIntegerAnalysis analysis(module);
-    module.walk([&](FuncOp funcOp) {
-      auto funcName = SymbolTable::getSymbolName(funcOp).getValue();
-      os << "@" << funcName << "\n";
-      funcOp.walk([&](Operation *op) {
-        if (op->getNumResults() < 1)
-          return;
-        for (auto result : op->getResults()) {
-          if (!result.getType().isInteger())
-            continue;
-          auto *info = analysis.getIntegerInfo(result);
-          if (!info || info->isEntryState())
-            continue;
-          result.print(os);
-          os << " // ";
-          info->print(os);
-          os << "\n";
-        }
-      });
-    });
-  }
-};
-
-} // namespace
-
 namespace mlir {
-namespace test {
+namespace kapy {
 
-void registerTestIntegerAnalysisPass() {
-  PassRegistration<TestIntegerAnalysisPass>();
-}
+std::unique_ptr<Pass> createConvertKapyToKgpuPass();
+void registerConvertKapyToKgpuPass();
 
-} // namespace test
+} // namespace kapy
 } // namespace mlir
+
+#endif // KAPY_CONVERSION_KAPYTOKGPU_PASSES_H

@@ -1,7 +1,7 @@
 add_mlir_library(KapyAnalysis
+  AlignAnalysis.cpp
   AllocAnalysis.cpp
   AnalysisUtils.cpp
-  IntegerAnalysis.cpp
   LayoutUtils.cpp
   OpHelpers.cpp
 

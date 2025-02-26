@@ -29,9 +29,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "kapy/Analysis/AllocAnalysis.h"
-#include "kapy/Analysis/OpHelpers.h"
 #include "kapy/Dialect/Kapy/IR/Kapy.h"
-#include "kapy/Dialect/Kgpu/IR/Kgpu.h"
 #include "kapy/Support/CommonUtils.h"
 #include "mlir/Analysis/Liveness.h"
 
@@ -46,7 +44,7 @@ public:
   void run(DenseMap<FunctionOpInterface, AllocInfo> &funcToInfo) {
     addBuffers(funcToInfo);
     resolveLiveness();
-    computeAndAllocate();
+    computeAndAlloc();
   }
 
 private:
@@ -65,7 +63,7 @@ private:
   // while considering interference.
   // Paper: Algorithms for Compile-time Memory Optimization
   // https://dl.acm.org/doi/pdf/10.5555/314500.315082
-  void computeAndAllocate();
+  void computeAndAlloc();
 };
 
 } // namespace kapy
@@ -81,22 +79,13 @@ void AllocInfo::run(DenseMap<FunctionOpInterface, AllocInfo> &funcToInfo) {
 void AllocAnalysis::addBuffers(
     DenseMap<FunctionOpInterface, AllocInfo> &funcToInfo) {
   funcOp->walk<WalkOrder::PreOrder>([&](Operation *op) {
-    if (auto allocOp = dyn_cast<AllocSharedOp>(op)) {
-      auto sharedType = allocOp.getType();
+    if (auto mkSharedOp = dyn_cast<MkSharedOp>(op)) {
+      auto sharedType = mkSharedOp.getType();
+      auto numElems = sharedType.getNumElements();
       auto bitWidth = getIntOrFloatBitWidth(sharedType);
-      auto size = sharedType.getNumElements() * ceilDiv<unsigned>(bitWidth, 8);
-      auto result = allocOp.getResult();
+      auto size = getSizeInBytes<uint64_t>(numElems, bitWidth);
+      auto result = mkSharedOp.getResult();
       info->addBuffer<Buffer::BufferKind::EXPLICIT>(result, size);
-    } else if (auto reduceOp = dyn_cast<ReduceOp>(op)) {
-      ReduceOpHelper helper(reduceOp);
-      auto size = helper.getScratchSizeInBytes();
-      if (size > 0)
-        info->addBuffer<Buffer::BufferKind::SCRATCH>(op, size);
-    } else if (auto changeOp = dyn_cast<ChangeOp>(op)) {
-      ChangeOpHelper helper(changeOp);
-      auto size = helper.getScratchSizeInBytes();
-      if (size > 0)
-        info->addBuffer<Buffer::BufferKind::SCRATCH>(op, size);
     } else if (auto callOp = dyn_cast<CallOpInterface>(op)) {
       auto *callable = callOp.resolveCallable();
       auto funcOp = dyn_cast_if_present<FunctionOpInterface>(callable);
@@ -146,18 +135,17 @@ void AllocAnalysis::resolveLiveness() {
   for (auto [value, buffer] : info->explicits)
     bufferToLiveness[buffer] = getLiveness(value);
 
-  // Analyze liveness of scratch and virtual buffers.
-  auto processBuffers = [&](const DenseMap<Operation *, Buffer *> &buffers) {
-    for (auto [op, buffer] : buffers) {
+  // Analyze liveness of virtual buffers.
+  auto processVirtuals = [&](const DenseMap<Operation *, Buffer *> &virtuals) {
+    for (auto [op, buffer] : virtuals) {
       auto id = opToId.lookup(op);
       bufferToLiveness.insert({buffer, Interval(id, id + 1)});
     }
   };
-  processBuffers(info->scratchs);
-  processBuffers(info->virtuals);
+  processVirtuals(info->virtuals);
 }
 
-void AllocAnalysis::computeAndAllocate() {
+void AllocAnalysis::computeAndAlloc() {
   SmallVector<Buffer *> buffers;
   for (auto *buffer : llvm::make_first_range(bufferToLiveness))
     buffers.push_back(buffer);
@@ -189,7 +177,7 @@ void AllocAnalysis::computeAndAllocate() {
   };
 
   // Try to allocate shared memory while considering interference.
-  auto tryToAllocate = [&]() {
+  auto tryToAlloc = [&]() {
     // Reset allocated size.
     info->allocatedSize = 0;
     // First-fit graph coloring.
@@ -236,7 +224,7 @@ void AllocAnalysis::computeAndAllocate() {
   // Keep reducing conflicts until reach a fixed point.
   buildGraph();
   do {
-    tryToAllocate();
+    tryToAlloc();
     buildGraph();
   } while (!graph.empty());
 }

@@ -100,10 +100,8 @@ public:
       return explicits.lookup(value)->id;
     return INVALID_ID;
   }
-  /// This method only return the scratch or virtual buffer id.
+  /// This method only return the virtual buffer id.
   BufferId getBufferId(Operation *op) const {
-    if (scratchs.contains(op))
-      return scratchs.lookup(op)->id;
     if (virtuals.contains(op))
       return virtuals.lookup(op)->id;
     return INVALID_ID;
@@ -111,9 +109,6 @@ public:
 
   bool isExplicit(BufferId id) const {
     return buffers.at(id).kind == Buffer::BufferKind::EXPLICIT;
-  }
-  bool isScratch(BufferId id) const {
-    return buffers.at(id).kind == Buffer::BufferKind::SCRATCH;
   }
   bool isVirtual(BufferId id) const {
     return buffers.at(id).kind == Buffer::BufferKind::VIRTUAL;
@@ -123,10 +118,9 @@ public:
 
 private:
   struct Buffer {
-    // EXPLICIT: LocalAllocOp
-    // SCRATCH: ReduceOp, ChangeOp
+    // EXPLICIT: MkSharedOp
     // VIRTUAL: CallOp
-    enum class BufferKind { EXPLICIT, SCRATCH, VIRTUAL };
+    enum class BufferKind { EXPLICIT, VIRTUAL };
 
     // MT: thread safe
     inline static std::atomic<BufferId> nextId = 0;
@@ -151,7 +145,6 @@ private:
 
   FunctionOpInterface funcOp;
   llvm::MapVector<Value, Buffer *> explicits;
-  DenseMap<Operation *, Buffer *> scratchs;
   DenseMap<Operation *, Buffer *> virtuals;
   std::map<BufferId, Buffer> buffers;
   uint64_t allocatedSize = 0;
@@ -162,9 +155,7 @@ private:
     buffers[buffer.id] = std::move(buffer);
     if constexpr (Kind == Buffer::BufferKind::EXPLICIT)
       explicits[key] = &buffers[buffer.id];
-    else if constexpr (Kind == Buffer::BufferKind::SCRATCH)
-      scratchs[key] = &buffers[buffer.id];
-    else if constexpr (Kind == Buffer::BufferKind::VIRTUAL)
+    if constexpr (Kind == Buffer::BufferKind::VIRTUAL)
       virtuals[key] = &buffers[buffer.id];
   }
 

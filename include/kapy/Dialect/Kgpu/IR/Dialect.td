@@ -42,7 +42,6 @@ def Kgpu_Dialect : Dialect {
   let dependentDialects = ["kapy::KapyDialect"];
 
   let useDefaultAttributePrinterParser = 1;
-  let useDefaultTypePrinterParser = 1;
 }
 
 #endif // KAPY_DIALECT_KGPU_IR_DIALECT

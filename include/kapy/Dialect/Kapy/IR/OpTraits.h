@@ -37,29 +37,20 @@ namespace mlir {
 namespace OpTrait {
 namespace impl {
 
-/// The rationale for this trait is to prevent users from creating programs
-/// that would have catastorphic register pressure and cause the compiler to
-/// hang.
-/// Since H100 has 256KB registers, we should allow users to create tensors
-/// of size up to 256K elements. It will spill for data types wider than 1B,
-/// but we probably should limit number of elements (rather than bytes) to
-/// keep specs simple.
-constexpr int64_t maxElements = 1048576;
-
 /// These functions are out-of-line implementations of the methods in the
 /// corresponding trait calsses. This avoids them being template
 /// instantiated/duplicated.
-LogicalResult verifyValidTensorShape(Operation *op);
+LogicalResult verifyValidShape(Operation *op);
 LogicalResult verifySameOperandsLayout(Operation *op);
 LogicalResult verifySameOperandsAndResultLayout(Operation *op);
 
 } // namespace impl
 
 template <typename ConcreteT>
-class ValidTensorShape : public TraitBase<ConcreteT, ValidTensorShape> {
+class ValidShape : public TraitBase<ConcreteT, ValidShape> {
 public:
   static LogicalResult verifyTrait(Operation *op) {
-    return impl::verifyValidTensorShape(op);
+    return impl::verifyValidShape(op);
   }
 };
 

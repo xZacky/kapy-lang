@@ -1,4 +1,4 @@
-//===- TestAllocAnalysis.cpp ------------------------------------*- C++ -*-===//
+//===- TestAlignAnalysis.cpp ------------------------------------*- C++ -*-===//
 //
 // Copyright 2018-2020 Philippe Tillet
 // Copyright 2020-2022 OpenAI
@@ -28,54 +28,46 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "kapy/Analysis/AllocAnalysis.h"
+#include "kapy/Analysis/AlignAnalysis.h"
 #include "kapy/Dialect/Kapy/IR/Kapy.h"
 #include "mlir/Pass/Pass.h"
 
 using namespace mlir;
-using namespace kapy;
+using namespace mlir::kapy;
 
 namespace {
 
-class TestAllocAnalysisPass
-    : public PassWrapper<TestAllocAnalysisPass, OperationPass<ModuleOp>> {
+class TestAlignAnalysisPass
+    : public PassWrapper<TestAlignAnalysisPass, OperationPass<ModuleOp>> {
 public:
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(TestAllocAnalysisPass);
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(TestAlignAnalysisPass);
 
   virtual StringRef getArgument() const override {
-    return "test-alloc-analysis";
+    return "test-align-analysis";
   }
 
   virtual void runOnOperation() override {
     auto &os = llvm::outs();
     auto module = getOperation();
-    ModuleAllocAnalysis analysis(module);
+    ModuleAlignAnalysis analysis(module);
     module.walk([&](FuncOp funcOp) {
       auto funcName = SymbolTable::getSymbolName(funcOp).getValue();
       os << "@" << funcName << "\n";
-      auto *allocation = analysis.getData(funcOp);
       funcOp.walk([&](Operation *op) {
-        auto id = allocation->getBufferId(op);
-        if (id != AllocInfo::INVALID_ID) {
-          auto offset = allocation->getOffset(id);
-          auto size = allocation->getSize(id);
-          if (allocation->isVirtual(id))
-            os << "virtual: { offset = " << offset << ", size = " << size
-               << " }\n";
-        }
         if (op->getNumResults() < 1)
           return;
         for (auto result : op->getResults()) {
-          auto id = allocation->getBufferId(result);
-          if (id != AllocInfo::INVALID_ID) {
-            auto offset = allocation->getOffset(id);
-            auto size = allocation->getSize(id);
-            os << "explicit: { offset = " << offset << ", size = " << size
-               << " }\n";
-          }
+          if (!result.getType().isInteger())
+            continue;
+          auto *info = analysis.getAlignInfo(result);
+          if (!info || info->isEntryState())
+            continue;
+          result.print(os);
+          os << " // ";
+          info->print(os);
+          os << "\n";
         }
       });
-      os << "total: { size = " << allocation->getAllocatedSize() << " }\n";
     });
   }
 };
@@ -85,8 +77,8 @@ public:
 namespace mlir {
 namespace test {
 
-void registerTestAllocAnalysisPass() {
-  PassRegistration<TestAllocAnalysisPass>();
+void registerTestAlignAnalysisPass() {
+  PassRegistration<TestAlignAnalysisPass>();
 }
 
 } // namespace test

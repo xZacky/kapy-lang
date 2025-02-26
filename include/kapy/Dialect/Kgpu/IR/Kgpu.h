@@ -38,48 +38,19 @@
 #define GET_ATTRDEF_CLASSES
 #include "kapy/Dialect/Kgpu/IR/Attrs.h.inc"
 
-#define GET_TYPEDEF_CLASSES
-#include "kapy/Dialect/Kgpu/IR/Types.h.inc"
-
 #define GET_OP_CLASSES
 #include "kapy/Dialect/Kgpu/IR/Ops.h.inc"
 
 namespace mlir {
 namespace kapy {
 
-/// This class represents the shared memory resource.
-class SharedMemory : public SideEffects::Resource::Base<SharedMemory> {
-public:
-  virtual StringRef getName() override { return "<SharedMemory>"; }
-};
+constexpr char sharedUsageAttrName[] = "kgpu.shared_usage";
 
-constexpr int64_t numLanes = 32;
-constexpr int64_t maxWarps = 32;
+/// Get shared memory needed from module attributes, should be used after
+/// running KgpuAllocateSharedPass.
+int64_t getSharedUsage(ModuleOp module);
 
-constexpr char nvidiaCCAttrName[] = "kgpu.nvidia_cc";
-constexpr char numWarpsAttrName[] = "kgpu.num_warps";
-
-constexpr char sharedNeededAttrName[] = "kgpu.shared_needed";
-constexpr char sharedOffsetAttrName[] = "kgpu.shared_offset";
-
-/// Get nvidia compute capability from module attributes, this should be used
-/// after running ConvertKapyToKgpuPass.
-int64_t getNvidiaCC(ModuleOp module);
-
-/// Get the number of warps from module attributes, this should be used after
-/// running ConvertKapyToKgpuPass.
-int64_t getNumWarps(ModuleOp module);
-
-/// Get shared memory needed from module attributes, this should be used after
-/// running KgpuAllocateSharedMemoryPass.
-int64_t getSharedMemoryNeeded(ModuleOp module);
-
-/// Get shared memory offset for an operation, this should be used after running
-/// KgpuAllocateSharedMemoryPass.
-/// For operations do not use shared memory, always returns 0.
-int64_t getSharedMemoryOffset(Operation *op);
-
-/// Get a string to show how we distribute elements to threads.
+/// Get a string to show how we distribute elements to lanes.
 std::string getTensorLayoutString(RankedTensorType tensorType);
 
 } // namespace kapy

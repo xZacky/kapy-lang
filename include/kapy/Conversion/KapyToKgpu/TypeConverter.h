@@ -1,4 +1,4 @@
-//===- Ops.td ----------------------------------------------*- tablegen -*-===//
+//===- TypeConverter.h ------------------------------------------*- C++ -*-===//
 //
 // Copyright 2018-2020 Philippe Tillet
 // Copyright 2020-2022 OpenAI
@@ -20,52 +20,31 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
+//
 //===----------------------------------------------------------------------===//
-// 
+//
 // This file is modified from the triton project.
 // https://github.com/triton-lang/triton
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef KAPY_DIALECT_KGPU_IR_KGPUOPS
-#define KAPY_DIALECT_KGPU_IR_KGPUOPS
+#ifndef KAPY_CONVERSION_KAPYTOKGPU_TYPECONVERTER_H
+#define KAPY_CONVERSION_KAPYTOKGPU_TYPECONVERTER_H
 
-include "mlir/Interfaces/SideEffectInterfaces.td"
-include "kapy/Dialect/Kapy/IR/Enums.td"
-include "kapy/Dialect/Kapy/IR/Types.td"
-include "kapy/Dialect/Kgpu/IR/Dialect.td"
+#include "mlir/Transforms/DialectConversion.h"
 
-class Kgpu_Op<string keyword, list<Trait> traits = []>
-    : Op<Kgpu_Dialect, keyword, traits>;
+namespace mlir {
+namespace kapy {
 
-def Kgpu_ChangeOp : Kgpu_Op<
-  "change", [Pure, SameOperandsAndResultShape, SameOperandsAndResultElementType]
-> {
-  let arguments = (ins Kapy_Tensor:$source);
-  let results = (outs Kapy_Tensor:$result);
+class KgpuTypeConverter : public TypeConverter {
+public:
+  KgpuTypeConverter(MLIRContext *context);
 
-  let assemblyFormat = [{
-    $source attr-dict `:` type($source) `to` type($result)
-  }];
+private:
+  MLIRContext *context;
+};
 
-  let hasCanonicalizeMethod = 1;
-}
+} // namespace kapy
+} // namespace mlir
 
-def Kgpu_LdMatrixOp : Kgpu_Op<
-  "ld_matrix", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]
-> {
-  let arguments = (ins
-    Kapy_Shared:$source,
-    I32:$offset_x,
-    I32:$offset_y,
-    DefaultValuedAttr<BoolAttr, "false">:$transpose
-  );
-  let results = (outs Kapy_Tensor:$result);
-
-  let assemblyFormat = [{
-    $source `[` $offset_x `,` $offset_y `]` attr-dict `:`
-    qualified(type($source)) `->` type($result)
-  }];
-}
-
-#endif // KAPY_DIALECT_KGPU_IR_OPS
+#endif // KAPY_CONVERSION_KAPYTOKGPU_TYPECONVERTER_H

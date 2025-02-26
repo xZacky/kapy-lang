@@ -36,6 +36,7 @@ include "mlir/IR/SymbolInterfaces.td"
 include "mlir/Interfaces/CallInterfaces.td"
 include "mlir/Interfaces/ControlFlowInterfaces.td"
 include "mlir/Interfaces/FunctionInterfaces.td"
+include "mlir/Interfaces/InferIntRangeInterface.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 include "kapy/Dialect/Kapy/IR/Dialect.td"
@@ -55,8 +56,7 @@ def Kapy_FPToFPOp : Kapy_Op<
   }];
 
   let arguments = (ins
-    Kapy_FloatLike:$source,
-    OptionalAttr<Kapy_RoundingModeAttr>:$rounding_mode
+    Kapy_FloatLike:$source, OptionalAttr<Kapy_RoundingModeAttr>:$rounding_mode
   );
   let results = (outs Kapy_FloatLike:$result);
 
@@ -93,29 +93,20 @@ def Kapy_ClampFOp : Kapy_Op<
   let assemblyFormat = "$source `,` $low `,` $high attr-dict `:` type($source)";
 }
 
-def Kapy_MakeGlobalOp : Kapy_Op<"make_global", [Pure]> {
+def Kapy_MkGlobalOp : Kapy_Op<"mk_global", [Pure]> {
   let arguments = (ins
-    I64:$address,
-    I32:$size0,
-    I32:$size1,
-    I32:$stride0,
-    I32:$stride1
+    I64:$address, I32:$size_x, I32:$size_y, I32:$stride_x, I32:$stride_y
   );
   let results = (outs Kapy_Global:$result);
 
   let assemblyFormat = [{
-    $address `[` $size0 `,` $size1 `]` `[` $stride0 `,` $stride1 `]` attr-dict
-    `:` qualified(type($result))
-  }];
-
-  let extraClassDeclaration = [{
-    ValueRange getShape() { return {getSize0(), getSize1()}; }
-    ValueRange getStrides() { return {getStride0(), getStride1()}; }
+    $address `,` `[` $size_x `,` $size_y `]` `,` `[` $stride_x `,` $stride_y `]`
+    attr-dict `:` qualified(type($result))
   }];
 }
 
-def Kapy_LoadGlobalOp : Kapy_Op<
-  "load_global",
+def Kapy_LdGlobalOp : Kapy_Op<
+  "ld_global", 
   [
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
     TypesMatchWith<"from other type infer result type",
@@ -125,37 +116,31 @@ def Kapy_LoadGlobalOp : Kapy_Op<
   let description = [{
     For each element, loads `$result` from `$source`.
     For memory access out of range, pads `$result` with `$other`.
-
-    When `$cp_async` is set, will implemented by "cp.async..." instructions.
   }];
 
   let arguments = (ins
-    UnitAttr:$cp_async,
     Kapy_Global:$source,
-    I32:$offset0,
-    I32:$offset1,
+    I32:$offset_x,
+    I32:$offset_y,
     Kapy_Tensor:$other,
     Kapy_DefaultValuedCacheModifierAttr:$cache_modifier,
     Kapy_DefaultValuedEvictPriorityAttr:$evict_priority,
-    DefaultValuedAttr<BoolAttr, "false">:$is_volatile
+    DefaultValuedAttr<BoolAttr, "false">:$if_volatile
   );
   let results = (outs Kapy_Tensor:$result);
 
   let assemblyFormat = [{
-    (`cp_async` $cp_async^)? $source `[` $offset0 `,` $offset1 `]` `,` $other
-    attr-dict `:` qualified(type($source)) `->` type($other)
+    $source `[` $offset_x `,` $offset_y `]` `,` $other attr-dict `:`
+    qualified(type($source)) `->` type($other)
   }];
 
   let extraClassDeclaration = [{
-    ValueRange getOffsets() { return {getOffset0(), getOffset1()}; }
+    inline bool isVolatile() { return getIfVolatile(); }
   }];
 }
 
-def Kapy_StoreGlobalOp : Kapy_Op<
-  "store_global",
-  [
-    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
-  ]
+def Kapy_StGlobalOp : Kapy_Op<
+  "st_global", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]
 > {
   let description = [{
     For each element, stores `$value` to `$target`.
@@ -164,20 +149,16 @@ def Kapy_StoreGlobalOp : Kapy_Op<
 
   let arguments = (ins
     Kapy_Global:$target,
-    I32:$offset0,
-    I32:$offset1,
+    I32:$offset_x,
+    I32:$offset_y,
     Kapy_Tensor:$value,
     Kapy_DefaultValuedCacheModifierAttr:$cache_modifier,
     Kapy_DefaultValuedEvictPriorityAttr:$evict_priority
   );
 
   let assemblyFormat = [{
-    $target `[` $offset0 `,` $offset1 `]` `,` $value attr-dict `:`
+    $target `[` $offset_x `,` $offset_y `]` `,` $value attr-dict `:`
     qualified(type($target)) `,` type($value)
-  }];
-
-  let extraClassDeclaration = [{
-    ValueRange getOffsets() { return {getOffset0(), getOffset1()}; }
   }];
 }
 
@@ -200,26 +181,82 @@ def Kapy_AtomicRMWGlobalOp : Kapy_Op<
   let arguments = (ins
     Kapy_AtomicRMWKindAttr:$kind,
     Kapy_Global:$source,
-    I32:$offset0,
-    I32:$offset1,
+    I32:$offset_x,
+    I32:$offset_y,
     Kapy_Tensor:$value,
     Kapy_Tensor:$other,
-    Kapy_MemSemanticAttr:$mem_semantic,
-    Kapy_MemoryScopeAttr:$memory_scope
+    Kapy_MemSemanticAttr:$mem_semantic
   );
   let results = (outs Kapy_Tensor:$result);
 
   let assemblyFormat = [{
-    $kind $source `[` $offset0 `,` $offset1 `]` `,` $value `,` $other attr-dict
-    `:` qualified(type($source)) `->` type($value)
-  }];
-
-  let extraClassDeclaration = [{
-    ValueRange getOffsets() { return {getOffset0(), getOffset1()}; }
+    $kind $source `[` $offset_x `,` $offset_y `]` `,` $value `,` $other
+    attr-dict `:` qualified(type($source)) `->` type($value)
   }];
 }
 
-def Kgpu_CpAsyncWaitOp : Kapy_Op<"cp_async_wait", [NoMemoryEffect]> {
+def Kapy_MkSharedOp : Kapy_Op<
+  "mk_shared", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]
+> {
+  let results = (outs Kapy_Shared:$result);
+
+  let assemblyFormat = "attr-dict `:` qualified(type($result))";
+}
+
+def Kapy_LdSharedOp : Kapy_Op<
+  "ld_shared", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]
+> {
+  let arguments = (ins Kapy_Shared:$source, I32:$offset_x, I32:$offset_y);
+  let results = (outs Kapy_Tensor:$result);
+
+  let assemblyFormat = [{
+    $source `[` $offset_x `,` $offset_y `]` attr-dict `:`
+    qualified(type($source)) `->` type($result)
+  }];
+}
+
+def Kapy_StSharedOp : Kapy_Op<
+  "st_shared", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]
+> {
+  let arguments = (ins
+    Kapy_Shared:$target, I32:$offset_x, I32:$offset_y, Kapy_Tensor:$value
+  );
+  
+  let assemblyFormat = [{
+    $target `[` $offset_x `,` $offset_y `]` `,` $value attr-dict `:`
+    qualified(type($target)) `,` type($value)
+  }];
+}
+
+def Kapy_CpAsyncGlobalToSharedOp : Kapy_Op<
+  "cp_async_global_to_shared",
+  [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]
+> {
+  let arguments = (ins
+    Kapy_Global:$source,
+    I32:$source_offset_x,
+    I32:$source_offset_y,
+    Kapy_Shared:$target,
+    I32:$target_offset_x,
+    I32:$target_offset_y,
+    Kapy_Tensor:$other,
+    Kapy_DefaultValuedCacheModifierAttr:$cache_modifier,
+    Kapy_DefaultValuedEvictPriorityAttr:$evict_priority
+  );
+
+  let assemblyFormat = [{
+    $source `[` $source_offset_x `,` $source_offset_y `]` `,` $target `[`
+    $target_offset_x `,` $target_offset_y `]` `,` $other attr-dict `:`
+    qualified(type($source)) `,` qualified(type($target)) `,` type($other)
+  }];
+}
+
+def Kapy_CpAsyncCommitGroupOp
+    : Kapy_Op<"cp_async_commit_group", [NoMemoryEffect]> {
+  let assemblyFormat = "attr-dict";
+}
+
+def Kapy_CpAsyncWaitGroupOp : Kapy_Op<"cp_async_wait_group", [NoMemoryEffect]> {
   let arguments = (ins I32Attr:$num_pending);
 
   let assemblyFormat = "attr-dict";
@@ -272,10 +309,32 @@ def Kapy_TransposeOp : Kapy_Op<
 }
 
 def Kapy_ProgramIdOp : Kapy_Op<"program_id", [Pure]> {
-  let arguments = (ins Kapy_ProgramAxisAttr:$axis);
+  let arguments = (ins I32Attr:$axis);
   let results = (outs I32:$result);
 
-  let assemblyFormat = "$axis attr-dict `:` type($result)";
+  let assemblyFormat = "attr-dict `:` type($result)";
+}
+
+def Kapy_WarpIdOp : Kapy_Op<
+  "warp_id",
+  [
+    Pure,
+    DeclareOpInterfaceMethods<InferIntRangeInterface, ["inferResultRanges"]>
+  ]
+> {
+  let results = (outs I32:$result);
+
+  let assemblyFormat = "attr-dict `:` type($result)";
+}
+
+def Kapy_ArangeOp : Kapy_Op<"arange", [Pure]> {
+  let arguments = (ins I32Attr:$axis, I32Attr:$start, I32Attr:$end);
+  let results = (outs RankedTensorOf<[I32]>:$result);
+
+  let assemblyFormat = "attr-dict `:` type($result)";
+
+  let hasFolder = 1;
+  let hasVerifier = 1;
 }
 
 def Kapy_MatmulOp : Kapy_Op<
@@ -323,8 +382,8 @@ def Kapy_ReduceOp : Kapy_Op<
   let hasRegionVerifier = 1;
 }
 
-def Kapy_ElementwiseExternOp : Kapy_Op<
-  "elementwise_extern",
+def Kapy_ElementwiseExternLibOp : Kapy_Op<
+  "elementwise_extern_lib",
   [
     Elementwise,
     SameOperandsAndResultShape,
@@ -337,17 +396,21 @@ def Kapy_ElementwiseExternOp : Kapy_Op<
     StrAttr:$lib_name,
     StrAttr:$lib_path,
     StrAttr:$sym_name,
-    BoolAttr:$is_pure
+    BoolAttr:$pure
   );
   let results = (outs Kapy_NumberLike:$result);
 
   let assemblyFormat = [{
     $operands attr-dict `:` functional-type($operands, $result)
   }];
+
+  let extraClassDeclaration = [{
+    inline bool isPure() { return getPure(); }
+  }];
 }
 
-def Kapy_ElementwiseInlineOp : Kapy_Op<
-  "elementwise_inline",
+def Kapy_ElementwiseInlineAsmOp : Kapy_Op<
+  "elementwise_inline_asm",
   [
     Elementwise,
     SameOperandsAndResultShape,
@@ -359,12 +422,16 @@ def Kapy_ElementwiseInlineOp : Kapy_Op<
     Variadic<Kapy_NumberLike>:$operands,
     StrAttr:$asm_string,
     StrAttr:$constraints,
-    BoolAttr:$is_pure
+    BoolAttr:$pure
   );
   let results = (outs Kapy_NumberLike:$result);
 
   let assemblyFormat = [{
     $operands attr-dict `:` functional-type($operands, $result)
+  }];
+
+  let extraClassDeclaration = [{
+    inline bool isPure() { return getPure(); }
   }];
 }
 
@@ -458,7 +525,7 @@ def Kapy_FuncOp : Kapy_Op<
     FunctionOpInterface,
     IsolatedFromAbove,
     OpAsmOpInterface,
-    ValidTensorShape
+    ValidShape
   ]
 > {
   let arguments = (ins
@@ -474,8 +541,8 @@ def Kapy_FuncOp : Kapy_Op<
     OpBuilder<
       (ins
         "StringRef":$name,
-        "FunctionType":$type,
-        CArg<"ArrayRef<NamedAttribute>", "{}">:$attrs,
+        "FunctionType":$funcType,
+        CArg<"bool", "true">:$inlineable,
         CArg<"ArrayRef<DictionaryAttr>", "{}">:$argAttrs
       )
     >

@@ -1,4 +1,4 @@
-//===- Ops.td ----------------------------------------------*- tablegen -*-===//
+//===- Passes.td -------------------------------------------*- tablegen -*-===//
 //
 // Copyright 2018-2020 Philippe Tillet
 // Copyright 2020-2022 OpenAI
@@ -20,6 +20,7 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
+//
 //===----------------------------------------------------------------------===//
 // 
 // This file is modified from the triton project.
@@ -27,45 +28,15 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef KAPY_DIALECT_KGPU_IR_KGPUOPS
-#define KAPY_DIALECT_KGPU_IR_KGPUOPS
+#ifndef KAPY_CONVERSION_KAPYTOKGPU_PASSES
+#define KAPY_CONVERSION_KAPYTOKGPU_PASSES
 
-include "mlir/Interfaces/SideEffectInterfaces.td"
-include "kapy/Dialect/Kapy/IR/Enums.td"
-include "kapy/Dialect/Kapy/IR/Types.td"
-include "kapy/Dialect/Kgpu/IR/Dialect.td"
+include "mlir/Pass/PassBase.td"
 
-class Kgpu_Op<string keyword, list<Trait> traits = []>
-    : Op<Kgpu_Dialect, keyword, traits>;
+def ConvertKapyToKgpu : Pass<"convert-kapy-to-kgpu", "ModuleOp"> {
+  let constructor = "kapy::createConvertKapyToKgpuPass()";
 
-def Kgpu_ChangeOp : Kgpu_Op<
-  "change", [Pure, SameOperandsAndResultShape, SameOperandsAndResultElementType]
-> {
-  let arguments = (ins Kapy_Tensor:$source);
-  let results = (outs Kapy_Tensor:$result);
-
-  let assemblyFormat = [{
-    $source attr-dict `:` type($source) `to` type($result)
-  }];
-
-  let hasCanonicalizeMethod = 1;
+  let dependentDialects = ["kapy::KapyDialect", "kapy::KgpuDialect"];
 }
 
-def Kgpu_LdMatrixOp : Kgpu_Op<
-  "ld_matrix", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]
-> {
-  let arguments = (ins
-    Kapy_Shared:$source,
-    I32:$offset_x,
-    I32:$offset_y,
-    DefaultValuedAttr<BoolAttr, "false">:$transpose
-  );
-  let results = (outs Kapy_Tensor:$result);
-
-  let assemblyFormat = [{
-    $source `[` $offset_x `,` $offset_y `]` attr-dict `:`
-    qualified(type($source)) `->` type($result)
-  }];
-}
-
-#endif // KAPY_DIALECT_KGPU_IR_OPS
+#endif // KAPY_CONVERSION_KAPYTOKGPU_PASSES

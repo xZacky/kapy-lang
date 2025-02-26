@@ -1,6 +1,6 @@
 //===- Attrs.td --------------------------------------------*- tablegen -*-===//
 //
-// This file defines the attributes used by the KapyDialect.
+// This file defines the attributes used by the kapy dialect.
 //
 //===----------------------------------------------------------------------===//
 
@@ -18,14 +18,13 @@ def Strided2dLayoutAttr : Kapy_AttrDef<"Strided2dLayout", "strided2d"> {
   let summary = "strided 2d memory layout";
 
   let mnemonic = "strided2d";
-  let parameters = (ins "int64_t":$stride0, "int64_t":$stride1);
+  let parameters = (ins "int64_t":$strideX, "int64_t":$strideY);
 
   let hasCustomAssemblyFormat = 1;
 
   let extraClassDeclaration = [{
-    SmallVector<int64_t, 2> getStrides() const {
-      return {getStride0(), getStride1()};
-    }
+    inline bool isRowMajor() const { return getStrideY() == 1; }
+    inline bool isColMajor() const { return getStrideX() == 1; }
 
     AffineMap getAffineMap() const;
   }];

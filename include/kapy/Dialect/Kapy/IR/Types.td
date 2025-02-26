@@ -42,8 +42,8 @@ class Kapy_TypeDef<string name, string keyword, list<Trait> traits = []>
 def Kapy_Int : AnyTypeOf<[I1, I8, I16, I32, I64], "integer">;
 def Kapy_IntLike : AnyTypeOf<[Kapy_Int, RankedTensorOf<[Kapy_Int]>]>;
 
-def Kapy_Float : AnyTypeOf<
-    [F8E4M3FNUZ, F8E5M2FNUZ, F8E5M2, F16, BF16, F32, F64], "floating-point">;
+def Kapy_Float : AnyTypeOf<[F8E4M3, F8E5M2, F16, BF16, F32, F64],
+                           "floating-point">;
 def Kapy_FloatLike : AnyTypeOf<[Kapy_Float, RankedTensorOf<[Kapy_Float]>]>;
 
 def Kapy_Number : AnyTypeOf<[Kapy_Int, Kapy_Float]>;
@@ -98,6 +98,54 @@ class GlobalMemRefOf<list<Type> types> : DialectType<
   "GlobalMemRefType"
 >;
 
+def SharedMemRefType
+    : Kapy_TypeDef<"SharedMemRef", "shared", [ShapedTypeInterface]> {
+  let summary = "shared memref (memory reference) type";
+
+  let parameters = (ins
+    ArrayRefParameter<"int64_t">:$shape,
+    "Type":$elementType,
+    "Attribute":$encoding
+  );
+
+  let builders = [
+    TypeBuilderWithInferredContext<
+      (ins
+        "ArrayRef<int64_t>":$shape,
+        "Type":$elementType,
+        "Attribute":$encoding
+      ),
+      "return $_get(elementType.getContext(), shape, elementType, encoding);"
+    >
+  ];
+
+  let hasCustomAssemblyFormat = 1;
+
+  let extraClassDeclaration = [{
+    SharedMemRefType
+    cloneWith(std::optional<ArrayRef<int64_t>> shape, Type elementType) const {
+      return get(shape.value_or(getShape()), elementType, getEncoding());
+    }
+
+    bool hasRank() const { return true; }
+  }];
+}
+
+class SharedMemRefOf<list<Type> types> : DialectType<
+  Kapy_Dialect,
+  And<
+    [
+      CPred<"isa<SharedMemRefType>($_self)">,
+      Concat<"[](Type elementType) { return ",
+             SubstLeaves<"$_self", "elementType", AnyTypeOf<types>.predicate>,
+             "; }(cast<SharedMemRefType>($_self).getElementType())">
+    ]
+  >,
+  "shared memref",
+  "SharedMemRefType"
+>;
+
 def Kapy_Global : GlobalMemRefOf<[Kapy_Number]>;
+def Kapy_Shared : SharedMemRefOf<[Kapy_Number]>;
 
 #endif // KAPY_DIALECT_KAPY_IR_TYPES

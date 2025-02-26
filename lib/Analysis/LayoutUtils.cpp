@@ -8,245 +8,291 @@
 #include "kapy/Analysis/AnalysisUtils.h"
 #include "kapy/Dialect/Kapy/IR/Kapy.h"
 #include "kapy/Dialect/Kgpu/IR/Kgpu.h"
+#include "llvm/ADT/MapVector.h"
 
 using namespace mlir;
 using namespace mlir::kapy;
 
 FragmentsLayoutAttr kapy::getFragmentsLayout(ArrayRef<int64_t> laneLoops,
                                              RankedTensorType tensorType,
-                                             int64_t numWarps, bool rowMajor) {
-  auto shape = tensorType.getShape();
-  SmallVector<int64_t, 2> laneArray(2);
-  SmallVector<int64_t, 2> warpArray(2);
-  SmallVector<int64_t, 2> warpLoops{1, 1};
+                                             bool rowMajor) {
   unsigned i = rowMajor ? 0 : 1;
   unsigned j = rowMajor ? 1 : 0;
-  auto maxLanesJ =
-      std::clamp<int64_t>(numWarps * numLanes, 1, shape[j] / laneLoops[j]);
-  auto numLanesJ = std::clamp<int64_t>(maxLanesJ, 1, numLanes);
-  auto numWarpsJ = std::clamp<int64_t>(maxLanesJ / numLanesJ, 1, numWarps);
-  laneArray[i] = numLanes / numLanesJ;
-  laneArray[j] = numLanesJ;
-  warpArray[i] = numWarps / numWarpsJ;
-  warpArray[j] = numWarpsJ;
-  return FragmentsLayoutAttr::get(tensorType.getContext(), warpArray, warpLoops,
-                                  laneArray, laneLoops, i, j);
+  auto shape = tensorType.getShape();
+  SmallVector<int64_t, 2> laneArray(2);
+  laneArray[j] = std::clamp<int64_t>(warpSize, 1, shape[j] / laneLoops[j]);
+  laneArray[i] = warpSize / laneArray[j];
+  auto *context = tensorType.getContext();
+  return FragmentsLayoutAttr::get(context, laneArray, laneLoops, i, j);
 }
 
 FragmentsLayoutAttr kapy::getFragmentsLayout(RankedTensorType tensorType,
-                                             int64_t numWarps,
-                                             bool isRowMajor) {
-  return getFragmentsLayout({1, 1}, tensorType, numWarps, isRowMajor);
+                                             bool rowMajor) {
+  return getFragmentsLayout({1, 1}, tensorType, rowMajor);
 }
 
-FragmentsLayoutAttr kapy::getFragmentsLayout(MatmulOp matmulOp,
-                                             int64_t numWarps) {
+std::array<FragmentsLayoutAttr, 3> kapy::getOperandLayouts(MatmulOp matmulOp) {
   auto implWay = matmulOp.getMatmulImplWay();
-  auto resultType = matmulOp.getType();
-  auto shape = resultType.getShape();
-  auto numElements = resultType.getNumElements();
-  SmallVector<int64_t, 2> laneLoops{1, 1};
+  auto accType = matmulOp.getAcc().getType();
+  auto lhsShape = matmulOp.getLhs().getType().getShape();
+  auto rhsShape = matmulOp.getRhs().getType().getShape();
+  auto accShape = accType.getShape();
+  auto numElems = accType.getNumElements();
+  auto *context = matmulOp.getContext();
+  SmallVector<int64_t, 2> laneLoops{2, 2};
   if (implWay == MatmulImplWay::FMA) {
-    if (shape[0] >= 32 && shape[1] >= 32 &&
-        numElements / (numWarps * numLanes) >= 16) {
-      laneLoops[0] = 4;
-      laneLoops[1] = 4;
-    } else {
-      laneLoops[0] = 2;
-      laneLoops[1] = 2;
-    }
-    return getFragmentsLayout(laneLoops, resultType, numWarps);
+    if (accShape[0] >= 32 && accShape[1] >= 32 && numElems / warpSize >= 16)
+      laneLoops = {4, 4};
+    auto accLayout = getFragmentsLayout(laneLoops, accType);
+    auto laneArray = accLayout.getLaneArray();
+    auto lhsLayout = FragmentsLayoutAttr::get(
+        context, laneArray, {laneLoops[0], lhsShape[1]}, 0, 1);
+    auto rhsLayout = FragmentsLayoutAttr::get(
+        context, laneArray, {rhsShape[0], laneLoops[1]}, 1, 0);
+    return {lhsLayout, rhsLayout, accLayout};
   }
-
-  SmallVector<int64_t, 2> warpArray{1, 1};
-  SmallVector<int64_t, 2> warpLoops{2, 1};
-  SmallVector<int64_t, 2> laneArray{8, 4};
-  laneLoops = {1, 2};
-  while (warpArray[0] * warpArray[1] < numWarps) {
-    if (shape[0] / (warpArray[0] * 16) >= shape[1] / (warpArray[1] * 16)) {
-      if (warpArray[0] * 16 < shape[0]) {
-        warpArray[0] *= 2;
-        continue;
-      }
-    }
-    warpArray[1] *= 2;
+  auto accLayout = FragmentsLayoutAttr::get(context, {8, 4}, {1, 2}, 0, 1);
+  if (implWay == MatmulImplWay::MMA_M16N8K8_F16 ||
+      implWay == MatmulImplWay::MMA_M16N8K16_F16) {
+    auto lhsLayout = FragmentsLayoutAttr::get(context, {8, 4}, {1, 2}, 0, 1);
+    auto rhsLayout = FragmentsLayoutAttr::get(context, {4, 8}, {2, 1}, 1, 0);
+    return {lhsLayout, rhsLayout, accLayout};
   }
-  return FragmentsLayoutAttr::get(matmulOp.getContext(), warpArray, warpLoops,
-                                  laneArray, laneLoops);
+  if (implWay == MatmulImplWay::MMA_M16N8K8_TF32) {
+    auto lhsLayout = FragmentsLayoutAttr::get(context, {8, 4}, {1, 1}, 0, 1);
+    auto rhsLayout = FragmentsLayoutAttr::get(context, {4, 8}, {1, 1}, 1, 0);
+    return {lhsLayout, rhsLayout, accLayout};
+  }
+  if (implWay == MatmulImplWay::MMA_M16N8K16_F8) {
+    auto lhsLayout = FragmentsLayoutAttr::get(context, {8, 4}, {1, 4}, 0, 1);
+    auto rhsLayout = FragmentsLayoutAttr::get(context, {4, 8}, {4, 1}, 1, 0);
+    return {lhsLayout, rhsLayout, accLayout};
+  }
+  llvm_unreachable("unsupported matmul implement way");
 }
 
-static SetVector<Attribute> getCandidateLayoutsImpl(RankedTensorType tensorType,
-                                                    int64_t numWarps) {
+static SetVector<FragmentsLayoutAttr>
+getCandidateLayoutsImpl(RankedTensorType tensorType) {
   auto shape = tensorType.getShape();
-  auto numElements = tensorType.getNumElements();
+  auto numElems = tensorType.getNumElements();
   auto layout = cast<FragmentsLayoutAttr>(tensorType.getEncoding());
 
-  auto warpArray = layout.getWarpArray();
-  auto warpLoops = layout.getWarpLoops();
   auto laneArray = layout.getLaneArray();
   auto laneLoops = layout.getLaneLoops();
 
-  auto i = layout.getMinorAxis();
-  auto j = layout.getMajorAxis();
+  unsigned i = 0;
+  unsigned j = 1;
 
-  auto laneLoopJ = laneLoops[j];
-  auto maxLanesJ = laneArray[j];
-  auto maxWarpsJ = warpArray[j];
+  auto vecWidth = laneLoops[layout.getMajorAxis()];
+  auto restLoop = std::max<int64_t>(numElems / (warpSize * vecWidth), 1);
 
-  auto restLoop =
-      std::max<int64_t>(numElements / (numWarps * numLanes * laneLoopJ), 1);
-  // Possible combinations of `(warpLoopI, warpLoopJ, laneLoopI)`.
-  SmallVector<std::array<int64_t, 3>, 8> loopCombs;
-  for (int64_t warpLoopI = 1; warpLoopI <= restLoop; warpLoopI *= 2) {
-    for (int64_t warpLoopJ = 1; warpLoopJ <= restLoop; warpLoopJ *= 2) {
-      if (warpLoopI * warpLoopJ > restLoop)
-        break;
-      for (int64_t laneLoopI = 1; laneLoopI <= restLoop; laneLoopI *= 2) {
-        if (warpLoopI * warpLoopJ * laneLoopI > restLoop)
-          break;
-        loopCombs.push_back({warpLoopI, warpLoopJ, laneLoopI});
-      }
-    }
-  }
-
-  // We try to make each warp access global memory that is at least 128 bytes
-  // contiguous if possible.
-  // TODO: This may not be a necessary condition.
-  auto minLanesJ = 1024 / (laneLoopJ * getIntOrFloatBitWidth(tensorType));
-
-  SetVector<Attribute> layouts;
-  for (int64_t numLanesJ = minLanesJ; numLanesJ <= maxLanesJ; numLanesJ *= 2) {
-    auto numLanesI = numLanes / numLanesJ;
+  auto *context = tensorType.getContext();
+  SetVector<FragmentsLayoutAttr> layouts;
+  for (int64_t numLanesI = 1; numLanesI <= warpSize; numLanesI *= 2) {
+    auto numLanesJ = warpSize / numLanesI;
     laneArray[i] = numLanesI;
     laneArray[j] = numLanesJ;
-    for (int64_t numWarpsJ = 1; numWarpsJ <= maxWarpsJ; numWarpsJ *= 2) {
-      if (numWarpsJ * numLanesJ * laneLoopJ > shape[j])
+    for (int64_t laneLoopI = 1; laneLoopI <= restLoop; laneLoopI *= 2) {
+      auto laneLoopJ = vecWidth;
+      if (numLanesI * laneLoopI > shape[i])
         break;
-      auto numWarpsI = numWarps / numWarpsJ;
-      warpArray[i] = numWarpsI;
-      warpArray[j] = numWarpsJ;
-      for (auto [warpLoopI, warpLoopJ, laneLoopI] : loopCombs) {
-        if (numWarpsI * warpLoopI * numLanesI * laneLoopI > shape[i])
-          continue;
-        if (numWarpsJ * warpLoopJ * numLanesJ * laneLoopJ > shape[j])
-          continue;
-        warpLoops[i] = warpLoopI;
-        warpLoops[j] = warpLoopJ;
-        laneLoops[i] = laneLoopI;
-        layouts.insert(FragmentsLayoutAttr::get(tensorType.getContext(),
-                                                warpArray, warpLoops, laneArray,
-                                                laneLoops, i, j));
-      }
+      if (numLanesJ * laneLoopJ > shape[j])
+        break;
+      laneLoops[i] = laneLoopI;
+      laneLoops[j] = laneLoopJ;
+      layouts.insert(
+          FragmentsLayoutAttr::get(context, laneArray, laneLoops, i, j));
+    }
+  }
+  i = 1;
+  j = 0;
+  for (int64_t numLanesI = 1; numLanesI <= warpSize; numLanesI *= 2) {
+    auto numLanesJ = warpSize / numLanesI;
+    laneArray[i] = numLanesI;
+    laneArray[j] = numLanesJ;
+    for (int64_t laneLoopI = 1; laneLoopI <= restLoop; laneLoopI *= 2) {
+      auto laneLoopJ = vecWidth;
+      if (numLanesI * laneLoopI > shape[i])
+        break;
+      if (numLanesJ * laneLoopJ > shape[j])
+        break;
+      laneLoops[i] = laneLoopI;
+      laneLoops[j] = laneLoopJ;
+      layouts.insert(
+          FragmentsLayoutAttr::get(context, laneArray, laneLoops, i, j));
     }
   }
   return layouts;
 }
 
-static SetVector<Attribute> getCandidateLayoutsImpl(MatmulOp matmulOp,
-                                                    int64_t numWarps) {
-  auto implWay = matmulOp.getMatmulImplWay();
-  auto resultType = matmulOp.getType();
-
-  if (implWay == MatmulImplWay::FMA) {
-    auto layouts = getCandidateLayoutsImpl(resultType, numWarps);
+SetVector<FragmentsLayoutAttr> kapy::getCandidateLayouts(Operation *op) {
+  if (auto matmulOp = dyn_cast<MatmulOp>(op)) {
+    if (matmulOp.getMatmulImplWay() == MatmulImplWay::FMA) {
+      auto layouts = getCandidateLayoutsImpl(matmulOp.getType());
+      for (auto layout : layouts) {
+        auto laneLoops = layout.getLaneLoops();
+        if (laneLoops[0] != laneLoops[1])
+          layouts.remove(layout);
+      }
+      return layouts;
+    }
+    return {};
+  }
+  if (isExpensiveGlobalRead(op) || isExpensiveGlobalWrite(op)) {
+    auto alignment = getAlignment(op);
+    GlobalMemRefType globalType;
+    RankedTensorType tensorType;
+    if (isExpensiveGlobalRead(op)) {
+      globalType = cast<GlobalMemRefType>(op->getOperand(0).getType());
+      tensorType = cast<RankedTensorType>(op->getResult(0).getType());
+    } else {
+      globalType = cast<GlobalMemRefType>(op->getOperand(0).getType());
+      tensorType = cast<RankedTensorType>(op->getOperand(3).getType());
+    }
+    auto layouts = getCandidateLayoutsImpl(tensorType);
     for (auto layout : layouts) {
-      auto laneLoops = cast<FragmentsLayoutAttr>(layout).getLaneLoops();
-      if (laneLoops[0] != laneLoops[1])
+      tensorType = RankedTensorType::get(tensorType.getShape(),
+                                         tensorType.getElementType(), layout);
+      if (!isCoalescedGlobalAccess(globalType, tensorType, alignment))
         layouts.remove(layout);
     }
     return layouts;
   }
-
-  auto shape = resultType.getShape();
-  auto numElements = resultType.getNumElements();
-  auto layout = cast<FragmentsLayoutAttr>(resultType.getEncoding());
-
-  auto warpArray = layout.getWarpArray();
-  auto warpLoops = layout.getWarpLoops();
-  auto laneArray = layout.getLaneArray();
-  auto laneLoops = layout.getLaneLoops();
-
-  auto restLoop = std::max<int64_t>(numElements / (numWarps * 64), 1);
-
-  SetVector<Attribute> layouts;
-  for (int64_t numWarps0 = 1; numWarps0 <= numWarps; numWarps0 *= 2) {
-    auto numWarps1 = numWarps / numWarps0;
-    warpArray[0] = numWarps0;
-    warpArray[1] = numWarps1;
-    // Warp loop on axis 0 is at least 2.
-    for (int64_t warpLoop0 = 2; warpLoop0 <= restLoop; warpLoop0 *= 2) {
-      for (int64_t warpLoop1 = 1; warpLoop1 <= restLoop; warpLoop1 *= 2) {
-        if (warpLoop0 * warpLoop1 > restLoop)
-          break;
-        if (numWarps0 * warpLoop0 * 8 > shape[0])
-          break;
-        if (numWarps1 * warpLoop1 * 8 > shape[1])
-          break;
-        warpLoops[0] = warpLoop0;
-        warpLoops[1] = warpLoop1;
-        layouts.insert(FragmentsLayoutAttr::get(
-            matmulOp.getContext(), warpArray, warpLoops, laneArray, laneLoops));
-      }
+  if (isExpensiveSharedRead(op) || isExpensiveSharedWrite(op)) {
+    SharedMemRefType sharedType;
+    RankedTensorType tensorType;
+    if (isExpensiveSharedRead(op)) {
+      sharedType = cast<SharedMemRefType>(op->getOperand(0).getType());
+      tensorType = cast<RankedTensorType>(op->getResult(0).getType());
+    } else {
+      sharedType = cast<SharedMemRefType>(op->getOperand(0).getType());
+      tensorType = cast<RankedTensorType>(op->getOperand(3).getType());
     }
+    auto layouts = getCandidateLayoutsImpl(tensorType);
+    for (auto layout : layouts) {
+      tensorType = RankedTensorType::get(tensorType.getShape(),
+                                         tensorType.getElementType(), layout);
+      if (!is0ConflictSharedAccess(sharedType, tensorType))
+        layouts.remove(layout);
+    }
+    return layouts;
   }
-  return layouts;
-}
-
-SetVector<Attribute> kapy::getCandidateLayouts(Operation *op,
-                                               int64_t numWarps) {
-  if (isGlobalMemoryRead(op))
-    for (auto result : op->getResults())
-      if (auto tensorType = dyn_cast<RankedTensorType>(result.getType()))
-        return getCandidateLayoutsImpl(tensorType, numWarps);
-
-  if (isGlobalMemoryWrite(op))
-    for (auto operand : op->getOperands())
-      if (auto tensorType = dyn_cast<RankedTensorType>(operand.getType()))
-        return getCandidateLayoutsImpl(tensorType, numWarps);
-
-  if (auto matmulOp = dyn_cast<MatmulOp>(op))
-    return getCandidateLayoutsImpl(matmulOp, numWarps);
-
   llvm_unreachable("unsupported operation");
 }
 
-/*
-SharedMemLayoutAttr kapy::getSharedMemLayout(RankedTensorType sourceType,
-                                             RankedTensorType resultType) {
-  auto tensorShape = sourceType.getShape();
+bool kapy::isCoalescedGlobalAccess(GlobalMemRefType globalType,
+                                   RankedTensorType tensorType,
+                                   int64_t alignment) {
+  auto globalLayout = cast<Strided2dLayoutAttr>(globalType.getEncoding());
+  auto tensorLayout = cast<FragmentsLayoutAttr>(tensorType.getEncoding());
+  auto globalMap = globalLayout.getAffineMap();
+  auto option = FragmentsLayoutAttr::MapOption::TO_TENSOR;
+  auto tensorMap = tensorLayout.getAffineMap(tensorType.getShape(), option);
+  auto accessMap = globalMap.compose(tensorMap);
 
-  auto sourceLayout = getLayoutAsFragmentsLayout(sourceType);
-  auto i = sourceLayout.getMinorAxis();
-  auto j = sourceLayout.getMajorAxis();
+  auto bitWidth = getIntOrFloatBitWidth(globalType);
+  // Currently we assume that `alignment >= 16` so always 128 bits.
+  // TODO: Handle `alignment < 16`.
+  auto vecWidth = 128 / bitWidth;
 
-  if (auto mmopdLayout =
-          dyn_cast<MmOperandLayoutAttr>(resultType.getEncoding())) {
-    auto *context = resultType.getContext();
-    SmallVector<int64_t, 2> strides;
-    if (i == 0)
-      strides = computeStrides(tensorShape);
-    else
-      strides = transpose(computeStrides(transpose(tensorShape)));
+  int64_t ivStep = 1;
+  if (globalLayout.isRowMajor() && tensorLayout.isColMajor())
+    ivStep = tensorLayout.getLoopSpace(tensorType.getShape())[0];
+  if (globalLayout.isColMajor() && tensorLayout.isRowMajor())
+    ivStep = tensorLayout.getLoopSpace(tensorType.getShape())[1];
 
-    /// Do not swizzle if parent is not nvidia mma layout.
-    if (!isa<NvidiaMmaLayoutAttr>(mmopdLayout.getParent()))
-      return SharedMemLayoutAttr::get(context, strides, 1, 1);
-
-    // We use "ldmatrix...x4" instructions for tensor core operands.
-    auto bitWidth = mmopdLayout.getBitWidth();
-    auto unitSize = 128 / bitWidth;
-    // In each phase, 8 lanes access 32 banks and each bank provides 4 bytes.
-    // Compute how many row/columns per phase.
-    auto perPhase = std::max<unsigned>(1024 / (tensorShape[j] * bitWidth), 1);
-    // In each phase, 8 lanes hold `[8, unitSize]` elements, so we compute the
-    // maximum phase by this to avoid bank conflicts.
-    if (mmopdLayout.getOperandIndex() == 0) {
-      auto maxPhase = (i == 0 ? 8 : unitSize) / perPhase;
-      return SharedMemLayoutAttr::get(context, strides, unitSize, maxPhase);
-    } else {
-      auto maxPhase = (i == 0 ? unitSize : 8) / perPhase;
-      return SharedMemLayoutAttr::get(context, strides, unitSize, maxPhase);
+  if (accessMap.getNumSymbols() == 0) {
+    DenseSet<int64_t> cacheLineSet;
+    for (int64_t laneId = 0; laneId < warpSize; ++laneId) {
+      for (int64_t loopIv = 0; loopIv < vecWidth * ivStep; loopIv += ivStep) {
+        auto bitOffset = accessMap.compose({laneId, loopIv})[0] * bitWidth;
+        cacheLineSet.insert((bitOffset + alignment * 8) / 1024);
+      }
     }
+    if (alignment >= 128)
+      return cacheLineSet.size() <= 4;
+    else
+      return cacheLineSet.size() <= 5;
+  } else {
+    DenseSet<AffineExpr> cacheLineSet;
+    auto *context = accessMap.getContext();
+    for (int64_t laneId = 0; laneId < warpSize; ++laneId) {
+      for (int64_t loopIv = 0; loopIv < vecWidth * ivStep; loopIv += ivStep) {
+        SmallVector<AffineExpr, 2> inputs;
+        inputs.push_back(getAffineConstantExpr(laneId, context));
+        inputs.push_back(getAffineConstantExpr(loopIv, context));
+        auto inputsMap = AffineMap::get(0, 0, inputs, context);
+        auto offsetMap = accessMap.compose(inputsMap);
+        auto bitOffset = offsetMap.getResult(0) * bitWidth;
+        cacheLineSet.insert((bitOffset + alignment * 8).floorDiv(1024));
+      }
+    }
+    if (alignment >= 128)
+      return cacheLineSet.size() <= 4;
+    else
+      return cacheLineSet.size() <= 5;
   }
 }
-*/
+
+bool kapy::is0ConflictSharedAccess(SharedMemRefType sharedType,
+                                   RankedTensorType tensorType) {
+  auto tensorLayout = cast<FragmentsLayoutAttr>(tensorType.getEncoding());
+  auto option = FragmentsLayoutAttr::MapOption::TO_TENSOR;
+  auto tensorMap = tensorLayout.getAffineMap(tensorType.getShape(), option);
+  auto bitWidth = getIntOrFloatBitWidth(sharedType);
+  auto vecWidth = 128 / bitWidth;
+  if (auto sharedLayout =
+          dyn_cast<Strided2dLayoutAttr>(sharedType.getEncoding())) {
+    auto sharedMap = sharedLayout.getAffineMap();
+    auto accessMap = sharedMap.compose(tensorMap);
+
+    int64_t ivStep = 1;
+    if (sharedLayout.isRowMajor() && tensorLayout.isColMajor())
+      ivStep = tensorLayout.getLoopSpace(tensorType.getShape())[0];
+    if (sharedLayout.isColMajor() && tensorLayout.isRowMajor())
+      ivStep = tensorLayout.getLoopSpace(tensorType.getShape())[1];
+
+    llvm::MapVector<int64_t, DenseSet<int64_t>> bankIdToLineIds;
+    for (int64_t laneId = 0; laneId < quadSize; ++laneId) {
+      for (int64_t loopIv = 0; loopIv < vecWidth * ivStep; loopIv += ivStep) {
+        auto bitOffset = accessMap.compose({laneId, loopIv})[0] * bitWidth;
+        auto bankId = bitOffset % 1024 / 32;
+        auto lineId = bitOffset / 1024;
+        bankIdToLineIds[bankId].insert(lineId);
+      }
+    }
+    for (const auto &it : bankIdToLineIds)
+      if (it.second.size() > 1)
+        return false;
+    return true;
+  }
+  if (auto sharedLayout =
+          dyn_cast<Swizzled4LayoutAttr>(sharedType.getEncoding())) {
+    int64_t ivStep = 1;
+    if (sharedLayout.isRowMajor() && tensorLayout.isColMajor())
+      ivStep = tensorLayout.getLoopSpace(tensorType.getShape())[0];
+    if (sharedLayout.isColMajor() && tensorLayout.isRowMajor())
+      ivStep = tensorLayout.getLoopSpace(tensorType.getShape())[1];
+
+    llvm::MapVector<int64_t, DenseSet<int64_t>> bankIdToLineIds;
+    for (int64_t laneId = 0; laneId < quadSize; ++laneId) {
+      for (int64_t loopIv = 0; loopIv < vecWidth * ivStep; loopIv += ivStep) {
+        auto indices = tensorMap.compose({laneId, loopIv});
+        auto bitOffset = static_cast<int64_t>(bitWidth);
+        if (sharedLayout.isRowMajor())
+          bitOffset *= indices[0] * sharedType.getShape()[1] + indices[1];
+        else
+          bitOffset *= indices[0] + indices[1] * sharedType.getShape()[0];
+        auto bankId = bitOffset % 1024 / 32;
+        auto lineId = bitOffset / 1024;
+        bankId = (bankId / 4 ^ lineId % 8) * 4 + bankId % 4;
+        bankIdToLineIds[bankId].insert(lineId);
+      }
+    }
+    for (const auto &it : bankIdToLineIds)
+      if (it.second.size() > 1)
+        return false;
+    return true;
+  }
+  llvm_unreachable("unsupported layout");
+}

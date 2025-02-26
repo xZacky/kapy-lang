@@ -31,7 +31,11 @@
 #include "kapy/Dialect/Kapy/IR/OpTraits.h"
 #include "mlir/IR/BuiltinTypes.h"
 
+#define GET_TYPEDEF_CLASSES
+#include "kapy/Dialect/Kapy/IR/Types.h.inc"
+
 using namespace mlir;
+using namespace mlir::kapy;
 
 static SmallVector<Type> getOperandsAndResultType(Operation *op) {
   auto types = llvm::to_vector(op->getOperandTypes());
@@ -39,39 +43,49 @@ static SmallVector<Type> getOperandsAndResultType(Operation *op) {
   return types;
 }
 
-static LogicalResult verifyValidTensorShapeImpl(Operation *op) {
-  using OpTrait::impl::maxElements;
-
+static LogicalResult verifyValidShapeImpl(Operation *op) {
   for (auto type : getOperandsAndResultType(op)) {
     if (auto tensorType = dyn_cast<RankedTensorType>(type)) {
       if (tensorType.getRank() != 2)
-        return op->emitError("tensor can only have rank 2");
+        return op->emitError("ranked tensor can only have rank 2");
       auto numElements = tensorType.getNumElements();
-      if (numElements > maxElements)
-        return op->emitError("maximum allowed number of elements is")
-               << maxElements << ", but " << *op << " has more than that";
       if ((numElements & (numElements - 1)) != 0)
         return op->emitError("number of elements must be power of 2, but ")
                << *op << " has " << numElements << " doesn't follow the rule";
+      continue;
+    }
+    if (auto sharedType = dyn_cast<SharedMemRefType>(type)) {
+      if (sharedType.getRank() != 2)
+        return op->emitError("shared memref can only have rank 2");
+      auto numElements = sharedType.getNumElements();
+      if ((numElements & (numElements - 1)) != 0)
+        return op->emitError("number of elements must be power of 2, but ")
+               << *op << " has " << numElements << " doesn't follow the rule";
+      continue;
+    }
+    if (auto globalType = dyn_cast<GlobalMemRefType>(type)) {
+      if (globalType.getRank() != 2)
+        return op->emitError("global memref can only have rank 2");
+      continue;
     }
   }
   return success();
 }
 
-LogicalResult OpTrait::impl::verifyValidTensorShape(Operation *op) {
+LogicalResult OpTrait::impl::verifyValidShape(Operation *op) {
   bool noInvalid = true;
   op->walk([&](Operation *op) {
-    if (failed(verifyValidTensorShapeImpl(op)))
+    if (failed(verifyValidShapeImpl(op)))
       noInvalid = false;
   });
   return success(noInvalid);
 }
 
 static LogicalResult verifySameLayoutImpl(Type typeA, Type typeB) {
-  auto getLayout = [](Type type) {
+  auto getLayout = [](Type type) -> Attribute {
     if (auto tensorType = dyn_cast<RankedTensorType>(type))
       return tensorType.getEncoding();
-    return Attribute();
+    return nullptr;
   };
   auto layoutA = getLayout(typeA);
   auto layoutB = getLayout(typeB);
