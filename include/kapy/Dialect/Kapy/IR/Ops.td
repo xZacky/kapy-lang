@@ -48,7 +48,8 @@ class Kapy_Op<string keyword, list<Trait> traits = []>
     : Op<Kapy_Dialect, keyword, traits>;
 
 def Kapy_FPToFPOp : Kapy_Op<
-  "fptofp", [Pure, SameOperandsAndResultShape, SameOperandsAndResultLayout]
+  "fptofp",
+  [Elementwise, Pure, SameOperandsAndResultShape, SameOperandsAndResultLayout]
 > {
   let description = [{
     Cast between floating-point types, attribute `$rounding_mode` must be set
@@ -93,21 +94,41 @@ def Kapy_ClampFOp : Kapy_Op<
   let assemblyFormat = "$source `,` $low `,` $high attr-dict `:` type($source)";
 }
 
-def Kapy_MkGlobalOp : Kapy_Op<"mk_global", [Pure]> {
+def Kapy_MkGlobalOp : Kapy_Op<"mk_global", [Pure, ResultInGlobalMemory]> {
   let arguments = (ins
     I64:$address, I32:$size_x, I32:$size_y, I32:$stride_x, I32:$stride_y
   );
-  let results = (outs Kapy_Global:$result);
+  let results = (outs Kapy_Tensor:$result);
 
   let assemblyFormat = [{
     $address `,` `[` $size_x `,` $size_y `]` `,` `[` $stride_x `,` $stride_y `]`
-    attr-dict `:` qualified(type($result))
+    attr-dict `:` type($result)
   }];
+}
+
+def Kapy_SvGlobalOp : Kapy_Op<
+  "sv_global", [Pure, SourceInGlobalMemory, ResultInGlobalMemory]
+> {
+  let description = "Takes a subview of tensor in global memory.";
+
+  let arguments = (ins Kapy_Tensor:$source, I32:$offset_x, I32:$offset_y);
+  let results = (outs Kapy_Tensor:$result);
+
+  let assemblyFormat = [{
+    $source `[` $offset_x `,` $offset_y `]` attr-dict `:` type($source) `->`
+    type($result)
+  }];
+
+  let hasCanonicalizeMethod = 1;
+  let hasVerifier = 1;
 }
 
 def Kapy_LdGlobalOp : Kapy_Op<
   "ld_global", 
   [
+    SameOperandsAndResultShape,
+    SameOperandsAndResultElementType,
+    SourceInGlobalMemory,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
     TypesMatchWith<"from other type infer result type",
                    "other", "result", "$_self">
@@ -119,9 +140,7 @@ def Kapy_LdGlobalOp : Kapy_Op<
   }];
 
   let arguments = (ins
-    Kapy_Global:$source,
-    I32:$offset_x,
-    I32:$offset_y,
+    Kapy_Tensor:$source,
     Kapy_Tensor:$other,
     Kapy_DefaultValuedCacheModifierAttr:$cache_modifier,
     Kapy_DefaultValuedEvictPriorityAttr:$evict_priority,
@@ -130,8 +149,7 @@ def Kapy_LdGlobalOp : Kapy_Op<
   let results = (outs Kapy_Tensor:$result);
 
   let assemblyFormat = [{
-    $source `[` $offset_x `,` $offset_y `]` `,` $other attr-dict `:`
-    qualified(type($source)) `->` type($other)
+    $source `,` $other attr-dict `:` qualified(type($source)) `->` type($other)
   }];
 
   let extraClassDeclaration = [{
@@ -140,31 +158,37 @@ def Kapy_LdGlobalOp : Kapy_Op<
 }
 
 def Kapy_StGlobalOp : Kapy_Op<
-  "st_global", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]
+  "st_global",
+  [
+    SameOperandsShape,
+    SameOperandsElementType,
+    TargetInGlobalMemory,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]
 > {
   let description = [{
-    For each element, stores `$value` to `$target`.
+    For each element, stores `$source` to `$target`.
     For memory access out of range, do nothing.
   }];
 
   let arguments = (ins
-    Kapy_Global:$target,
-    I32:$offset_x,
-    I32:$offset_y,
-    Kapy_Tensor:$value,
+    Kapy_Tensor:$source,
+    Kapy_Tensor:$target,
     Kapy_DefaultValuedCacheModifierAttr:$cache_modifier,
     Kapy_DefaultValuedEvictPriorityAttr:$evict_priority
   );
 
   let assemblyFormat = [{
-    $target `[` $offset_x `,` $offset_y `]` `,` $value attr-dict `:`
-    qualified(type($target)) `,` type($value)
+    $source `,` $target attr-dict `:` type($source) `,` type($target)
   }];
 }
 
 def Kapy_AtomicRMWGlobalOp : Kapy_Op<
   "atomic_rmw_global",
   [
+    SameOperandsAndResultShape,
+    SameOperandsAndResultElementType,
+    SourceInGlobalMemory,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
     TypesMatchWith<"from value type infer other type",
                    "value", "other", "$_self">,
@@ -180,9 +204,7 @@ def Kapy_AtomicRMWGlobalOp : Kapy_Op<
 
   let arguments = (ins
     Kapy_AtomicRMWKindAttr:$kind,
-    Kapy_Global:$source,
-    I32:$offset_x,
-    I32:$offset_y,
+    Kapy_Tensor:$source,
     Kapy_Tensor:$value,
     Kapy_Tensor:$other,
     Kapy_MemSemanticAttr:$mem_semantic
@@ -190,64 +212,91 @@ def Kapy_AtomicRMWGlobalOp : Kapy_Op<
   let results = (outs Kapy_Tensor:$result);
 
   let assemblyFormat = [{
-    $kind $source `[` $offset_x `,` $offset_y `]` `,` $value `,` $other
-    attr-dict `:` qualified(type($source)) `->` type($value)
+    $kind $source `,` $value `,` $other attr-dict `:` type($source) `->`
+    type($value)
   }];
 }
 
 def Kapy_MkSharedOp : Kapy_Op<
-  "mk_shared", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]
+  "mk_shared",
+  [ResultInSharedMemory, DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]
 > {
-  let results = (outs Kapy_Shared:$result);
+  let results = (outs Kapy_Tensor:$result);
 
   let assemblyFormat = "attr-dict `:` qualified(type($result))";
 }
 
-def Kapy_LdSharedOp : Kapy_Op<
-  "ld_shared", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]
+def Kapy_SvSharedOp : Kapy_Op<
+  "sv_shared", [Pure, SourceInSharedMemory, ResultInSharedMemory]
 > {
-  let arguments = (ins Kapy_Shared:$source, I32:$offset_x, I32:$offset_y);
+  let description = "Takes a subview of tensor in shared memory.";
+
+  let arguments = (ins Kapy_Tensor:$source, I32:$offset_x, I32:$offset_y);
   let results = (outs Kapy_Tensor:$result);
 
   let assemblyFormat = [{
-    $source `[` $offset_x `,` $offset_y `]` attr-dict `:`
-    qualified(type($source)) `->` type($result)
+    $source `[` $offset_x `,` $offset_y `]` attr-dict `:` type($source) `->`
+    type($result)
+  }];
+
+  let hasCanonicalizeMethod = 1;
+  let hasVerifier = 1;
+}
+
+def Kapy_LdSharedOp : Kapy_Op<
+  "ld_shared",
+  [
+    SameOperandsAndResultShape,
+    SameOperandsAndResultElementType,
+    SourceInSharedMemory,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]
+> {
+  let arguments = (ins Kapy_Tensor:$source);
+  let results = (outs Kapy_Tensor:$result);
+
+  let assemblyFormat = [{
+    $source attr-dict `:` type($source) `->` type($result)
   }];
 }
 
 def Kapy_StSharedOp : Kapy_Op<
-  "st_shared", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]
+  "st_shared",
+  [
+    SameOperandsAndResultShape,
+    SameOperandsAndResultElementType,
+    TargetInSharedMemory,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]
 > {
-  let arguments = (ins
-    Kapy_Shared:$target, I32:$offset_x, I32:$offset_y, Kapy_Tensor:$value
-  );
+  let arguments = (ins Kapy_Tensor:$source, Kapy_Tensor:$target);
   
   let assemblyFormat = [{
-    $target `[` $offset_x `,` $offset_y `]` `,` $value attr-dict `:`
-    qualified(type($target)) `,` type($value)
+    $source `,` $target attr-dict `:` type($source) `,` type($target)
   }];
 }
 
 def Kapy_CpAsyncGlobalToSharedOp : Kapy_Op<
   "cp_async_global_to_shared",
-  [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]
+  [
+    SameOperandsShape,
+    SameOperandsElementType,
+    SourceInGlobalMemory,
+    TargetInSharedMemory,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]
 > {
   let arguments = (ins
-    Kapy_Global:$source,
-    I32:$source_offset_x,
-    I32:$source_offset_y,
-    Kapy_Shared:$target,
-    I32:$target_offset_x,
-    I32:$target_offset_y,
+    Kapy_Tensor:$source,
+    Kapy_Tensor:$target,
     Kapy_Tensor:$other,
     Kapy_DefaultValuedCacheModifierAttr:$cache_modifier,
     Kapy_DefaultValuedEvictPriorityAttr:$evict_priority
   );
 
   let assemblyFormat = [{
-    $source `[` $source_offset_x `,` $source_offset_y `]` `,` $target `[`
-    $target_offset_x `,` $target_offset_y `]` `,` $other attr-dict `:`
-    qualified(type($source)) `,` qualified(type($target)) `,` type($other)
+    $source `,` $target `,` $other attr-dict `:` type($source) `,` type($target)
+    `,` type($other)
   }];
 }
 
@@ -344,9 +393,7 @@ def Kapy_MatmulOp : Kapy_Op<
     TypesMatchWith<"from acc type infer result type", "acc", "result", "$_self">
   ]
 > {
-  let description = [{
-    Computes `$result = matmul($lhs, $rhs) + $acc`.
-  }];
+  let description = "Computes `$result = matmul($lhs, $rhs) + $acc`.";
 
   let arguments = (ins
     Kapy_Tensor:$lhs,
@@ -525,7 +572,8 @@ def Kapy_FuncOp : Kapy_Op<
     FunctionOpInterface,
     IsolatedFromAbove,
     OpAsmOpInterface,
-    ValidShape
+    ValidTensorShape,
+    ValidMemorySpace
   ]
 > {
   let arguments = (ins

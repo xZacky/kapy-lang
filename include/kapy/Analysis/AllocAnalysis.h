@@ -44,14 +44,14 @@ namespace kapy {
 template <typename T> class Interval {
 public:
   Interval() = default;
-  Interval(T start, T end) : START(start), END(end) {
+  Interval(T start, T end) : startInt(start), endInt(end) {
     static_assert(std::is_integral_v<T>);
     assert(start <= end);
   }
 
-  T start() const { return START; }
-  T end() const { return END; }
-  T size() const { return END - START; }
+  T start() const { return startInt; }
+  T end() const { return endInt; }
+  T size() const { return endInt - startInt; }
 
   bool intersects(const Interval &other) const {
     return start() < other.end() && other.start() < end();
@@ -67,8 +67,8 @@ public:
   }
 
 private:
-  T START = std::numeric_limits<T>::min();
-  T END = std::numeric_limits<T>::max();
+  T startInt = std::numeric_limits<T>::min();
+  T endInt = std::numeric_limits<T>::max();
 };
 template <typename T> Interval(T, T) -> Interval<T>;
 
@@ -145,7 +145,8 @@ private:
 
   FunctionOpInterface funcOp;
   llvm::MapVector<Value, Buffer *> explicits;
-  DenseMap<Operation *, Buffer *> virtuals;
+  llvm::MapVector<Operation *, Buffer *> virtuals;
+  llvm::MapVector<Value, SetVector<Buffer *>> aliasSets;
   std::map<BufferId, Buffer> buffers;
   uint64_t allocatedSize = 0;
 
@@ -157,6 +158,10 @@ private:
       explicits[key] = &buffers[buffer.id];
     if constexpr (Kind == Buffer::BufferKind::VIRTUAL)
       virtuals[key] = &buffers[buffer.id];
+  }
+
+  void addAlias(Value value, Value aliased) {
+    aliasSets[value].insert(explicits[aliased]);
   }
 
   friend class AllocAnalysis;

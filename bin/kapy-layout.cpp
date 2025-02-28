@@ -22,23 +22,19 @@ static cl::opt<std::string> WriteFileName("o", //
                                           cl::init(""),
                                           cl::cat(PrinterCategory));
 
-static cl::opt<std::string> LayoutStr("l",                       //
-                                      cl::desc("Layout String"), //
-                                      cl::init(""),              //
-                                      cl::cat(PrinterCategory));
-
 static cl::opt<std::string> TensorStr("t",                       //
                                       cl::desc("Tensor String"), //
                                       cl::init(""),              //
                                       cl::cat(PrinterCategory));
 
 LogicalResult printImpl(RankedTensorType tensorType, llvm::raw_ostream &os) {
-  auto dialectName = tensorType.getEncoding().getDialect().getNamespace();
-  if (dialectName == "kgpu") {
-    os << kapy::getTensorLayoutString(tensorType);
+  auto layout = kapy::getLayout<Attribute>(tensorType);
+  auto &dialect = layout.getDialect();
+  if (dialect.getNamespace() == "kgpu") {
+    os << kapy::getLayoutString(tensorType);
     return success();
   }
-  llvm::errs() << "Unsuported layout: " << tensorType.getEncoding() << "\n";
+  llvm::errs() << "Unsuported layout: " << layout << "\n";
   return failure();
 }
 
@@ -66,11 +62,11 @@ LogicalResult printFromFile(MLIRContext *context, StringRef fileName,
     return failure();
   }
 
-  auto printLambda = [&](StringRef name, Attribute layout) {
-    ss << "Layout: " << layout << "\n";
-    ss << "Tensor: " << tensorType << "\n";
+  auto printLambda = [&](StringRef name, Attribute encoding) {
+    ss << encoding << "\n";
+    ss << tensorType << "\n";
     tensorType = RankedTensorType::get(tensorType.getShape(),
-                                       tensorType.getElementType(), layout);
+                                       tensorType.getElementType(), encoding);
     return printImpl(tensorType, ss);
   };
 
@@ -78,25 +74,6 @@ LogicalResult printFromFile(MLIRContext *context, StringRef fileName,
     if (failed(printLambda(aliasDef.name, aliasDef.value)))
       return failure();
   return success();
-}
-
-LogicalResult printFromString(MLIRContext *context, StringRef layoutStr,
-                              RankedTensorType tensorType,
-                              llvm::raw_string_ostream &ss) {
-  if (layoutStr.empty())
-    return success();
-
-  auto layout = parseAttribute(layoutStr, context);
-  if (!layout) {
-    llvm::errs() << "Invalid layout: " << layoutStr << "\n";
-    return failure();
-  }
-
-  ss << "Layout: " << layout << "\n";
-  ss << "Tensor: " << tensorType << "\n";
-  tensorType = RankedTensorType::get(tensorType.getShape(),
-                                     tensorType.getElementType(), layout);
-  return printImpl(tensorType, ss);
 }
 
 int main(int argc, char **argv) {
@@ -129,9 +106,6 @@ int main(int argc, char **argv) {
   llvm::raw_string_ostream ss(string);
 
   if (failed(printFromFile(&context, InputFileName, tensorType, ss)))
-    return 1;
-
-  if (failed(printFromString(&context, LayoutStr, tensorType, ss)))
     return 1;
 
   if (WriteFileName.empty()) {

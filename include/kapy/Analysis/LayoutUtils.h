@@ -18,8 +18,6 @@ namespace kapy {
 
 class MatmulOp;
 class FragmentsLayoutAttr;
-class GlobalMemRefType;
-class SharedMemRefType;
 
 /// Get a fragments layout with the given parameters, this function will try to
 /// make as many contiguous threads on the major axis as possible.
@@ -34,15 +32,15 @@ FragmentsLayoutAttr getFragmentsLayout(RankedTensorType tensorType,
 std::array<FragmentsLayoutAttr, 3> getOperandLayouts(MatmulOp matmulOp);
 
 /// Get all the candidate layouts for the given operation (must be memory access
-/// or MatmulOp), we will choose from these layouts in KgpuOptimizeLayoutPass.
+/// operation), we will choose from these layouts in KgpuOptimizeLayoutPass.
 SetVector<FragmentsLayoutAttr> getCandidateLayouts(Operation *op);
 
 /// Return true if global memory access is coalesced.
-bool isCoalescedGlobalAccess(GlobalMemRefType globalType,
+bool isCoalescedGlobalAccess(RankedTensorType globalType,
                              RankedTensorType tensorType, int64_t alignment);
 
 /// Return true if shared memory access is 0 bank conflict.
-bool is0ConflictSharedAccess(SharedMemRefType sharedType,
+bool is0ConflictSharedAccess(RankedTensorType sharedType,
                              RankedTensorType tensorType);
 
 } // namespace kapy

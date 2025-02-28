@@ -125,6 +125,16 @@ def Kapy_MatmulImplWayAttr : Kapy_EnumAttr<
   ]
 >;
 
+def Kapy_MemorySpaceAttr : Kapy_EnumAttr<
+  "MemorySpace",
+  "memory space",
+  [
+    I32EnumAttrCase<"GLOBAL_MEMORY", 0, "global_memory">,
+    I32EnumAttrCase<"SHARED_MEMORY", 1, "shared_memory">,
+    I32EnumAttrCase<"REGISTER_FILE", 2, "register_file">
+  ]
+>;
+
 def Kapy_DefaultValuedCacheModifierAttr
     : DefaultValuedAttr<Kapy_CacheModifierAttr, "CacheModifier::NONE">;
 

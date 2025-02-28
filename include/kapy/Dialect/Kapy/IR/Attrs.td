@@ -14,20 +14,15 @@ class Kapy_AttrDef<string name, string keyword, list<Trait> traits = []>
   let attrName = "kapy." # keyword;
 }
 
-def Strided2dLayoutAttr : Kapy_AttrDef<"Strided2dLayout", "strided2d"> {
-  let summary = "strided 2d memory layout";
+def EncodingAttr : Kapy_AttrDef<"Encoding", "encoding"> {
+  let summary = "tensor encoding";
 
-  let mnemonic = "strided2d";
-  let parameters = (ins "int64_t":$strideX, "int64_t":$strideY);
+  let mnemonic = "encoding";
+  let parameters = (ins
+    "MemorySpace":$memory, OptionalParameter<"Attribute">:$layout
+  );
 
-  let hasCustomAssemblyFormat = 1;
-
-  let extraClassDeclaration = [{
-    inline bool isRowMajor() const { return getStrideY() == 1; }
-    inline bool isColMajor() const { return getStrideX() == 1; }
-
-    AffineMap getAffineMap() const;
-  }];
+  let assemblyFormat = "`<` $memory (`,` $layout^)? `>`";
 }
 
 #endif // KAPY_DIALECT_KAPY_IR_ATTRS

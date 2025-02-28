@@ -23,24 +23,6 @@ using namespace mlir::kapy;
 
 namespace {
 
-class KgpuOpAsmInterface : public OpAsmDialectInterface {
-public:
-  using OpAsmDialectInterface::OpAsmDialectInterface;
-
-  virtual AliasResult getAlias(Attribute attr,
-                               llvm::raw_ostream &os) const override {
-    if (isa<Swizzled4LayoutAttr>(attr)) {
-      os << "swizzled4";
-      return AliasResult::FinalAlias;
-    }
-    if (isa<FragmentsLayoutAttr>(attr)) {
-      os << "fragments";
-      return AliasResult::FinalAlias;
-    }
-    return OpAsmDialectInterface::getAlias(attr, os);
-  }
-};
-
 class KgpuLayoutInterface : public KapyLayoutInterface {
 public:
   using KapyLayoutInterface::KapyLayoutInterface;
@@ -68,7 +50,7 @@ public:
 private:
   static LogicalResult verifyMatmulOpAccLayout(RankedTensorType accType,
                                                MatmulImplWay implWay) {
-    auto accLayout = cast<FragmentsLayoutAttr>(accType.getEncoding());
+    auto accLayout = getLayout<FragmentsLayoutAttr>(accType);
     if (implWay == MatmulImplWay::FMA) {
       if (accLayout.getLaneLoops() != SmallVector<int64_t, 2>{2, 2} &&
           accLayout.getLaneLoops() != SmallVector<int64_t, 2>{4, 4})
@@ -89,8 +71,8 @@ private:
   static LogicalResult verifyMatmulOpLhsLayout(RankedTensorType lhsType,
                                                RankedTensorType accType,
                                                MatmulImplWay implWay) {
-    auto lhsLayout = cast<FragmentsLayoutAttr>(lhsType.getEncoding());
-    auto accLayout = cast<FragmentsLayoutAttr>(accType.getEncoding());
+    auto lhsLayout = getLayout<FragmentsLayoutAttr>(lhsType);
+    auto accLayout = getLayout<FragmentsLayoutAttr>(accType);
     if (implWay == MatmulImplWay::FMA) {
       if (lhsLayout.getLaneArray() != accLayout.getLaneArray())
         return failure();
@@ -129,8 +111,8 @@ private:
   static LogicalResult verifyMatmulOpRhsLayout(RankedTensorType rhsType,
                                                RankedTensorType accType,
                                                MatmulImplWay implWay) {
-    auto rhsLayout = cast<FragmentsLayoutAttr>(rhsType.getEncoding());
-    auto accLayout = cast<FragmentsLayoutAttr>(accType.getEncoding());
+    auto rhsLayout = getLayout<FragmentsLayoutAttr>(rhsType);
+    auto accLayout = getLayout<FragmentsLayoutAttr>(accType);
     if (implWay == MatmulImplWay::FMA) {
       if (rhsLayout.getLaneArray() != accLayout.getLaneArray())
         return failure();
@@ -177,8 +159,67 @@ void KgpuDialect::initialize() {
 #define GET_OP_LIST
 #include "kapy/Dialect/Kgpu/IR/Ops.cpp.inc"
       >();
-  addInterfaces<KgpuOpAsmInterface>();
   addInterfaces<KgpuLayoutInterface>();
+}
+
+Attribute Strided2dLayoutAttr::parse(AsmParser &parser, Type type) {
+  if (failed(parser.parseLess()))
+    return nullptr;
+
+  SmallVector<int64_t, 2> strides;
+  auto parseStride = [&]() -> ParseResult {
+    auto stride = ShapedType::kDynamic;
+    if (succeeded(parser.parseOptionalQuestion())) {
+      strides.push_back(stride);
+      return success();
+    }
+    if (succeeded(parser.parseInteger(stride))) {
+      strides.push_back(stride);
+      return success();
+    }
+    return failure();
+  };
+  if (failed(parser.parseCommaSeparatedList(AsmParser::Delimiter::Square,
+                                            parseStride)))
+    return nullptr;
+
+  if (failed(parser.parseGreater()))
+    return nullptr;
+
+  assert(strides.size() == 2);
+  return Strided2dLayoutAttr::get(parser.getContext(), strides[0], strides[1]);
+}
+
+void Strided2dLayoutAttr::print(AsmPrinter &printer) const {
+  auto printQuestionOrInt = [&](int64_t value) {
+    if (ShapedType::isDynamic(value))
+      printer << "?";
+    else
+      printer << value;
+  };
+
+  printer << "<[";
+  printQuestionOrInt(getStrideX());
+  printer << ", ";
+  printQuestionOrInt(getStrideY());
+  printer << "]>";
+}
+
+AffineMap Strided2dLayoutAttr::getAffineMap() const {
+  auto result = getAffineConstantExpr(0, getContext());
+  unsigned numDims = 0;
+  unsigned numSyms = 0;
+  for (auto stride : {getStrideX(), getStrideY()}) {
+    auto dim = getAffineDimExpr(numDims++, getContext());
+    if (ShapedType::isDynamic(stride)) {
+      auto coeff = getAffineSymbolExpr(numSyms++, getContext());
+      result = result + dim * coeff;
+    } else {
+      auto coeff = getAffineConstantExpr(stride, getContext());
+      result = result + dim * coeff;
+    }
+  }
+  return AffineMap::get(numDims, numSyms, result);
 }
 
 SmallVector<int64_t, 2>
@@ -277,43 +318,40 @@ FragmentsLayoutAttr FragmentsLayoutAttr::transpose() const {
 }
 
 LogicalResult ChangeOp::canonicalize(ChangeOp op, PatternRewriter &rewriter) {
-  if (op.getType() == op.getSource().getType()) {
-    op.replaceAllUsesWith(op.getSource());
+  auto source = op.getSource();
+  auto resultType = op.getType();
+  if (resultType == source.getType()) {
+    op.replaceAllUsesWith(source);
     return success();
   }
-  auto *defOp = op.getSource().getDefiningOp();
+  auto *defOp = source.getDefiningOp();
   if (!defOp)
     return failure();
-  if (auto changeOp = dyn_cast<ChangeOp>(defOp)) {
-    rewriter.replaceOpWithNewOp<ChangeOp>(op, op.getType(),
-                                          changeOp.getSource());
+  if (auto inOp = dyn_cast<ChangeOp>(defOp)) {
+    rewriter.replaceOpWithNewOp<ChangeOp>(op, resultType, inOp.getSource());
     return success();
   }
-  if (auto constantOp = dyn_cast<arith::ConstantOp>(defOp)) {
-    if (auto splatAttr = dyn_cast<SplatElementsAttr>(constantOp.getValue())) {
-      rewriter.replaceOpWithNewOp<arith::ConstantOp>(
-          op, SplatElementsAttr::get(op.getType(),
-                                     splatAttr.getSplatValue<Attribute>()));
-      return success();
-    }
-  }
-  if (auto splatOp = dyn_cast<SplatOp>(defOp)) {
-    rewriter.replaceOpWithNewOp<SplatOp>(op, op.getType(), splatOp.getSource());
+  if (auto inOp = dyn_cast<SplatOp>(defOp)) {
+    rewriter.replaceOpWithNewOp<SplatOp>(op, resultType, inOp.getSource());
     return success();
   }
-  if (auto ldSharedOp = dyn_cast<LdSharedOp>(defOp)) {
-    rewriter.replaceOpWithNewOp<LdSharedOp>(
-        op, op.getType(), ldSharedOp.getSource(), ldSharedOp.getOffsetX(),
-        ldSharedOp.getOffsetY());
+  if (auto inOp = dyn_cast<LdSharedOp>(defOp)) {
+    rewriter.replaceOpWithNewOp<LdSharedOp>(op, resultType, inOp.getSource());
     return success();
   }
-  if (auto ldMatrixOp = dyn_cast<LdMatrixOp>(defOp)) {
-    rewriter.replaceOpWithNewOp<LdMatrixOp>(
-        op, op.getType(), ldMatrixOp.getSource(), ldMatrixOp.getOffsetX(),
-        ldMatrixOp.getOffsetY(), ldMatrixOp.getTranspose());
+  if (auto inOp = dyn_cast<LdMatrixOp>(defOp)) {
+    rewriter.replaceOpWithNewOp<LdMatrixOp>(op, resultType, inOp.getSource(),
+                                            inOp.getTranspose());
     return success();
   }
   return failure();
+}
+
+OpFoldResult ChangeOp::fold(FoldAdaptor adaptor) {
+  auto source = adaptor.getSource();
+  if (auto splatAttr = dyn_cast_if_present<SplatElementsAttr>(source))
+    return splatAttr.resizeSplat(getType());
+  return nullptr;
 }
 
 void LdMatrixOp::getEffects(
@@ -359,11 +397,11 @@ static std::string getElementString(std::array<int64_t, 2> idPair,
   return string;
 }
 
-std::string kapy::getTensorLayoutString(RankedTensorType tensorType) {
+std::string kapy::getLayoutString(RankedTensorType tensorType) {
   auto shape = tensorType.getShape();
   auto numElems = tensorType.getNumElements();
   std::vector<std::vector<std::array<int64_t, 2>>> indexToIdPairs(numElems);
-  auto layout = cast<FragmentsLayoutAttr>(tensorType.getEncoding());
+  auto layout = getLayout<FragmentsLayoutAttr>(tensorType);
   auto option = FragmentsLayoutAttr::MapOption::TO_TENSOR;
   auto map = layout.getAffineMap(shape, option);
   auto loopSize = product(layout.getLoopSpace(shape));

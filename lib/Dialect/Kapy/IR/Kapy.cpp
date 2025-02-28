@@ -44,9 +44,6 @@ using namespace mlir::kapy;
 #define GET_ATTRDEF_CLASSES
 #include "kapy/Dialect/Kapy/IR/Attrs.cpp.inc"
 
-#define GET_TYPEDEF_CLASSES
-#include "kapy/Dialect/Kapy/IR/Types.cpp.inc"
-
 #define GET_OP_CLASSES
 #include "kapy/Dialect/Kapy/IR/Ops.cpp.inc"
 
@@ -60,8 +57,18 @@ public:
 
   virtual AliasResult getAlias(Attribute attr,
                                llvm::raw_ostream &os) const override {
-    if (isa<Strided2dLayoutAttr>(attr)) {
-      os << "strided2d";
+    if (auto encoding = dyn_cast<EncodingAttr>(attr)) {
+      switch (encoding.getMemory()) {
+      case (MemorySpace::GLOBAL_MEMORY):
+        os << "global";
+        break;
+      case (MemorySpace::SHARED_MEMORY):
+        os << "shared";
+        break;
+      case (MemorySpace::REGISTER_FILE):
+        os << "values";
+        break;
+      }
       return AliasResult::FinalAlias;
     }
     return OpAsmDialectInterface::getAlias(attr, os);
@@ -119,10 +126,6 @@ void KapyDialect::initialize() {
 #define GET_ATTRDEF_LIST
 #include "kapy/Dialect/Kapy/IR/Attrs.cpp.inc"
       >();
-  addTypes<
-#define GET_TYPEDEF_LIST
-#include "kapy/Dialect/Kapy/IR/Types.cpp.inc"
-      >();
   addOperations<
 #define GET_OP_LIST
 #include "kapy/Dialect/Kapy/IR/Ops.cpp.inc"
@@ -134,127 +137,6 @@ void KapyDialect::initialize() {
 Operation *KapyDialect::materializeConstant(OpBuilder &builder, Attribute value,
                                             Type type, Location loc) {
   return arith::ConstantOp::materialize(builder, value, type, loc);
-}
-
-Attribute Strided2dLayoutAttr::parse(AsmParser &parser, Type type) {
-  if (failed(parser.parseLess()))
-    return nullptr;
-
-  SmallVector<int64_t, 2> strides;
-  auto parseStride = [&]() -> ParseResult {
-    auto stride = ShapedType::kDynamic;
-    if (succeeded(parser.parseOptionalQuestion())) {
-      strides.push_back(stride);
-      return success();
-    }
-    if (succeeded(parser.parseInteger(stride))) {
-      strides.push_back(stride);
-      return success();
-    }
-    return failure();
-  };
-  if (failed(parser.parseCommaSeparatedList(AsmParser::Delimiter::Square,
-                                            parseStride)))
-    return nullptr;
-
-  if (failed(parser.parseGreater()))
-    return nullptr;
-
-  assert(strides.size() == 2);
-  return Strided2dLayoutAttr::get(parser.getContext(), strides[0], strides[1]);
-}
-
-void Strided2dLayoutAttr::print(AsmPrinter &printer) const {
-  auto printQuestionOrInt = [&](int64_t value) {
-    if (ShapedType::isDynamic(value))
-      printer << "?";
-    else
-      printer << value;
-  };
-
-  printer << "<[";
-  printQuestionOrInt(getStrideX());
-  printer << ", ";
-  printQuestionOrInt(getStrideY());
-  printer << "]>";
-}
-
-AffineMap Strided2dLayoutAttr::getAffineMap() const {
-  auto result = getAffineConstantExpr(0, getContext());
-  unsigned numDims = 0;
-  unsigned numSyms = 0;
-  for (auto stride : {getStrideX(), getStrideY()}) {
-    auto dim = getAffineDimExpr(numDims++, getContext());
-    if (ShapedType::isDynamic(stride)) {
-      auto coeff = getAffineSymbolExpr(numSyms++, getContext());
-      result = result + dim * coeff;
-    } else {
-      auto coeff = getAffineConstantExpr(stride, getContext());
-      result = result + dim * coeff;
-    }
-  }
-  return AffineMap::get(numDims, numSyms, result);
-}
-
-Type GlobalMemRefType::parse(AsmParser &parser) {
-  if (failed(parser.parseLess()))
-    return nullptr;
-  SmallVector<int64_t, 2> shape;
-  if (failed(parser.parseDimensionList(shape)))
-    return nullptr;
-  Type elementType;
-  if (failed(parser.parseType(elementType)))
-    return nullptr;
-  Attribute layout;
-  if (succeeded(parser.parseOptionalComma()))
-    if (failed(parser.parseAttribute(layout)))
-      return nullptr;
-  if (failed(parser.parseGreater()))
-    return nullptr;
-  return GlobalMemRefType::get(shape, elementType, layout);
-}
-
-void GlobalMemRefType::print(AsmPrinter &printer) const {
-  printer << "<";
-  for (auto size : getShape()) {
-    if (ShapedType::isDynamic(size))
-      printer << "?";
-    else
-      printer << size;
-    printer << "x";
-  }
-  printer << getElementType();
-  if (getEncoding())
-    printer << ", " << getEncoding();
-  printer << ">";
-}
-
-Type SharedMemRefType::parse(AsmParser &parser) {
-  if (failed(parser.parseLess()))
-    return nullptr;
-  SmallVector<int64_t, 2> shape;
-  if (failed(parser.parseDimensionList(shape, false)))
-    return nullptr;
-  Type elementType;
-  if (failed(parser.parseType(elementType)))
-    return nullptr;
-  Attribute layout;
-  if (succeeded(parser.parseOptionalComma()))
-    if (failed(parser.parseAttribute(layout)))
-      return nullptr;
-  if (failed(parser.parseGreater()))
-    return nullptr;
-  return SharedMemRefType::get(shape, elementType, layout);
-}
-
-void SharedMemRefType::print(AsmPrinter &printer) const {
-  printer << "<";
-  for (auto size : getShape())
-    printer << size << "x";
-  printer << getElementType();
-  if (getEncoding())
-    printer << ", " << getEncoding();
-  printer << ">";
 }
 
 LogicalResult FPToFPOp::verify() {
@@ -273,6 +155,34 @@ bool FPToFPOp::isDownCast() {
   auto oldBitWidth = getIntOrFloatBitWidth(getSource().getType());
   auto newBitWidth = getIntOrFloatBitWidth(getType());
   return newBitWidth < oldBitWidth;
+}
+
+LogicalResult SvGlobalOp::canonicalize(SvGlobalOp op,
+                                       PatternRewriter &rewriter) {
+  auto inOp = op.getSource().getDefiningOp<SvGlobalOp>();
+  if (!inOp)
+    return failure();
+  Value offsetX = rewriter.create<arith::AddIOp>(op.getLoc(), inOp.getOffsetX(),
+                                                 op.getOffsetX());
+  Value offsetY = rewriter.create<arith::AddIOp>(op.getLoc(), inOp.getOffsetY(),
+                                                 op.getOffsetY());
+  rewriter.replaceOpWithNewOp<SvGlobalOp>(op, op.getType(), inOp.getSource(),
+                                          offsetX, offsetY);
+  return success();
+}
+
+LogicalResult SvGlobalOp::verify() {
+  auto sourceType = getSource().getType();
+  auto resultType = getType();
+  if (sourceType.getElementType() != resultType.getElementType())
+    return emitOpError("source and result must have same element type");
+  if (!hasLayout(sourceType) && !hasLayout(resultType))
+    return success();
+  if (!hasLayout(sourceType) || !hasLayout(resultType))
+    return emitOpError("source and result must both have or without layout");
+  if (getLayout(sourceType) != getLayout(resultType))
+    return emitOpError("source and result must have same layout");
+  return success();
 }
 
 void LdGlobalOp::getEffects(
@@ -307,6 +217,34 @@ void MkSharedOp::getEffects(
   if (std::distance(getResult().use_begin(), getResult().use_end()) == 0)
     return;
   effects.emplace_back(MemoryEffects::Allocate::get(), SharedMemory::get());
+}
+
+LogicalResult SvSharedOp::canonicalize(SvSharedOp op,
+                                       PatternRewriter &rewriter) {
+  auto inOp = op.getSource().getDefiningOp<SvSharedOp>();
+  if (!inOp)
+    return failure();
+  Value offsetX = rewriter.create<arith::AddIOp>(op.getLoc(), inOp.getOffsetX(),
+                                                 op.getOffsetX());
+  Value offsetY = rewriter.create<arith::AddIOp>(op.getLoc(), inOp.getOffsetY(),
+                                                 op.getOffsetY());
+  rewriter.replaceOpWithNewOp<SvSharedOp>(op, op.getType(), inOp.getSource(),
+                                          offsetX, offsetY);
+  return success();
+}
+
+LogicalResult SvSharedOp::verify() {
+  auto sourceType = getSource().getType();
+  auto resultType = getType();
+  if (sourceType.getElementType() != resultType.getElementType())
+    return emitOpError("source and result must have same element type");
+  if (!hasLayout(sourceType) && !hasLayout(resultType))
+    return success();
+  if (!hasLayout(sourceType) || !hasLayout(resultType))
+    return emitOpError("source and result must both have or without layout");
+  if (getLayout(sourceType) != getLayout(resultType))
+    return emitOpError("source and result must have same layout");
+  return success();
 }
 
 void LdSharedOp::getEffects(
@@ -462,13 +400,12 @@ LogicalResult MatmulOp::verify() {
   }
   }
 
-  auto lhsLayout = lhsType.getEncoding();
-  auto rhsLayout = rhsType.getEncoding();
-  if (!lhsLayout && !rhsLayout)
+  if (!hasLayout(lhsType) && !hasLayout(rhsType))
     return success();
-  if (!lhsLayout || !rhsLayout)
+  if (!hasLayout(lhsType) || !hasLayout(rhsType))
     return emitOpError("lhs and rhs must both have or without layout");
-  auto *interface = cast<KapyLayoutInterface>(&lhsLayout.getDialect());
+  auto &dialect = getLayout(accType).getDialect();
+  auto *interface = cast<KapyLayoutInterface>(&dialect);
   return interface->verifyMatmulOpLayouts(*this);
 }
 
@@ -556,20 +493,21 @@ OpFoldResult SplatOp::fold(FoldAdaptor adaptor) {
 
 LogicalResult BroadcastOp::canonicalize(BroadcastOp op,
                                         PatternRewriter &rewriter) {
-  if (op.getType() == op.getSource().getType()) {
-    op.replaceAllUsesWith(op.getSource());
+  auto source = op.getSource();
+  auto resultType = op.getType();
+  if (resultType == source.getType()) {
+    op.replaceAllUsesWith(source);
     return success();
   }
-  auto *defOp = op.getSource().getDefiningOp();
+  auto *defOp = source.getDefiningOp();
   if (!defOp)
     return failure();
-  if (auto broadcastOp = dyn_cast<BroadcastOp>(defOp)) {
-    rewriter.replaceOpWithNewOp<BroadcastOp>(op, op.getType(),
-                                             broadcastOp.getSource());
+  if (auto inOp = dyn_cast<BroadcastOp>(defOp)) {
+    rewriter.replaceOpWithNewOp<BroadcastOp>(op, resultType, inOp.getSource());
     return success();
   }
-  if (auto splatOp = dyn_cast<SplatOp>(defOp)) {
-    rewriter.replaceOpWithNewOp<SplatOp>(op, op.getType(), splatOp.getSource());
+  if (auto inOp = dyn_cast<SplatOp>(defOp)) {
+    rewriter.replaceOpWithNewOp<SplatOp>(op, resultType, inOp.getSource());
     return success();
   }
   return failure();
@@ -605,16 +543,19 @@ TransposeOp::inferReturnTypes(MLIRContext *context, std::optional<Location> loc,
   if (sourceType.getRank() != 2)
     return emitOptionalError(loc, "source must have rank 2");
   auto shape = transpose(sourceType.getShape());
-  auto sourceLayout = sourceType.getEncoding();
-  if (!sourceLayout) {
-    returnTypes.push_back(
-        RankedTensorType::get(shape, sourceType.getElementType()));
+  if (!hasLayout(sourceType)) {
+    returnTypes.push_back(RankedTensorType::get(
+        shape, sourceType.getElementType(), sourceType.getEncoding()));
     return success();
   }
-  auto *interface = cast<KapyLayoutInterface>(&sourceLayout.getDialect());
+  auto encoding = cast<EncodingAttr>(sourceType.getEncoding());
+  auto sourceLayout = encoding.getLayout();
+  auto &dialect = sourceLayout.getDialect();
+  auto *interface = cast<KapyLayoutInterface>(&dialect);
   auto resultLayout = interface->inferTransposeOpLayout(sourceLayout);
+  encoding = EncodingAttr::get(context, encoding.getMemory(), resultLayout);
   returnTypes.push_back(
-      RankedTensorType::get(shape, sourceType.getElementType(), resultLayout));
+      RankedTensorType::get(shape, sourceType.getElementType(), encoding));
   return success();
 }
 
@@ -623,12 +564,12 @@ LogicalResult TransposeOp::canonicalize(TransposeOp op,
   auto *defOp = op.getSource().getDefiningOp();
   if (!defOp)
     return failure();
-  if (auto transposeOp = dyn_cast<TransposeOp>(defOp)) {
-    op.replaceAllUsesWith(transposeOp.getSource());
+  if (auto inOp = dyn_cast<TransposeOp>(defOp)) {
+    op.replaceAllUsesWith(inOp.getSource());
     return success();
   }
-  if (auto splatOp = dyn_cast<SplatOp>(defOp)) {
-    rewriter.replaceOpWithNewOp<SplatOp>(op, op.getType(), splatOp.getSource());
+  if (auto inOp = dyn_cast<SplatOp>(defOp)) {
+    rewriter.replaceOpWithNewOp<SplatOp>(op, op.getType(), inOp.getSource());
     return success();
   }
   return failure();
@@ -763,7 +704,7 @@ int64_t kapy::getAlignment(Operation *op) {
 }
 
 static bool thereAreMoreElementsThanLanes(Operation *op, Value value) {
-  return cast<GlobalMemRefType>(value.getType()).getNumElements() > warpSize;
+  return cast<RankedTensorType>(value.getType()).getNumElements() > warpSize;
 }
 
 bool kapy::isExpensiveGlobalRead(Operation *op) {
@@ -822,4 +763,29 @@ bool kapy::isExpensiveSharedWrite(Operation *op) {
         thereAreMoreElementsThanLanes(op, effect.getValue()))
       return true;
   return false;
+}
+
+bool kapy::inGlobalMemory(RankedTensorType tensorType) {
+  auto encoding = cast<EncodingAttr>(tensorType.getEncoding());
+  return encoding.getMemory() == MemorySpace::GLOBAL_MEMORY;
+}
+
+bool kapy::inSharedMemory(RankedTensorType tensorType) {
+  auto encoding = cast<EncodingAttr>(tensorType.getEncoding());
+  return encoding.getMemory() == MemorySpace::SHARED_MEMORY;
+}
+
+bool kapy::inRegisterFile(RankedTensorType tensorType) {
+  auto encoding = cast<EncodingAttr>(tensorType.getEncoding());
+  return encoding.getMemory() == MemorySpace::REGISTER_FILE;
+}
+
+bool kapy::hasLayout(RankedTensorType tensorType) {
+  auto encoding = cast<EncodingAttr>(tensorType.getEncoding());
+  return encoding.getLayout() != nullptr;
+}
+
+Attribute kapy::getLayout(RankedTensorType tensorType) {
+  auto encoding = cast<EncodingAttr>(tensorType.getEncoding());
+  return encoding.getLayout();
 }

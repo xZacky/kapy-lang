@@ -29,6 +29,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "kapy/Analysis/AllocAnalysis.h"
+#include "kapy/Analysis/AliasAnalysis.h"
+#include "kapy/Analysis/AnalysisUtils.h"
 #include "kapy/Dialect/Kapy/IR/Kapy.h"
 #include "kapy/Support/CommonUtils.h"
 #include "mlir/Analysis/Liveness.h"
@@ -56,6 +58,8 @@ private:
   llvm::MapVector<Buffer *, Interval<OpId>> bufferToLiveness;
 
   void addBuffers(DenseMap<FunctionOpInterface, AllocInfo> &funcToInfo);
+
+  void addAlias(Value value, AliasAnalysis &analysis);
 
   void resolveLiveness();
 
@@ -96,6 +100,26 @@ void AllocAnalysis::addBuffers(
         info->addBuffer<Buffer::BufferKind::VIRTUAL>(op, size);
     }
   });
+  auto solver = createDataFlowSolver();
+  auto *analysis = solver->load<AliasAnalysis>();
+  funcOp->walk([&](Operation *op) {
+    if (op->hasTrait<OpTrait::IsIsolatedFromAbove>())
+      if (failed(solver->initializeAndRun(op)))
+        llvm_unreachable("failed to run alias analysis");
+  });
+  funcOp->walk<WalkOrder::PreOrder>([&](Operation *op) {
+    for (auto operand : op->getOperands())
+      addAlias(operand, *analysis);
+    for (auto result : op->getResults())
+      addAlias(result, *analysis);
+  });
+}
+
+void AllocAnalysis::addAlias(Value value, AliasAnalysis &analysis) {
+  auto aliasSet = analysis.getLatticeElement(value)->getValue().getAliasSet();
+  if (!aliasSet.empty())
+    for (auto aliased : aliasSet)
+      info->addAlias(value, aliased);
 }
 
 void AllocAnalysis::resolveLiveness() {
@@ -118,10 +142,9 @@ void AllocAnalysis::resolveLiveness() {
   DenseMap<Operation *, OpId> opToId;
   funcOp->walk([&](Operation *op) { opToId[op] = opToId.size(); });
 
-  // Analyze liveness of explicit buffers.
-  Liveness liveness(funcOp);
+  Liveness funcLiveness(funcOp);
   auto getLiveness = [&](Value value) {
-    auto ops = liveness.resolveLiveness(value);
+    auto ops = funcLiveness.resolveLiveness(value);
     auto minId = std::numeric_limits<OpId>::max();
     auto maxId = std::numeric_limits<OpId>::min();
     std::for_each(ops.begin(), ops.end(), [&](Operation *op) {
@@ -132,17 +155,30 @@ void AllocAnalysis::resolveLiveness() {
     });
     return Interval(minId, maxId);
   };
+
+  // Analyze liveness of explicit buffers.
   for (auto [value, buffer] : info->explicits)
     bufferToLiveness[buffer] = getLiveness(value);
 
-  // Analyze liveness of virtual buffers.
-  auto processVirtuals = [&](const DenseMap<Operation *, Buffer *> &virtuals) {
-    for (auto [op, buffer] : virtuals) {
-      auto id = opToId.lookup(op);
-      bufferToLiveness.insert({buffer, Interval(id, id + 1)});
+  // Analyze liveness of aliased buffers.
+  for (auto [value, buffers] : info->aliasSets) {
+    auto liveness = getLiveness(value);
+    for (auto *buffer : buffers) {
+      auto minId = liveness.start();
+      auto maxId = liveness.end();
+      if (bufferToLiveness.contains(buffer)) {
+        minId = std::min(minId, bufferToLiveness[buffer].start());
+        maxId = std::max(maxId, bufferToLiveness[buffer].end());
+      }
+      bufferToLiveness[buffer] = Interval(minId, maxId);
     }
-  };
-  processVirtuals(info->virtuals);
+  }
+
+  // Analyze liveness of virtual buffers.
+  for (auto [op, buffer] : info->virtuals) {
+    auto id = opToId.lookup(op);
+    bufferToLiveness.insert({buffer, Interval(id, id + 1)});
+  }
 }
 
 void AllocAnalysis::computeAndAlloc() {

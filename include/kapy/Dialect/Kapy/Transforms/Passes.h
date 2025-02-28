@@ -1,4 +1,4 @@
-//===- Kgpu.h ---------------------------------------------------*- C++ -*-===//
+//===- Passes.h -------------------------------------------------*- C++ -*-===//
 //
 // Copyright 2018-2020 Philippe Tillet
 // Copyright 2020-2022 OpenAI
@@ -28,32 +28,22 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef KAPY_DIALECT_KGPU_IR_KGPU_H
-#define KAPY_DIALECT_KGPU_IR_KGPU_H
+#ifndef KAPY_DIALECT_KAPY_TRANSFORMS_PASSES_H
+#define KAPY_DIALECT_KAPY_TRANSFORMS_PASSES_H
 
-#include "kapy/Dialect/Kapy/IR/Kapy.h"
-
-#include "kapy/Dialect/Kgpu/IR/Dialect.h.inc"
-
-#define GET_ATTRDEF_CLASSES
-#include "kapy/Dialect/Kgpu/IR/Attrs.h.inc"
-
-#define GET_OP_CLASSES
-#include "kapy/Dialect/Kgpu/IR/Ops.h.inc"
+#include "mlir/Pass/Pass.h"
 
 namespace mlir {
 namespace kapy {
 
-constexpr char sharedUsageAttrName[] = "kgpu.shared_usage";
+std::unique_ptr<Pass> createKapyCombinePass();
 
-/// Get shared memory needed from module attributes, should be used after
-/// running KgpuAllocateSharedPass.
-int64_t getSharedUsage(ModuleOp module);
+std::unique_ptr<Pass> createKapyAnalyzeAlignmentPass();
 
-/// Get a string to show how we distribute elements to lanes.
-std::string getLayoutString(RankedTensorType tensorType);
+#define GEN_PASS_REGISTRATION
+#include "kapy/Dialect/Kapy/Transforms/Passes.h.inc"
 
 } // namespace kapy
 } // namespace mlir
 
-#endif // KAPY_DIALECT_KGPU_IR_KGPU_H
+#endif // KAPY_DIALECT_KAPY_TRANSFORMS_PASSES_H

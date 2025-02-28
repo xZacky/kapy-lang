@@ -48,7 +48,6 @@ def Kapy_Dialect : Dialect {
 
   let hasConstantMaterializer = 1;
   let useDefaultAttributePrinterParser = 1;
-  let useDefaultTypePrinterParser = 1;
 }
 
 #endif // KAPY_DIALECT_KAPY_IR_DIALECT

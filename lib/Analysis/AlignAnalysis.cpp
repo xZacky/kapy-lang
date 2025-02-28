@@ -457,17 +457,6 @@ public:
   }
 };
 
-class MkGlobalOpAlignInfoVisitor : public OpAlignInfoVisitor<MkGlobalOp> {
-public:
-  using OpAlignInfoVisitor<MkGlobalOp>::OpAlignInfoVisitor;
-
-  virtual AlignInfo
-  getAlignInfo(MkGlobalOp op,
-               ArrayRef<const Lattice<AlignInfo> *> operands) override {
-    return operands[0]->getValue();
-  }
-};
-
 class AlignAnalysis : public SparseForwardDataFlowAnalysis<Lattice<AlignInfo>> {
 public:
   AlignAnalysis(DataFlowSolver &solver)
@@ -496,7 +485,6 @@ public:
                     MaxMinOpAlignInfoVisitor<arith::MaxUIOp>,
                     MaxMinOpAlignInfoVisitor<arith::MinSIOp>,
                     MaxMinOpAlignInfoVisitor<arith::MinUIOp>>();
-    visitors.append<MkGlobalOpAlignInfoVisitor>();
   }
 
   using SparseForwardDataFlowAnalysis<Lattice<AlignInfo>>::getLatticeElement;

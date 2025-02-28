@@ -31,8 +31,8 @@
 #define KAPY_DIALECT_KGPU_IR_KGPUOPS
 
 include "mlir/Interfaces/SideEffectInterfaces.td"
-include "kapy/Dialect/Kapy/IR/Enums.td"
 include "kapy/Dialect/Kapy/IR/Types.td"
+include "kapy/Dialect/Kapy/IR/OpTraits.td"
 include "kapy/Dialect/Kgpu/IR/Dialect.td"
 
 class Kgpu_Op<string keyword, list<Trait> traits = []>
@@ -44,28 +44,22 @@ def Kgpu_ChangeOp : Kgpu_Op<
   let arguments = (ins Kapy_Tensor:$source);
   let results = (outs Kapy_Tensor:$result);
 
-  let assemblyFormat = [{
-    $source attr-dict `:` type($source) `to` type($result)
-  }];
+  let assemblyFormat = "$source attr-dict `:` type($source) `to` type($result)";
 
   let hasCanonicalizeMethod = 1;
+  let hasFolder = 1;
 }
 
 def Kgpu_LdMatrixOp : Kgpu_Op<
-  "ld_matrix", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]
+  "ld_matrix",
+  [SourceInSharedMemory, DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]
 > {
   let arguments = (ins
-    Kapy_Shared:$source,
-    I32:$offset_x,
-    I32:$offset_y,
-    DefaultValuedAttr<BoolAttr, "false">:$transpose
+    Kapy_Tensor:$source, DefaultValuedAttr<BoolAttr, "false">:$transpose
   );
   let results = (outs Kapy_Tensor:$result);
 
-  let assemblyFormat = [{
-    $source `[` $offset_x `,` $offset_y `]` attr-dict `:`
-    qualified(type($source)) `->` type($result)
-  }];
+  let assemblyFormat = "$source attr-dict `:` type($source) `->` type($result)";
 }
 
 #endif // KAPY_DIALECT_KGPU_IR_OPS

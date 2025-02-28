@@ -35,7 +35,30 @@ include "mlir/IR/OpBase.td"
 
 // Tensor in kapy can only be 2d (have rank 2), besides, the number of elements
 // should be power of 2.
-def ValidShape : NativeOpTrait<"ValidShape">;
+// NOTE: Tensor in global memory with unknown shape only need to be 2d.
+def ValidTensorShape : NativeOpTrait<"ValidTensorShape">;
+
+// Tensor should in register file unless there are other trait indicates it.
+// NOTE: SelectOp is ignored.
+def ValidMemorySpace : NativeOpTrait<"ValidMemorySpace">;
+
+// Source (operand 0) is a tensor in global memory.
+def SourceInGlobalMemory : NativeOpTrait<"SourceInGlobalMemory">;
+
+// Target (operand 1) is a tensor in global memory.
+def TargetInGlobalMemory : NativeOpTrait<"TargetInGlobalMemory">;
+
+// Result is a tensor in global memory.
+def ResultInGlobalMemory : NativeOpTrait<"ResultInGlobalMemory">;
+
+// Source (operand 0) is a tensor in shared memory.
+def SourceInSharedMemory : NativeOpTrait<"SourceInSharedMemory">;
+
+// Target (operand 1) is a tensor in shared memory.
+def TargetInSharedMemory : NativeOpTrait<"TargetInSharedMemory">;
+
+// Result is a tensor in shared memory.
+def ResultInSharedMemory : NativeOpTrait<"ResultInSharedMemory">;
 
 // Operations with this trait requires all its operands have same layout.
 def SameOperandsLayout : NativeOpTrait<"SameOperandsLayout">;

@@ -1,4 +1,4 @@
-//===- Kgpu.h ---------------------------------------------------*- C++ -*-===//
+//===- Passes.td -------------------------------------------*- tablegen -*-===//
 //
 // Copyright 2018-2020 Philippe Tillet
 // Copyright 2020-2022 OpenAI
@@ -22,38 +22,27 @@
 // SOFTWARE.
 //
 //===----------------------------------------------------------------------===//
-//
+// 
 // This file is modified from the triton project.
 // https://github.com/triton-lang/triton
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef KAPY_DIALECT_KGPU_IR_KGPU_H
-#define KAPY_DIALECT_KGPU_IR_KGPU_H
+#ifndef KAPY_DIALECT_KAPY_TRANSFORMS_PASSES
+#define KAPY_DIALECT_KAPY_TRANSFORMS_PASSES
 
-#include "kapy/Dialect/Kapy/IR/Kapy.h"
+include "mlir/Pass/PassBase.td"
 
-#include "kapy/Dialect/Kgpu/IR/Dialect.h.inc"
+def KapyCombine : Pass<"kapy-combine", "ModuleOp"> {
+  let constructor = "kapy::createKapyCombinePass()";
 
-#define GET_ATTRDEF_CLASSES
-#include "kapy/Dialect/Kgpu/IR/Attrs.h.inc"
+  let dependentDialects = ["kapy::KapyDialect"];
+}
 
-#define GET_OP_CLASSES
-#include "kapy/Dialect/Kgpu/IR/Ops.h.inc"
+def KapyAnalyzeAlignment : Pass<"kapy-analyze-alignment", "ModuleOp"> {
+  let constructor = "kapy::createKapyAnalyzeAlignmentPass()";
 
-namespace mlir {
-namespace kapy {
+  let dependentDialects = ["kapy::KapyDialect"];
+}
 
-constexpr char sharedUsageAttrName[] = "kgpu.shared_usage";
-
-/// Get shared memory needed from module attributes, should be used after
-/// running KgpuAllocateSharedPass.
-int64_t getSharedUsage(ModuleOp module);
-
-/// Get a string to show how we distribute elements to lanes.
-std::string getLayoutString(RankedTensorType tensorType);
-
-} // namespace kapy
-} // namespace mlir
-
-#endif // KAPY_DIALECT_KGPU_IR_KGPU_H
+#endif // KAPY_DIALECT_KAPY_TRANSFORMS_PASSES

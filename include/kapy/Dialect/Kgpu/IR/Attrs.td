@@ -14,10 +14,26 @@ class Kgpu_AttrDef<string name, string keyword, list<Trait> traits = []>
   let attrName = "kgpu." # keyword;
 }
 
-def Swizzled4LayoutAttr : Kgpu_AttrDef<"Swizzled4Layout", "swizzled4"> {
-  let summary = "swizzled layout that take 4 banks as a unit";
+def Strided2dLayoutAttr : Kgpu_AttrDef<"Strided2dLayout", "strided2d"> {
+  let summary = "strided 2d layout";
 
-  let mnemonic = "swizzled4";
+  let mnemonic = "strided2d";
+  let parameters = (ins "int64_t":$strideX, "int64_t":$strideY);
+
+  let hasCustomAssemblyFormat = 1;
+
+  let extraClassDeclaration = [{
+    inline bool isRowMajor() const { return getStrideY() == 1; }
+    inline bool isColMajor() const { return getStrideX() == 1; }
+
+    AffineMap getAffineMap() const;
+  }];
+}
+
+def SwizzlingLayoutAttr : Kgpu_AttrDef<"SwizzlingLayout", "swizzling"> {
+  let summary = "swizzling that take 4 banks as a unit";
+
+  let mnemonic = "swizzling";
   let parameters = (ins "unsigned":$minorAxis, "unsigned":$majorAxis);
 
   let assemblyFormat = "`<` `(` $minorAxis `,` $majorAxis `)` `>`";

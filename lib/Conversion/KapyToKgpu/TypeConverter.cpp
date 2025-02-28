@@ -39,11 +39,30 @@ KgpuTypeConverter::KgpuTypeConverter(MLIRContext *context) : context(context) {
   addConversion([](Type type) { return type; });
 
   addConversion([](RankedTensorType tensorType) {
-    if (tensorType.getEncoding())
+    if (hasLayout(tensorType))
       return tensorType;
-    auto layout = getFragmentsLayout(tensorType);
-    return RankedTensorType::get(tensorType.getShape(),
-                                 tensorType.getElementType(), layout);
+    auto encoding = cast<EncodingAttr>(tensorType.getEncoding());
+    auto *context = encoding.getContext();
+    if (encoding.getMemory() == MemorySpace::GLOBAL_MEMORY) {
+      auto dynamic = ShapedType::kDynamic;
+      auto layout = Strided2dLayoutAttr::get(context, dynamic, dynamic);
+      encoding = EncodingAttr::get(context, encoding.getMemory(), layout);
+      return RankedTensorType::get(tensorType.getShape(),
+                                   tensorType.getElementType(), encoding);
+    }
+    if (encoding.getMemory() == MemorySpace::SHARED_MEMORY) {
+      auto layout = SwizzlingLayoutAttr::get(context, 0, 1);
+      encoding = EncodingAttr::get(context, encoding.getMemory(), layout);
+      return RankedTensorType::get(tensorType.getShape(),
+                                   tensorType.getElementType(), encoding);
+    }
+    if (encoding.getMemory() == MemorySpace::REGISTER_FILE) {
+      auto layout = getFragmentsLayout(tensorType);
+      encoding = EncodingAttr::get(context, encoding.getMemory(), layout);
+      return RankedTensorType::get(tensorType.getShape(),
+                                   tensorType.getElementType(), encoding);
+    }
+    llvm_unreachable("invalid tensor encoding");
   });
 
   addTargetMaterialization([](OpBuilder &builder, RankedTensorType tensorType,

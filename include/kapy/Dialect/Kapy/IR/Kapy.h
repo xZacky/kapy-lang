@@ -45,9 +45,6 @@
 #define GET_ATTRDEF_CLASSES
 #include "kapy/Dialect/Kapy/IR/Attrs.h.inc"
 
-#define GET_TYPEDEF_CLASSES
-#include "kapy/Dialect/Kapy/IR/Types.h.inc"
-
 #define GET_OP_CLASSES
 #include "kapy/Dialect/Kapy/IR/Ops.h.inc"
 
@@ -91,8 +88,6 @@ int64_t getNvidiaCC(ModuleOp module);
 /// Get number of warps from module attributes.
 int64_t getNumWarps(ModuleOp module);
 
-/// Get the alignemnt of the given memory access operation, should be used after
-/// running KapyAnalyzeAlignmentPass.
 int64_t getAlignment(Operation *op);
 
 /// Return true if this operation is expensive global memory read.
@@ -106,6 +101,20 @@ bool isExpensiveSharedRead(Operation *op);
 
 /// Return true if this operation is expensive shared memory write.
 bool isExpensiveSharedWrite(Operation *op);
+
+bool inGlobalMemory(RankedTensorType tensorType);
+
+bool inSharedMemory(RankedTensorType tensorType);
+
+bool inRegisterFile(RankedTensorType tensorType);
+
+bool hasLayout(RankedTensorType tensorType);
+
+Attribute getLayout(RankedTensorType tensorType);
+
+template <typename LayoutT> LayoutT getLayout(RankedTensorType tensorType) {
+  return dyn_cast<LayoutT>(getLayout(tensorType));
+}
 
 } // namespace kapy
 } // namespace mlir

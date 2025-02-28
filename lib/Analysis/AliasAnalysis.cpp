@@ -1,4 +1,4 @@
-//===- Kgpu.h ---------------------------------------------------*- C++ -*-===//
+//===- AliasAnalysis.cpp ----------------------------------------*- C++ -*-===//
 //
 // Copyright 2018-2020 Philippe Tillet
 // Copyright 2020-2022 OpenAI
@@ -28,32 +28,40 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef KAPY_DIALECT_KGPU_IR_KGPU_H
-#define KAPY_DIALECT_KGPU_IR_KGPU_H
-
+#include "kapy/Analysis/AliasAnalysis.h"
 #include "kapy/Dialect/Kapy/IR/Kapy.h"
 
-#include "kapy/Dialect/Kgpu/IR/Dialect.h.inc"
+using namespace mlir;
+using namespace mlir::kapy;
+using namespace mlir::dataflow;
 
-#define GET_ATTRDEF_CLASSES
-#include "kapy/Dialect/Kgpu/IR/Attrs.h.inc"
+AliasInfo AliasInfo::join(const AliasInfo &lhs, const AliasInfo &rhs) {
+  if (lhs == rhs)
+    return lhs;
+  AliasInfo info;
+  for (auto value : lhs.aliasSet)
+    info.insert(value);
+  for (auto value : rhs.aliasSet)
+    info.insert(value);
+  return info;
+}
 
-#define GET_OP_CLASSES
-#include "kapy/Dialect/Kgpu/IR/Ops.h.inc"
+void kapy::AliasAnalysis::visitOperation(
+    Operation *op, ArrayRef<const Lattice<AliasInfo> *> operands,
+    ArrayRef<Lattice<AliasInfo> *> results) {
+  AliasInfo info;
+  bool isEntryState = true;
+  if (isa<MkSharedOp>(op)) {
+    info.insert(op->getResult(0));
+    isEntryState = false;
+  } else if (isa<SvSharedOp>(op)) {
+    info = AliasInfo(operands[0]->getValue());
+    isEntryState = false;
+  }
 
-namespace mlir {
-namespace kapy {
+  if (isEntryState)
+    return setAllToEntryStates(results);
 
-constexpr char sharedUsageAttrName[] = "kgpu.shared_usage";
-
-/// Get shared memory needed from module attributes, should be used after
-/// running KgpuAllocateSharedPass.
-int64_t getSharedUsage(ModuleOp module);
-
-/// Get a string to show how we distribute elements to lanes.
-std::string getLayoutString(RankedTensorType tensorType);
-
-} // namespace kapy
-} // namespace mlir
-
-#endif // KAPY_DIALECT_KGPU_IR_KGPU_H
+  for (auto *result : results)
+    propagateIfChanged(result, result->join(info));
+}

@@ -24,7 +24,7 @@ ReduceOpHelper::ReduceOpHelper(RankedTensorType sourceType, unsigned axis) {
 
 int64_t ReduceOpHelper::getNumShfls() const {
   auto shape = sourceType.getShape();
-  auto layout = cast<FragmentsLayoutAttr>(sourceType.getEncoding());
+  auto layout = getLayout<FragmentsLayoutAttr>(sourceType);
   auto option = FragmentsLayoutAttr::MapOption::FROM_VALUES;
   auto map = layout.getAffineMap(shape, option);
   DenseSet<int64_t> laneIdSet;
@@ -40,7 +40,7 @@ int64_t ReduceOpHelper::getNumShfls() const {
 }
 
 int64_t ReduceOpHelper::getLaneOffset() const {
-  auto layout = cast<FragmentsLayoutAttr>(sourceType.getEncoding());
+  auto layout = getLayout<FragmentsLayoutAttr>(sourceType);
   if (layout.getMajorAxis() == axis)
     return 1;
   else
@@ -59,7 +59,7 @@ ChangeOpHelper::ChangeOpHelper(RankedTensorType sourceType,
 }
 
 int64_t ChangeOpHelper::getNumShfls() const {
-  auto layout = cast<FragmentsLayoutAttr>(resultType.getEncoding());
+  auto layout = getLayout<FragmentsLayoutAttr>(resultType);
   auto loopSize = product(layout.getLoopSpace(resultType.getShape()));
   auto map = getShflIdxMap();
   int64_t numShfls = 0;
@@ -73,8 +73,8 @@ int64_t ChangeOpHelper::getNumShfls() const {
 
 AffineMap ChangeOpHelper::getShflIdxMap() const {
   auto shape = resultType.getShape();
-  auto sourceLayout = cast<FragmentsLayoutAttr>(sourceType.getEncoding());
-  auto resultLayout = cast<FragmentsLayoutAttr>(resultType.getEncoding());
+  auto sourceLayout = getLayout<FragmentsLayoutAttr>(sourceType);
+  auto resultLayout = getLayout<FragmentsLayoutAttr>(resultType);
   auto sourceOption = FragmentsLayoutAttr::MapOption::FROM_VALUES;
   auto resultOption = FragmentsLayoutAttr::MapOption::TO_VALUES;
   auto sourceMap = sourceLayout.getAffineMap(shape, sourceOption);
