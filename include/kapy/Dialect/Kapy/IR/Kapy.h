@@ -73,9 +73,11 @@ class KapyLayoutInterface : public DialectInterface::Base<KapyLayoutInterface> {
 public:
   KapyLayoutInterface(Dialect *dialect) : Base(dialect) {}
 
+  virtual LogicalResult verifyLdMatrixOpLayouts(LdMatrixOp op) const = 0;
+
   virtual Attribute inferTransposeOpLayout(Attribute sourceLayout) const = 0;
 
-  virtual LogicalResult verifyMatmulOpLayouts(MatmulOp matmulOp) const = 0;
+  virtual LogicalResult verifyMatmulOpLayouts(MatmulOp op) const = 0;
 };
 
 /// Get the integer or floating-point bit width for the given Type, if it is a
@@ -115,6 +117,11 @@ Attribute getLayout(RankedTensorType tensorType);
 template <typename LayoutT> LayoutT getLayout(RankedTensorType tensorType) {
   return dyn_cast<LayoutT>(getLayout(tensorType));
 }
+
+RankedTensorType cloneWithShape(RankedTensorType tensorType,
+                                ArrayRef<int64_t> shape);
+
+RankedTensorType cloneWithLayout(RankedTensorType tensorType, Attribute layout);
 
 } // namespace kapy
 } // namespace mlir

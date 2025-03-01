@@ -36,6 +36,17 @@ def SwizzlingLayoutAttr : Kgpu_AttrDef<"SwizzlingLayout", "swizzling"> {
   let mnemonic = "swizzling";
   let parameters = (ins "unsigned":$minorAxis, "unsigned":$majorAxis);
 
+  let builders = [
+    AttrBuilder<
+      (ins CArg<"bool", "true">:$rowMajor),
+      [{
+        unsigned i = rowMajor ? 0 : 1;
+        unsigned j = rowMajor ? 1 : 0;
+        return get(context, i, j);
+      }]
+    >
+  ];
+
   let assemblyFormat = "`<` `(` $minorAxis `,` $majorAxis `)` `>`";
 
   let extraClassDeclaration = [{

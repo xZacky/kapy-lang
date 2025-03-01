@@ -162,12 +162,16 @@ LogicalResult SvGlobalOp::canonicalize(SvGlobalOp op,
   auto inOp = op.getSource().getDefiningOp<SvGlobalOp>();
   if (!inOp)
     return failure();
-  Value offsetX = rewriter.create<arith::AddIOp>(op.getLoc(), inOp.getOffsetX(),
-                                                 op.getOffsetX());
-  Value offsetY = rewriter.create<arith::AddIOp>(op.getLoc(), inOp.getOffsetY(),
-                                                 op.getOffsetY());
+  Value startX = rewriter.create<arith::AddIOp>(op.getLoc(), inOp.getStartX(),
+                                                op.getStartX());
+  Value startY = rewriter.create<arith::AddIOp>(op.getLoc(), inOp.getStartY(),
+                                                op.getStartY());
+  Value endX = rewriter.create<arith::AddIOp>(op.getLoc(), inOp.getStartX(),
+                                              op.getEndX());
+  Value endY = rewriter.create<arith::AddIOp>(op.getLoc(), inOp.getStartY(),
+                                              op.getEndY());
   rewriter.replaceOpWithNewOp<SvGlobalOp>(op, op.getType(), inOp.getSource(),
-                                          offsetX, offsetY);
+                                          startX, endX, startY, endY);
   return success();
 }
 
@@ -202,13 +206,33 @@ void StGlobalOp::getEffects(
                        GlobalMemory::get());
 }
 
-void AtomicRMWGlobalOp::getEffects(
+void AtomicRMWOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
   effects.emplace_back(MemoryEffects::Read::get(), &getSourceMutable(),
                        GlobalMemory::get());
   effects.emplace_back(MemoryEffects::Write::get(), &getSourceMutable(),
                        GlobalMemory::get());
+}
+
+LogicalResult AtomicRMWOp::verify() {
+  auto elementType = getSource().getType().getElementType();
+  switch (getKind()) {
+  case (AtomicRMWKind::ADD): {
+    if (elementType.isF16() || elementType.isBF16() || elementType.isF32())
+      return success();
+    else
+      return emitOpError("unsupported element type");
+  }
+  case (AtomicRMWKind::MAX):
+  case (AtomicRMWKind::MIN): {
+    if (elementType.isF16() || elementType.isBF16())
+      return success();
+    else
+      return emitOpError("unsupported element type");
+  }
+  }
+  return emitOpError("usupported atomic rmw kind");
 }
 
 void MkSharedOp::getEffects(
@@ -224,12 +248,16 @@ LogicalResult SvSharedOp::canonicalize(SvSharedOp op,
   auto inOp = op.getSource().getDefiningOp<SvSharedOp>();
   if (!inOp)
     return failure();
-  Value offsetX = rewriter.create<arith::AddIOp>(op.getLoc(), inOp.getOffsetX(),
-                                                 op.getOffsetX());
-  Value offsetY = rewriter.create<arith::AddIOp>(op.getLoc(), inOp.getOffsetY(),
-                                                 op.getOffsetY());
+  Value startX = rewriter.create<arith::AddIOp>(op.getLoc(), inOp.getStartX(),
+                                                op.getStartX());
+  Value startY = rewriter.create<arith::AddIOp>(op.getLoc(), inOp.getStartY(),
+                                                op.getStartY());
+  Value endX = rewriter.create<arith::AddIOp>(op.getLoc(), inOp.getStartX(),
+                                              op.getEndX());
+  Value endY = rewriter.create<arith::AddIOp>(op.getLoc(), inOp.getStartY(),
+                                              op.getEndY());
   rewriter.replaceOpWithNewOp<SvSharedOp>(op, op.getType(), inOp.getSource(),
-                                          offsetX, offsetY);
+                                          startX, endX, startY, endY);
   return success();
 }
 
@@ -259,6 +287,27 @@ void StSharedOp::getEffects(
         &effects) {
   effects.emplace_back(MemoryEffects::Write::get(), &getTargetMutable(),
                        SharedMemory::get());
+}
+
+void LdMatrixOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(), &getSourceMutable(),
+                       SharedMemory::get());
+}
+
+LogicalResult LdMatrixOp::verify() {
+  auto loaderType = getLoader().getType();
+  auto resultType = getType();
+  if (getIntOrFloatBitWidth(resultType) > 32)
+    return emitOpError("element type can not more than 32 bits");
+  if (!hasLayout(loaderType) && !hasLayout(resultType))
+    return success();
+  if (!hasLayout(loaderType) || !hasLayout(resultType))
+    return emitOpError("loader and result must both have or without layout");
+  auto &dialect = getLayout(loaderType).getDialect();
+  auto *interface = cast<KapyLayoutInterface>(&dialect);
+  return interface->verifyLdMatrixOpLayouts(*this);
 }
 
 void CpAsyncGlobalToSharedOp::getEffects(
@@ -400,10 +449,10 @@ LogicalResult MatmulOp::verify() {
   }
   }
 
-  if (!hasLayout(lhsType) && !hasLayout(rhsType))
+  if (!hasLayout(lhsType) && !hasLayout(rhsType) && !hasLayout(accType))
     return success();
-  if (!hasLayout(lhsType) || !hasLayout(rhsType))
-    return emitOpError("lhs and rhs must both have or without layout");
+  if (!hasLayout(lhsType) || !hasLayout(rhsType) || !hasLayout(accType))
+    return emitOpError("lhs and rhs and acc must all have or without layout");
   auto &dialect = getLayout(accType).getDialect();
   auto *interface = cast<KapyLayoutInterface>(&dialect);
   return interface->verifyMatmulOpLayouts(*this);
@@ -457,8 +506,7 @@ ReduceOp::inferReturnTypes(MLIRContext *context, std::optional<Location> loc,
   if (axis < 0 || axis >= shape.size())
     return emitOptionalError(loc, "invalid axis");
   shape[axis] = 1;
-  returnTypes.push_back(RankedTensorType::get(
-      shape, sourceType.getElementType(), sourceType.getEncoding()));
+  returnTypes.push_back(cloneWithShape(sourceType, shape));
   return success();
 }
 
@@ -543,19 +591,16 @@ TransposeOp::inferReturnTypes(MLIRContext *context, std::optional<Location> loc,
   if (sourceType.getRank() != 2)
     return emitOptionalError(loc, "source must have rank 2");
   auto shape = transpose(sourceType.getShape());
+  auto resultType = cloneWithShape(sourceType, shape);
   if (!hasLayout(sourceType)) {
-    returnTypes.push_back(RankedTensorType::get(
-        shape, sourceType.getElementType(), sourceType.getEncoding()));
+    returnTypes.push_back(resultType);
     return success();
   }
-  auto encoding = cast<EncodingAttr>(sourceType.getEncoding());
-  auto sourceLayout = encoding.getLayout();
+  auto sourceLayout = getLayout(sourceType);
   auto &dialect = sourceLayout.getDialect();
   auto *interface = cast<KapyLayoutInterface>(&dialect);
   auto resultLayout = interface->inferTransposeOpLayout(sourceLayout);
-  encoding = EncodingAttr::get(context, encoding.getMemory(), resultLayout);
-  returnTypes.push_back(
-      RankedTensorType::get(shape, sourceType.getElementType(), encoding));
+  returnTypes.push_back(cloneWithLayout(resultType, resultLayout));
   return success();
 }
 
@@ -736,6 +781,8 @@ bool kapy::isExpensiveGlobalWrite(Operation *op) {
 }
 
 bool kapy::isExpensiveSharedRead(Operation *op) {
+  if (isa<LdMatrixOp>(op))
+    return false;
   auto effectOp = dyn_cast<MemoryEffectOpInterface>(op);
   if (!effectOp)
     return false;
@@ -788,4 +835,19 @@ bool kapy::hasLayout(RankedTensorType tensorType) {
 Attribute kapy::getLayout(RankedTensorType tensorType) {
   auto encoding = cast<EncodingAttr>(tensorType.getEncoding());
   return encoding.getLayout();
+}
+
+RankedTensorType kapy::cloneWithShape(RankedTensorType tensorType,
+                                      ArrayRef<int64_t> shape) {
+  return RankedTensorType::get(shape, tensorType.getElementType(),
+                               tensorType.getEncoding());
+}
+
+RankedTensorType kapy::cloneWithLayout(RankedTensorType tensorType,
+                                       Attribute layout) {
+  auto encoding = cast<EncodingAttr>(tensorType.getEncoding());
+  auto *context = layout.getContext();
+  encoding = EncodingAttr::get(context, encoding.getMemory(), layout);
+  return RankedTensorType::get(tensorType.getShape(),
+                               tensorType.getElementType(), encoding);
 }

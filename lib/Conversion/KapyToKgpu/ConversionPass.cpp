@@ -84,6 +84,30 @@ public:
   }
 };
 
+class LdMatrixOpConversion : public OpConversionPattern<LdMatrixOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  virtual LogicalResult
+  matchAndRewrite(LdMatrixOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto [loaderLayout, resultLayout] = getDefaultLayouts(op);
+
+    auto loader = adaptor.getLoader();
+    auto loaderType = cast<RankedTensorType>(loader.getType());
+    loaderType = cloneWithLayout(loaderType, loaderLayout);
+    loader = rewriter.create<ChangeOp>(loader.getLoc(), loaderType, loader);
+
+    auto resultType = op.getType();
+    resultType = cloneWithLayout(resultType, resultLayout);
+
+    auto newOp = rewriter.replaceOpWithNewOp<LdMatrixOp>(
+        op, resultType, adaptor.getSource(), loader);
+    addNamedAttributes(newOp, adaptor.getAttributes());
+    return success();
+  }
+};
+
 class BroadcastOpConversion : public OpConversionPattern<BroadcastOp> {
 public:
   using OpConversionPattern::OpConversionPattern;
@@ -93,10 +117,9 @@ public:
                   ConversionPatternRewriter &rewriter) const override {
     auto source = adaptor.getSource();
     auto sourceType = cast<RankedTensorType>(source.getType());
-    auto newType = RankedTensorType::get(op.getType().getShape(),
-                                         sourceType.getElementType(),
-                                         sourceType.getEncoding());
-    auto newOp = rewriter.replaceOpWithNewOp<BroadcastOp>(op, newType, source);
+    auto resultType = cloneWithShape(sourceType, op.getType().getShape());
+    auto newOp =
+        rewriter.replaceOpWithNewOp<BroadcastOp>(op, resultType, source);
     addNamedAttributes(newOp, adaptor.getAttributes());
     return success();
   }
@@ -123,28 +146,21 @@ public:
   virtual LogicalResult
   matchAndRewrite(MatmulOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    auto *context = op.getContext();
-    auto [lhsLayout, rhsLayout, accLayout] = getOperandLayouts(op);
+    auto [lhsLayout, rhsLayout, accLayout] = getDefaultLayouts(op);
 
     auto acc = adaptor.getAcc();
     auto accType = cast<RankedTensorType>(acc.getType());
-    accType = RankedTensorType::get(
-        accType.getShape(), accType.getElementType(),
-        EncodingAttr::get(context, MemorySpace::REGISTER_FILE, accLayout));
+    accType = cloneWithLayout(accType, accLayout);
     acc = rewriter.create<ChangeOp>(acc.getLoc(), accType, acc);
 
     auto lhs = adaptor.getLhs();
     auto lhsType = cast<RankedTensorType>(lhs.getType());
-    lhsType = RankedTensorType::get(
-        lhsType.getShape(), lhsType.getElementType(),
-        EncodingAttr::get(context, MemorySpace::REGISTER_FILE, lhsLayout));
+    lhsType = cloneWithLayout(lhsType, lhsLayout);
     lhs = rewriter.create<ChangeOp>(lhs.getLoc(), lhsType, lhs);
 
     auto rhs = adaptor.getRhs();
     auto rhsType = cast<RankedTensorType>(rhs.getType());
-    rhsType = RankedTensorType::get(
-        rhsType.getShape(), rhsType.getElementType(),
-        EncodingAttr::get(context, MemorySpace::REGISTER_FILE, rhsLayout));
+    rhsType = cloneWithLayout(rhsType, rhsLayout);
     rhs = rewriter.create<ChangeOp>(rhs.getLoc(), rhsType, rhs);
 
     auto newOp = rewriter.replaceOpWithNewOp<MatmulOp>(op, lhs, rhs, acc,
@@ -403,15 +419,12 @@ static void populateKapyConversionPatterns(KgpuTypeConverter &typeConverter,
   auto *context = patterns.getContext();
   patterns.add<GenericOpConversion<FPToFPOp>>(typeConverter, context);
   patterns.add<GenericOpConversion<ClampFOp>>(typeConverter, context);
-  patterns.add<GenericOpConversion<MkGlobalOp>>(typeConverter, context);
-  patterns.add<GenericOpConversion<SvGlobalOp>>(typeConverter, context);
   patterns.add<GenericOpConversion<LdGlobalOp>>(typeConverter, context);
   patterns.add<GenericOpConversion<StGlobalOp>>(typeConverter, context);
-  patterns.add<GenericOpConversion<AtomicRMWGlobalOp>>(typeConverter, context);
-  patterns.add<GenericOpConversion<MkSharedOp>>(typeConverter, context);
-  patterns.add<GenericOpConversion<SvSharedOp>>(typeConverter, context);
+  patterns.add<GenericOpConversion<AtomicRMWOp>>(typeConverter, context);
   patterns.add<GenericOpConversion<LdSharedOp>>(typeConverter, context);
   patterns.add<GenericOpConversion<StSharedOp>>(typeConverter, context);
+  patterns.add<LdMatrixOpConversion>(typeConverter, context);
   patterns.add<GenericOpConversion<CpAsyncGlobalToSharedOp>>(typeConverter,
                                                              context);
   patterns.add<GenericOpConversion<SplatOp>>(typeConverter, context);

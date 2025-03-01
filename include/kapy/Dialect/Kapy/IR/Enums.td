@@ -70,16 +70,9 @@ def Kapy_AtomicRMWKindAttr : Kapy_EnumAttr<
   "AtomicRMWKind",
   "kind of AtomicRMWOp",
   [
-    I32EnumAttrCase<"AND", 1, "and">,
-    I32EnumAttrCase<"OR", 2, "or">,
-    I32EnumAttrCase<"XOR", 3, "xor">,
-    I32EnumAttrCase<"ADD", 4, "add">,
-    I32EnumAttrCase<"FADD", 5, "fadd">,
-    I32EnumAttrCase<"MAX", 6, "max">,
-    I32EnumAttrCase<"MIN", 7, "min">,
-    I32EnumAttrCase<"UMAX", 8, "umax">,
-    I32EnumAttrCase<"UMIN", 9, "umin">,
-    I32EnumAttrCase<"XCHG", 10, "xchg">
+    I32EnumAttrCase<"ADD", 1, "add">,
+    I32EnumAttrCase<"MAX", 2, "max">,
+    I32EnumAttrCase<"MIN", 3, "min">
   ]
 >;
 

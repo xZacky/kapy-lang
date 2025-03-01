@@ -97,13 +97,12 @@ void KapyAnalyzeAlignmentPass::processSvGlobalOp(
   auto funcOp = svGlobalOp->getParentOfType<FunctionOpInterface>();
   auto *valueToInfo = analysis.getData(funcOp);
   auto mkGlobalOp = svGlobalOp.getSource().getDefiningOp<MkGlobalOp>();
-  assert(mkGlobalOp);
   auto alignment = getAlignment(mkGlobalOp);
   auto alignmentX =
-      mul(valueToInfo->lookup(svGlobalOp.getOffsetX()).getAlignment(),
+      mul(valueToInfo->lookup(svGlobalOp.getStartX()).getAlignment(),
           valueToInfo->lookup(mkGlobalOp.getStrideX()).getAlignment());
   auto alignmentY =
-      mul(valueToInfo->lookup(svGlobalOp.getOffsetY()).getAlignment(),
+      mul(valueToInfo->lookup(svGlobalOp.getStartY()).getAlignment(),
           valueToInfo->lookup(mkGlobalOp.getStrideY()).getAlignment());
   auto bitWidth = getIntOrFloatBitWidth(svGlobalOp.getType());
   alignmentX = mul(alignmentX, ceilDiv<int64_t>(bitWidth, 8));

@@ -2,7 +2,7 @@
 #shared = #kapy.encoding<shared_memory>
 #values = #kapy.encoding<register_file>
 module attributes {kapy.num_warps = 4 : i64, kapy.nvidia_cc = 89 : i64} {
-  kapy.func @matmul_kernel(%arg0: i64 {kapy.alignment = 128 : i64}, %arg1: i64 {kapy.alignment = 128 : i64}, %arg2: i64 {kapy.alignment = 128 : i64}) {
+  kapy.func @matmul_kernel(%arg0: i64 {kapy.alignment = 128 : i64}, %arg1: i64 {kapy.alignment = 128 : i64}, %arg2: i64 {kapy.alignment = 128 : i64}, %arg3: i32 {kapy.alignment = 1 : i64}, %arg4: i32 {kapy.alignment = 1 : i64}, %arg5: i32 {kapy.alignment = 1 : i64}, %arg6: i32 {kapy.alignment = 1 : i64}, %arg7: i32 {kapy.alignment = 1 : i64}, %arg8: i32 {kapy.alignment = 1 : i64}, %arg9: i32 {kapy.alignment = 1 : i64}, %arg10: i32 {kapy.alignment = 1 : i64}, %arg11: i32 {kapy.alignment = 1 : i64}) {
     %cst = arith.constant dense<0.000000e+00> : tensor<64x64xf16, #values>
     %c0_i32 = arith.constant 0 : i32
     %c1_i32 = arith.constant 1 : i32
@@ -10,10 +10,9 @@ module attributes {kapy.num_warps = 4 : i64, kapy.nvidia_cc = 89 : i64} {
     %c16_i32 = arith.constant 16 : i32
     %c64_i32 = arith.constant 64 : i32
     %c128_i32 = arith.constant 128 : i32
-    %c1024_i32 = arith.constant 1024 : i32
-    %0 = kapy.mk_global %arg0, [%c1024_i32, %c1024_i32], [%c1024_i32, %c1_i32] : tensor<?x?xf16, #global>
-    %1 = kapy.mk_global %arg1, [%c1024_i32, %c1024_i32], [%c1024_i32, %c1_i32] : tensor<?x?xf16, #global>
-    %2 = kapy.mk_global %arg2, [%c1024_i32, %c1024_i32], [%c1024_i32, %c1_i32] : tensor<?x?xf16, #global>
+    %0 = kapy.mk_global %arg0, [%arg3, %arg4], [%arg9, %c1_i32] : tensor<?x?xf16, #global>
+    %1 = kapy.mk_global %arg1, [%arg5, %arg6], [%arg10, %c1_i32] : tensor<?x?xf16, #global>
+    %2 = kapy.mk_global %arg2, [%arg7, %arg8], [%arg11, %c1_i32] : tensor<?x?xf16, #global>
     %3 = kapy.mk_shared : tensor<128x64xf16, #shared>
     %4 = kapy.mk_shared : tensor<64x128xf16, #shared>
     %5 = kapy.mk_shared : tensor<128x64xf16, #shared>
@@ -29,46 +28,57 @@ module attributes {kapy.num_warps = 4 : i64, kapy.nvidia_cc = 89 : i64} {
     %15 = arith.muli %11, %c64_i32 : i32
     %16 = arith.addi %12, %14 : i32
     %17 = arith.addi %13, %15 : i32
-    %18 = kapy.sv_global %0[%16, %c0_i32] : tensor<?x?xf16, #global> -> tensor<64x64xf16, #global>
-    %19 = kapy.sv_global %1[%c0_i32, %17] : tensor<?x?xf16, #global> -> tensor<64x64xf16, #global>
-    %20 = kapy.sv_global %0[%16, %c64_i32] : tensor<?x?xf16, #global> -> tensor<64x64xf16, #global>
-    %21 = kapy.sv_global %1[%c64_i32, %17] : tensor<?x?xf16, #global> -> tensor<64x64xf16, #global>
-    %22 = kapy.sv_shared %3[%14, %c0_i32] : tensor<128x64xf16, #shared> -> tensor<64x64xf16, #shared>
-    %23 = kapy.sv_shared %4[%c0_i32, %15] : tensor<64x128xf16, #shared> -> tensor<64x64xf16, #shared>
-    %24 = kapy.sv_shared %5[%14, %c0_i32] : tensor<128x64xf16, #shared> -> tensor<64x64xf16, #shared>
-    %25 = kapy.sv_shared %6[%c0_i32, %15] : tensor<64x128xf16, #shared> -> tensor<64x64xf16, #shared>
-    kapy.cp_async_global_to_shared %18, %22, %cst : tensor<64x64xf16, #global>, tensor<64x64xf16, #shared>, tensor<64x64xf16, #values>
-    kapy.cp_async_global_to_shared %19, %23, %cst : tensor<64x64xf16, #global>, tensor<64x64xf16, #shared>, tensor<64x64xf16, #values>
-    kapy.cp_async_global_to_shared %20, %24, %cst : tensor<64x64xf16, #global>, tensor<64x64xf16, #shared>, tensor<64x64xf16, #values>
-    kapy.cp_async_global_to_shared %21, %25, %cst : tensor<64x64xf16, #global>, tensor<64x64xf16, #shared>, tensor<64x64xf16, #values>
+    %18 = arith.addi %16, %c64_i32 : i32
+    %19 = arith.addi %17, %c64_i32 : i32
+    %20 = arith.addi %14, %c64_i32 : i32
+    %21 = arith.addi %15, %c64_i32 : i32
+    %22 = kapy.sv_global %0[%16 : %18, %c0_i32 : %c64_i32] : tensor<?x?xf16, #global> -> tensor<64x64xf16, #global>
+    %23 = kapy.sv_global %1[%c0_i32 : %c64_i32, %17 : %19] : tensor<?x?xf16, #global> -> tensor<64x64xf16, #global>
+    %24 = kapy.sv_global %0[%16 : %18, %c64_i32 : %c128_i32] : tensor<?x?xf16, #global> -> tensor<64x64xf16, #global>
+    %25 = kapy.sv_global %1[%c64_i32 : %c128_i32, %17 : %19] : tensor<?x?xf16, #global> -> tensor<64x64xf16, #global>
+    %26 = kapy.sv_shared %3[%14 : %20, %c0_i32 : %c64_i32] : tensor<128x64xf16, #shared> -> tensor<64x64xf16, #shared>
+    %27 = kapy.sv_shared %4[%c0_i32 : %c64_i32, %15 : %21] : tensor<64x128xf16, #shared> -> tensor<64x64xf16, #shared>
+    %28 = kapy.sv_shared %5[%14 : %20, %c0_i32 : %c64_i32] : tensor<128x64xf16, #shared> -> tensor<64x64xf16, #shared>
+    %29 = kapy.sv_shared %6[%c0_i32 : %c64_i32, %15 : %21] : tensor<64x128xf16, #shared> -> tensor<64x64xf16, #shared>
+    kapy.cp_async_global_to_shared %22, %26, %cst : tensor<64x64xf16, #global>, tensor<64x64xf16, #shared>, tensor<64x64xf16, #values>
+    kapy.cp_async_global_to_shared %23, %27, %cst : tensor<64x64xf16, #global>, tensor<64x64xf16, #shared>, tensor<64x64xf16, #values>
+    kapy.cp_async_global_to_shared %24, %28, %cst : tensor<64x64xf16, #global>, tensor<64x64xf16, #shared>, tensor<64x64xf16, #values>
+    kapy.cp_async_global_to_shared %25, %29, %cst : tensor<64x64xf16, #global>, tensor<64x64xf16, #shared>, tensor<64x64xf16, #values>
     kapy.cp_async_commit_group
-    %26 = scf.for %arg3 = %c2_i32 to %c16_i32 step %c1_i32 iter_args(%arg4 = %cst) -> (tensor<64x64xf16, #values>)  : i32 {
-      %34 = arith.remui %arg3, %c2_i32 : i32
-      %35 = arith.cmpi eq, %34, %c0_i32 : i32
-      %36 = arith.select %35, %22, %24 : tensor<64x64xf16, #shared>
-      %37 = arith.select %35, %23, %25 : tensor<64x64xf16, #shared>
+    %30 = scf.for %arg12 = %c2_i32 to %c16_i32 step %c1_i32 iter_args(%arg13 = %cst) -> (tensor<64x64xf16, #values>)  : i32 {
+      %38 = arith.remui %arg12, %c2_i32 : i32
+      %39 = arith.cmpi eq, %38, %c0_i32 : i32
+      %40 = arith.select %39, %26, %28 : tensor<64x64xf16, #shared>
+      %41 = arith.select %39, %27, %29 : tensor<64x64xf16, #shared>
       kapy.cp_async_wait_group {num_pending = 2 : i32}
-      %38 = kapy.ld_shared %36 : tensor<64x64xf16, #shared> -> tensor<64x64xf16, #values>
-      %39 = kapy.ld_shared %37 : tensor<64x64xf16, #shared> -> tensor<64x64xf16, #values>
-      %40 = kapy.matmul mma_m16n8k8_f16 %38, %39, %arg4 : tensor<64x64xf16, #values>, tensor<64x64xf16, #values> -> tensor<64x64xf16, #values>
-      %41 = arith.muli %arg3, %c64_i32 : i32
-      %42 = kapy.sv_global %0[%16, %41] : tensor<?x?xf16, #global> -> tensor<64x64xf16, #global>
-      %43 = kapy.sv_global %1[%41, %17] : tensor<?x?xf16, #global> -> tensor<64x64xf16, #global>
-      kapy.cp_async_global_to_shared %42, %36, %cst : tensor<64x64xf16, #global>, tensor<64x64xf16, #shared>, tensor<64x64xf16, #values>
-      kapy.cp_async_global_to_shared %43, %37, %cst : tensor<64x64xf16, #global>, tensor<64x64xf16, #shared>, tensor<64x64xf16, #values>
+      // %42 = kapy.ld_shared %40, %cst : tensor<64x64xf16, #shared> -> tensor<64x64xf16, #values>
+      // %43 = kapy.ld_shared %41, %cst : tensor<64x64xf16, #shared> -> tensor<64x64xf16, #values>
+      %42 = kapy.ld_matrix %40, %cst : tensor<64x64xf16, #shared>, tensor<64x64xf16, #values> -> tensor<64x64xf16, #values>
+      %43 = kapy.ld_matrix %41, %cst : tensor<64x64xf16, #shared>, tensor<64x64xf16, #values> -> tensor<64x64xf16, #values>
+      %44 = kapy.matmul mma_m16n8k8_f16 %42, %43, %arg13 : tensor<64x64xf16, #values>, tensor<64x64xf16, #values> -> tensor<64x64xf16, #values>
+      %45 = arith.muli %arg12, %c64_i32 : i32
+      %46 = arith.addi %45, %c64_i32 : i32
+      %47 = kapy.sv_global %0[%16 : %18, %45 : %46] : tensor<?x?xf16, #global> -> tensor<64x64xf16, #global>
+      %48 = kapy.sv_global %1[%45 : %46, %17 : %19] : tensor<?x?xf16, #global> -> tensor<64x64xf16, #global>
+      kapy.cp_async_global_to_shared %47, %40, %cst : tensor<64x64xf16, #global>, tensor<64x64xf16, #shared>, tensor<64x64xf16, #values>
+      kapy.cp_async_global_to_shared %48, %41, %cst : tensor<64x64xf16, #global>, tensor<64x64xf16, #shared>, tensor<64x64xf16, #values>
       kapy.cp_async_commit_group
-      scf.yield %40 : tensor<64x64xf16, #values>
+      scf.yield %44 : tensor<64x64xf16, #values>
     }
     kapy.cp_async_wait_group {num_pending = 2 : i32}
-    %27 = kapy.ld_shared %22 : tensor<64x64xf16, #shared> -> tensor<64x64xf16, #values>
-    %28 = kapy.ld_shared %23 : tensor<64x64xf16, #shared> -> tensor<64x64xf16, #values>
-    %29 = kapy.matmul mma_m16n8k8_f16 %27, %28, %26 : tensor<64x64xf16, #values>, tensor<64x64xf16, #values> -> tensor<64x64xf16, #values>
+    // %31 = kapy.ld_shared %26, %cst : tensor<64x64xf16, #shared> -> tensor<64x64xf16, #values>
+    // %32 = kapy.ld_shared %27, %cst : tensor<64x64xf16, #shared> -> tensor<64x64xf16, #values>
+    %31 = kapy.ld_matrix %26, %cst : tensor<64x64xf16, #shared>, tensor<64x64xf16, #values> -> tensor<64x64xf16, #values>
+    %32 = kapy.ld_matrix %27, %cst : tensor<64x64xf16, #shared>, tensor<64x64xf16, #values> -> tensor<64x64xf16, #values>
+    %33 = kapy.matmul mma_m16n8k8_f16 %31, %32, %30 : tensor<64x64xf16, #values>, tensor<64x64xf16, #values> -> tensor<64x64xf16, #values>
     kapy.cp_async_wait_group {num_pending = 0 : i32}
-    %30 = kapy.ld_shared %24 : tensor<64x64xf16, #shared> -> tensor<64x64xf16, #values>
-    %31 = kapy.ld_shared %25 : tensor<64x64xf16, #shared> -> tensor<64x64xf16, #values>
-    %32 = kapy.matmul mma_m16n8k16_f16 %30, %31, %29 : tensor<64x64xf16, #values>, tensor<64x64xf16, #values> -> tensor<64x64xf16, #values>
-    %33 = kapy.sv_global %2[%16, %17] : tensor<?x?xf16, #global> -> tensor<64x64xf16, #global>
-    kapy.st_global %32, %33 : tensor<64x64xf16, #values>, tensor<64x64xf16, #global>
+    // %34 = kapy.ld_shared %28, %cst : tensor<64x64xf16, #shared> -> tensor<64x64xf16, #values>
+    // %35 = kapy.ld_shared %29, %cst : tensor<64x64xf16, #shared> -> tensor<64x64xf16, #values>
+    %34 = kapy.ld_matrix %28, %cst : tensor<64x64xf16, #shared>, tensor<64x64xf16, #values> -> tensor<64x64xf16, #values>
+    %35 = kapy.ld_matrix %29, %cst : tensor<64x64xf16, #shared>, tensor<64x64xf16, #values> -> tensor<64x64xf16, #values>
+    %36 = kapy.matmul mma_m16n8k16_f16 %34, %35, %33 : tensor<64x64xf16, #values>, tensor<64x64xf16, #values> -> tensor<64x64xf16, #values>
+    %37 = kapy.sv_global %2[%16 : %18, %17 : %19] : tensor<?x?xf16, #global> -> tensor<64x64xf16, #global>
+    kapy.st_global %36, %37 : tensor<64x64xf16, #values>, tensor<64x64xf16, #global>
     kapy.return
   }
 }

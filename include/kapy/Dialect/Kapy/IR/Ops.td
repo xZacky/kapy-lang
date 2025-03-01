@@ -61,9 +61,7 @@ def Kapy_FPToFPOp : Kapy_Op<
   );
   let results = (outs Kapy_FloatLike:$result);
 
-  let assemblyFormat = [{
-    $source attr-dict `:` type($source) `to` type($result)
-  }];
+  let assemblyFormat = "$source attr-dict `:` type($source) `to` type($result)";
 
   let hasVerifier = 1;
 
@@ -109,14 +107,20 @@ def Kapy_MkGlobalOp : Kapy_Op<"mk_global", [Pure, ResultInGlobalMemory]> {
 def Kapy_SvGlobalOp : Kapy_Op<
   "sv_global", [Pure, SourceInGlobalMemory, ResultInGlobalMemory]
 > {
-  let description = "Takes a subview of tensor in global memory.";
+  let description = [{
+    Takes a subview of tensor in global memory.
+    Result will be padded to power of 2 size, padded elements are out of range
+    memory access.
+  }];
 
-  let arguments = (ins Kapy_Tensor:$source, I32:$offset_x, I32:$offset_y);
+  let arguments = (ins
+    Kapy_Tensor:$source, I32:$start_x, I32:$end_x, I32:$start_y, I32:$end_y
+  );
   let results = (outs Kapy_Tensor:$result);
 
   let assemblyFormat = [{
-    $source `[` $offset_x `,` $offset_y `]` attr-dict `:` type($source) `->`
-    type($result)
+    $source `[` $start_x `:` $end_x `,` $start_y `:` $end_y `]` attr-dict `:`
+    type($source) `->` type($result)
   }];
 
   let hasCanonicalizeMethod = 1;
@@ -130,18 +134,18 @@ def Kapy_LdGlobalOp : Kapy_Op<
     SameOperandsAndResultElementType,
     SourceInGlobalMemory,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
-    TypesMatchWith<"from other type infer result type",
-                   "other", "result", "$_self">
+    TypesMatchWith<"from filler type infer result type",
+                   "filler", "result", "$_self">
   ]
 > {
   let description = [{
     For each element, loads `$result` from `$source`.
-    For memory access out of range, pads `$result` with `$other`.
+    For memory access out of range, pads `$result` with `$filler`.
   }];
 
   let arguments = (ins
     Kapy_Tensor:$source,
-    Kapy_Tensor:$other,
+    Kapy_Tensor:$filler,
     Kapy_DefaultValuedCacheModifierAttr:$cache_modifier,
     Kapy_DefaultValuedEvictPriorityAttr:$evict_priority,
     DefaultValuedAttr<BoolAttr, "false">:$if_volatile
@@ -149,7 +153,7 @@ def Kapy_LdGlobalOp : Kapy_Op<
   let results = (outs Kapy_Tensor:$result);
 
   let assemblyFormat = [{
-    $source `,` $other attr-dict `:` qualified(type($source)) `->` type($other)
+    $source `,` $filler attr-dict `:` type($source) `->` type($filler)
   }];
 
   let extraClassDeclaration = [{
@@ -183,15 +187,15 @@ def Kapy_StGlobalOp : Kapy_Op<
   }];
 }
 
-def Kapy_AtomicRMWGlobalOp : Kapy_Op<
-  "atomic_rmw_global",
+def Kapy_AtomicRMWOp : Kapy_Op<
+  "atomic_rmw",
   [
     SameOperandsAndResultShape,
     SameOperandsAndResultElementType,
     SourceInGlobalMemory,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
-    TypesMatchWith<"from value type infer other type",
-                   "value", "other", "$_self">,
+    TypesMatchWith<"from value type infer filler type",
+                   "value", "filler", "$_self">,
     TypesMatchWith<"from value type infer result type",
                    "value", "result", "$_self">
   ]
@@ -199,22 +203,24 @@ def Kapy_AtomicRMWGlobalOp : Kapy_Op<
   let description = [{
     For each element, loads `$result` from `$source`, computes with `$value` and
     stores the computation result back.
-    For memory access out of range, pads `$result` with `$other`.
+    For memory access out of range, pads `$result` with `$filler`.
   }];
 
   let arguments = (ins
     Kapy_AtomicRMWKindAttr:$kind,
     Kapy_Tensor:$source,
     Kapy_Tensor:$value,
-    Kapy_Tensor:$other,
+    Kapy_Tensor:$filler,
     Kapy_MemSemanticAttr:$mem_semantic
   );
   let results = (outs Kapy_Tensor:$result);
 
   let assemblyFormat = [{
-    $kind $source `,` $value `,` $other attr-dict `:` type($source) `->`
+    $kind $source `,` $value `,` $filler attr-dict `:` type($source) `->`
     type($value)
   }];
+
+  let hasVerifier = 1;
 }
 
 def Kapy_MkSharedOp : Kapy_Op<
@@ -223,20 +229,26 @@ def Kapy_MkSharedOp : Kapy_Op<
 > {
   let results = (outs Kapy_Tensor:$result);
 
-  let assemblyFormat = "attr-dict `:` qualified(type($result))";
+  let assemblyFormat = "attr-dict `:` type($result)";
 }
 
 def Kapy_SvSharedOp : Kapy_Op<
   "sv_shared", [Pure, SourceInSharedMemory, ResultInSharedMemory]
 > {
-  let description = "Takes a subview of tensor in shared memory.";
+  let description = [{
+    Takes a subview of tensor in shared memory.
+    Result will be padded to power of 2 size, padded elements are out of range
+    memory access.
+  }];
 
-  let arguments = (ins Kapy_Tensor:$source, I32:$offset_x, I32:$offset_y);
+  let arguments = (ins
+    Kapy_Tensor:$source, I32:$start_x, I32:$end_x, I32:$start_y, I32:$end_y
+  );
   let results = (outs Kapy_Tensor:$result);
 
   let assemblyFormat = [{
-    $source `[` $offset_x `,` $offset_y `]` attr-dict `:` type($source) `->`
-    type($result)
+    $source `[` $start_x `:` $end_x `,` $start_y `:` $end_y `]` attr-dict `:`
+    type($source) `->` type($result)
   }];
 
   let hasCanonicalizeMethod = 1;
@@ -249,14 +261,21 @@ def Kapy_LdSharedOp : Kapy_Op<
     SameOperandsAndResultShape,
     SameOperandsAndResultElementType,
     SourceInSharedMemory,
-    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+    TypesMatchWith<"from filler type infer result type",
+                   "filler", "result", "$_self">
   ]
 > {
-  let arguments = (ins Kapy_Tensor:$source);
+  let description = [{
+    For each element, loads `$result` from `$source`.
+    For memory access out of range, pads `$result` with `$filler`.
+  }];
+
+  let arguments = (ins Kapy_Tensor:$source, Kapy_Tensor:$filler);
   let results = (outs Kapy_Tensor:$result);
 
   let assemblyFormat = [{
-    $source attr-dict `:` type($source) `->` type($result)
+    $source `,` $filler attr-dict `:` type($source) `->` type($filler)
   }];
 }
 
@@ -269,11 +288,43 @@ def Kapy_StSharedOp : Kapy_Op<
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]
 > {
+  let description = [{
+    For each element, stores `$source` to `$target`.
+    For memory access out of range, do nothing.
+  }];
+
   let arguments = (ins Kapy_Tensor:$source, Kapy_Tensor:$target);
   
   let assemblyFormat = [{
     $source `,` $target attr-dict `:` type($source) `,` type($target)
   }];
+}
+
+def Kapy_LdMatrixOp : Kapy_Op<
+  "ld_matrix",
+  [
+    SameOperandsAndResultShape,
+    SameOperandsAndResultElementType,
+    SourceInSharedMemory,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]
+> {
+  let description = [{
+    For each element, loads `$result` from `$source`.
+    For memory access out of range, pads `$result` with `$zero`.
+    The `$loader` is a virtual operand, it is used to indicate the layout of
+    pointers when lowering this operation.
+  }];
+
+  let arguments = (ins Kapy_Tensor:$source, Kapy_Tensor:$loader);
+  let results = (outs Kapy_Tensor:$result);
+
+  let assemblyFormat = [{
+    $source `,` $loader attr-dict `:` type($source) `,` type($loader) `->`
+    type($result)
+  }];
+
+  let hasVerifier = 1;
 }
 
 def Kapy_CpAsyncGlobalToSharedOp : Kapy_Op<
@@ -286,26 +337,32 @@ def Kapy_CpAsyncGlobalToSharedOp : Kapy_Op<
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]
 > {
+  let description = [{
+    For each elements, copies from `$source` to `$result`.
+    For memory access out of range, pads `$result` with zero.
+    The `$loader` is a virtual operand, it is used to indicate the layout of
+    pointers when lowering this operation.
+  }];
+
   let arguments = (ins
     Kapy_Tensor:$source,
     Kapy_Tensor:$target,
-    Kapy_Tensor:$other,
+    Kapy_Tensor:$loader,
     Kapy_DefaultValuedCacheModifierAttr:$cache_modifier,
     Kapy_DefaultValuedEvictPriorityAttr:$evict_priority
   );
 
   let assemblyFormat = [{
-    $source `,` $target `,` $other attr-dict `:` type($source) `,` type($target)
-    `,` type($other)
+    $source `,` $target `,` $loader attr-dict `:` type($source) `,`
+    type($target) `,` type($loader)
   }];
 }
 
-def Kapy_CpAsyncCommitGroupOp
-    : Kapy_Op<"cp_async_commit_group", [NoMemoryEffect]> {
+def Kapy_CpAsyncCommitGroupOp : Kapy_Op<"cp_async_commit_group"> {
   let assemblyFormat = "attr-dict";
 }
 
-def Kapy_CpAsyncWaitGroupOp : Kapy_Op<"cp_async_wait_group", [NoMemoryEffect]> {
+def Kapy_CpAsyncWaitGroupOp : Kapy_Op<"cp_async_wait_group"> {
   let arguments = (ins I32Attr:$num_pending);
 
   let assemblyFormat = "attr-dict";

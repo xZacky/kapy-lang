@@ -32,7 +32,6 @@
 
 include "mlir/Interfaces/SideEffectInterfaces.td"
 include "kapy/Dialect/Kapy/IR/Types.td"
-include "kapy/Dialect/Kapy/IR/OpTraits.td"
 include "kapy/Dialect/Kgpu/IR/Dialect.td"
 
 class Kgpu_Op<string keyword, list<Trait> traits = []>
@@ -47,19 +46,10 @@ def Kgpu_ChangeOp : Kgpu_Op<
   let assemblyFormat = "$source attr-dict `:` type($source) `to` type($result)";
 
   let hasCanonicalizeMethod = 1;
-  let hasFolder = 1;
 }
 
-def Kgpu_LdMatrixOp : Kgpu_Op<
-  "ld_matrix",
-  [SourceInSharedMemory, DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]
-> {
-  let arguments = (ins
-    Kapy_Tensor:$source, DefaultValuedAttr<BoolAttr, "false">:$transpose
-  );
-  let results = (outs Kapy_Tensor:$result);
-
-  let assemblyFormat = "$source attr-dict `:` type($source) `->` type($result)";
+def Kgpu_Barrier0Op : Kgpu_Op<"barrier0"> {
+  let assemblyFormat = "attr-dict";
 }
 
 #endif // KAPY_DIALECT_KGPU_IR_OPS

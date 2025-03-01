@@ -44,11 +44,11 @@
 namespace mlir {
 namespace kapy {
 
-constexpr char sharedUsageAttrName[] = "kgpu.shared_usage";
+constexpr char allocatedSizeAttrName[] = "kgpu.allocated_size";
 
-/// Get shared memory needed from module attributes, should be used after
-/// running KgpuAllocateSharedPass.
-int64_t getSharedUsage(ModuleOp module);
+/// Get allocated shared memory size from module attributes, must be used after
+/// running KgpuAllocSharedMemoryPass.
+int64_t getAllocatedSize(ModuleOp module);
 
 /// Get a string to show how we distribute elements to lanes.
 std::string getLayoutString(RankedTensorType tensorType);

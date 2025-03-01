@@ -3,7 +3,7 @@
 
 #include "kapy/Conversion/KapyToKgpu/Passes.h"
 #include "kapy/Dialect/Kapy/Transforms/Passes.h"
-// #include "kapy/Dialect/Kgpu/Transforms/Passes.h"
+#include "kapy/Dialect/Kgpu/Transforms/Passes.h"
 #include "mlir/InitAllPasses.h"
 
 namespace mlir {
@@ -21,7 +21,7 @@ using namespace mlir;
 inline void registerAllKapyPasses() {
   registerAllPasses();
   kapy::registerKapyPasses();
-  // kapy::registerKgpuPasses();
+  kapy::registerKgpuPasses();
   kapy::registerConvertKapyToKgpuPass();
   test::registerTestAlignAnalysisPass();
   test::registerTestAllocAnalysisPass();

@@ -1,4 +1,4 @@
-//===- TypeConverter.cpp ----------------------------------------*- C++ -*-===//
+//===- Passes.h -------------------------------------------------*- C++ -*-===//
 //
 // Copyright 2018-2020 Philippe Tillet
 // Copyright 2020-2022 OpenAI
@@ -28,25 +28,22 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "kapy/Conversion/KapyToKgpu/TypeConverter.h"
-#include "kapy/Analysis/LayoutUtils.h"
-#include "kapy/Dialect/Kgpu/IR/Kgpu.h"
+#ifndef KAPY_DIALECT_KGPU_TRANSFORMS_PASSES_H
+#define KAPY_DIALECT_KGPU_TRANSFORMS_PASSES_H
 
-using namespace mlir;
-using namespace mlir::kapy;
+#include "mlir/Pass/Pass.h"
 
-KgpuTypeConverter::KgpuTypeConverter(MLIRContext *context) : context(context) {
-  addConversion([](Type type) { return type; });
+namespace mlir {
+namespace kapy {
 
-  addConversion([](RankedTensorType tensorType) {
-    if (hasLayout(tensorType) || !inRegisterFile(tensorType))
-      return tensorType;
-    return cloneWithLayout(tensorType, getFragmentsLayout(tensorType));
-  });
+std::unique_ptr<Pass> createKgpuCoalescePass();
 
-  addTargetMaterialization([](OpBuilder &builder, RankedTensorType tensorType,
-                              ValueRange valuesToChange,
-                              Location loc) -> std::optional<Value> {
-    return builder.create<ChangeOp>(loc, tensorType, valuesToChange);
-  });
-}
+std::unique_ptr<Pass> createKgpuOptimizeLayoutPass();
+
+#define GEN_PASS_REGISTRATION
+#include "kapy/Dialect/Kgpu/Transforms/Passes.h.inc"
+
+} // namespace kapy
+} // namespace mlir
+
+#endif // KAPY_DIALECT_KGPU_TRANSFORMS_PASSES_H

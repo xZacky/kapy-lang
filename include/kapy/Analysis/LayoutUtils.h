@@ -17,6 +17,7 @@ class RankedTensorType;
 namespace kapy {
 
 class MatmulOp;
+class LdMatrixOp;
 class FragmentsLayoutAttr;
 
 /// Get a fragments layout with the given parameters, this function will try to
@@ -29,10 +30,12 @@ FragmentsLayoutAttr getFragmentsLayout(ArrayRef<int64_t> laneLoops,
 FragmentsLayoutAttr getFragmentsLayout(RankedTensorType tensorType,
                                        bool rowMajor = true);
 
-std::array<FragmentsLayoutAttr, 3> getOperandLayouts(MatmulOp matmulOp);
+std::array<FragmentsLayoutAttr, 3> getDefaultLayouts(MatmulOp op);
+
+std::array<FragmentsLayoutAttr, 2> getDefaultLayouts(LdMatrixOp op);
 
 /// Get all the candidate layouts for the given operation (must be memory access
-/// operation), we will choose from these layouts in KgpuOptimizeLayoutPass.
+/// operation), we will select from these layouts in KgpuOptimizeLayoutPass.
 SetVector<FragmentsLayoutAttr> getCandidateLayouts(Operation *op);
 
 /// Return true if global memory access is coalesced.

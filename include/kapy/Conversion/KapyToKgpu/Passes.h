@@ -37,6 +37,7 @@ namespace mlir {
 namespace kapy {
 
 std::unique_ptr<Pass> createConvertKapyToKgpuPass();
+
 void registerConvertKapyToKgpuPass();
 
 } // namespace kapy

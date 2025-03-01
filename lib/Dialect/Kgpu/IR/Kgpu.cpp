@@ -27,23 +27,55 @@ class KgpuLayoutInterface : public KapyLayoutInterface {
 public:
   using KapyLayoutInterface::KapyLayoutInterface;
 
+  virtual LogicalResult verifyLdMatrixOpLayouts(LdMatrixOp op) const override {
+    auto loaderType = op.getLoader().getType();
+    auto resultType = op.getType();
+    auto loaderLayout = getLayout<FragmentsLayoutAttr>(loaderType);
+    auto resultLayout = getLayout<FragmentsLayoutAttr>(resultType);
+    auto bitWidth = getIntOrFloatBitWidth(resultType);
+    auto vecWidth = 128 / bitWidth;
+    auto pacWidth = 32 / bitWidth;
+    if (loaderLayout.isColMajor()) {
+      if (loaderLayout.getLaneArray() != SmallVector<int64_t, 2>{16, 2})
+        return op->emitOpError("loader has incompatible layout");
+      if (loaderLayout.getLaneLoops() != SmallVector<int64_t, 2>{1, vecWidth})
+        return op->emitOpError("loader has incompatible layout");
+    } else {
+      if (loaderLayout.getLaneArray() != SmallVector<int64_t, 2>{2, 16})
+        return op->emitOpError("loader has incompatible layout");
+      if (loaderLayout.getLaneLoops() != SmallVector<int64_t, 2>{vecWidth, 1})
+        return op->emitOpError("loader has incompatible layout");
+    }
+    if (resultLayout.isRowMajor()) {
+      if (resultLayout.getLaneArray() != SmallVector<int64_t, 2>{8, 4})
+        return op->emitOpError("result has incompatible layout");
+      if (resultLayout.getLaneLoops() != SmallVector<int64_t, 2>{1, pacWidth})
+        return op->emitOpError("result has incompatible layout");
+    } else {
+      if (resultLayout.getLaneArray() != SmallVector<int64_t, 2>{4, 8})
+        return op->emitOpError("result has incompatible layout");
+      if (resultLayout.getLaneLoops() != SmallVector<int64_t, 2>{pacWidth, 1})
+        return op->emitOpError("result has incompatible layout");
+    }
+    return success();
+  }
+
   virtual Attribute
   inferTransposeOpLayout(Attribute sourceLayout) const override {
     return cast<FragmentsLayoutAttr>(sourceLayout).transpose();
   }
 
-  virtual LogicalResult
-  verifyMatmulOpLayouts(MatmulOp matmulOp) const override {
-    auto lhsType = matmulOp.getLhs().getType();
-    auto rhsType = matmulOp.getRhs().getType();
-    auto accType = matmulOp.getAcc().getType();
-    auto implWay = matmulOp.getMatmulImplWay();
+  virtual LogicalResult verifyMatmulOpLayouts(MatmulOp op) const override {
+    auto lhsType = op.getLhs().getType();
+    auto rhsType = op.getRhs().getType();
+    auto accType = op.getAcc().getType();
+    auto implWay = op.getMatmulImplWay();
     if (failed(verifyMatmulOpAccLayout(accType, implWay)))
-      return matmulOp->emitOpError("acc has incompatible layout");
+      return op->emitOpError("acc has incompatible layout");
     if (failed(verifyMatmulOpLhsLayout(lhsType, accType, implWay)))
-      return matmulOp->emitOpError("lhs has incompatible layout");
+      return op->emitOpError("lhs has incompatible layout");
     if (failed(verifyMatmulOpRhsLayout(rhsType, rhsType, implWay)))
-      return matmulOp->emitOpError("rhs has incompatible layout");
+      return op->emitOpError("rhs has incompatible layout");
     return success();
   }
 
@@ -335,36 +367,21 @@ LogicalResult ChangeOp::canonicalize(ChangeOp op, PatternRewriter &rewriter) {
     rewriter.replaceOpWithNewOp<SplatOp>(op, resultType, inOp.getSource());
     return success();
   }
-  if (auto inOp = dyn_cast<LdSharedOp>(defOp)) {
-    rewriter.replaceOpWithNewOp<LdSharedOp>(op, resultType, inOp.getSource());
-    return success();
-  }
-  if (auto inOp = dyn_cast<LdMatrixOp>(defOp)) {
-    rewriter.replaceOpWithNewOp<LdMatrixOp>(op, resultType, inOp.getSource(),
-                                            inOp.getTranspose());
-    return success();
+  if (auto inOp = dyn_cast<arith::ConstantOp>(defOp)) {
+    if (auto splatAttr = dyn_cast<SplatElementsAttr>(inOp.getValue())) {
+      rewriter.replaceOpWithNewOp<arith::ConstantOp>(
+          op, SplatElementsAttr::get(resultType,
+                                     splatAttr.getSplatValue<Attribute>()));
+      return success();
+    }
   }
   return failure();
 }
 
-OpFoldResult ChangeOp::fold(FoldAdaptor adaptor) {
-  auto source = adaptor.getSource();
-  if (auto splatAttr = dyn_cast_if_present<SplatElementsAttr>(source))
-    return splatAttr.resizeSplat(getType());
-  return nullptr;
-}
-
-void LdMatrixOp::getEffects(
-    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
-        &effects) {
-  effects.emplace_back(MemoryEffects::Read::get(), &getSourceMutable(),
-                       SharedMemory::get());
-}
-
-int64_t kapy::getSharedUsage(ModuleOp module) {
-  if (!module->hasAttr(sharedUsageAttrName))
+int64_t kapy::getAllocatedSize(ModuleOp module) {
+  if (!module->hasAttr(allocatedSizeAttrName))
     llvm_unreachable("can not get named attribute");
-  return cast<IntegerAttr>(module->getAttr(sharedUsageAttrName)).getInt();
+  return cast<IntegerAttr>(module->getAttr(allocatedSizeAttrName)).getInt();
 }
 
 static unsigned getIdWidth(int64_t id) {

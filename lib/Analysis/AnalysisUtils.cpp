@@ -167,17 +167,17 @@ kapy::multiRootGetSlice(Operation *op,
   unsigned i = 0;
   SetVector<Operation *> bwSlice, fwSlice;
   while (i != slice.size()) {
-    auto *opI = slice[i];
+    auto *op = slice[i];
 
     bwSlice.clear();
     BackwardSliceOptions options;
     options.omitBlockArguments = true;
     options.filter = bwFilter;
-    getBackwardSlice(opI, &bwSlice, options);
+    getBackwardSlice(op, &bwSlice, options);
     slice.insert(bwSlice.begin(), bwSlice.end());
 
     fwSlice.clear();
-    getForwardSlice(opI, &fwSlice, fwFilter);
+    getForwardSlice(op, &fwSlice, fwFilter);
     slice.insert(fwSlice.begin(), fwSlice.end());
 
     ++i;

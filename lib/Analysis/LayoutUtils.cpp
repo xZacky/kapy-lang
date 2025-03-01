@@ -31,14 +31,14 @@ FragmentsLayoutAttr kapy::getFragmentsLayout(RankedTensorType tensorType,
   return getFragmentsLayout({1, 1}, tensorType, rowMajor);
 }
 
-std::array<FragmentsLayoutAttr, 3> kapy::getOperandLayouts(MatmulOp matmulOp) {
-  auto *context = matmulOp.getContext();
-  switch (matmulOp.getMatmulImplWay()) {
+std::array<FragmentsLayoutAttr, 3> kapy::getDefaultLayouts(MatmulOp op) {
+  auto *context = op.getContext();
+  switch (op.getMatmulImplWay()) {
   case (MatmulImplWay::FMA): {
-    auto accType = matmulOp.getAcc().getType();
+    auto accType = op.getAcc().getType();
     auto accLayout = getFragmentsLayout(accType);
-    auto lhsShape = matmulOp.getLhs().getType().getShape();
-    auto rhsShape = matmulOp.getRhs().getType().getShape();
+    auto lhsShape = op.getLhs().getType().getShape();
+    auto rhsShape = op.getRhs().getType().getShape();
     auto laneArray = accLayout.getLaneArray();
     auto lhsLayout =
         FragmentsLayoutAttr::get(context, laneArray, {1, lhsShape[1]}, 0, 1);
@@ -72,10 +72,28 @@ std::array<FragmentsLayoutAttr, 3> kapy::getOperandLayouts(MatmulOp matmulOp) {
   llvm_unreachable("unsupported matmul implement way");
 }
 
+std::array<FragmentsLayoutAttr, 2> kapy::getDefaultLayouts(LdMatrixOp op) {
+  auto sourceType = op.getSource().getType();
+  auto bitWidth = getIntOrFloatBitWidth(sourceType);
+  auto vecWidth = 128 / bitWidth;
+  auto pacWidth = 32 / bitWidth;
+  auto *context = op.getContext();
+  auto loaderLayout =
+      FragmentsLayoutAttr::get(context, {16, 2}, {1, vecWidth}, 1, 0);
+  auto resultLayout =
+      FragmentsLayoutAttr::get(context, {8, 4}, {1, pacWidth}, 0, 1);
+  if (hasLayout(sourceType) &&
+      getLayout<SwizzlingLayoutAttr>(sourceType).isColMajor())
+    loaderLayout = loaderLayout.transpose();
+  return {loaderLayout, resultLayout};
+}
+
+/// Get candidate layouts for expensive global or shared memory access.
 static SetVector<FragmentsLayoutAttr>
-getCandidateLayoutsImpl(RankedTensorType tensorType) {
+getCandidateLayoutsImpl(RankedTensorType tensorType, bool isGlobalAccess) {
   auto shape = tensorType.getShape();
   auto numElems = tensorType.getNumElements();
+  auto *context = tensorType.getContext();
   auto layout = getLayout<FragmentsLayoutAttr>(tensorType);
 
   auto laneArray = layout.getLaneArray();
@@ -84,11 +102,14 @@ getCandidateLayoutsImpl(RankedTensorType tensorType) {
   unsigned i = 0;
   unsigned j = 1;
 
-  auto vecWidth = laneLoops[layout.getMajorAxis()];
+  // Currently always use 128 bits instruction for shared memory access.
+  auto vecWidth = isGlobalAccess ? laneLoops[layout.getMajorAxis()]
+                                 : 128 / getIntOrFloatBitWidth(tensorType);
   auto restLoop = std::max<int64_t>(numElems / (warpSize * vecWidth), 1);
 
-  auto *context = tensorType.getContext();
   SetVector<FragmentsLayoutAttr> layouts;
+  layouts.insert(layout);
+
   for (int64_t numLanesI = 1; numLanesI <= warpSize; numLanesI *= 2) {
     auto numLanesJ = warpSize / numLanesI;
     laneArray[i] = numLanesI;
@@ -105,8 +126,10 @@ getCandidateLayoutsImpl(RankedTensorType tensorType) {
           FragmentsLayoutAttr::get(context, laneArray, laneLoops, i, j));
     }
   }
+
   i = 1;
   j = 0;
+
   for (int64_t numLanesI = 1; numLanesI <= warpSize; numLanesI *= 2) {
     auto numLanesJ = warpSize / numLanesI;
     laneArray[i] = numLanesI;
@@ -123,12 +146,19 @@ getCandidateLayoutsImpl(RankedTensorType tensorType) {
           FragmentsLayoutAttr::get(context, laneArray, laneLoops, i, j));
     }
   }
+
   return layouts;
 }
 
 SetVector<FragmentsLayoutAttr> kapy::getCandidateLayouts(Operation *op) {
+  if (auto ldMatrixOp = dyn_cast<LdMatrixOp>(op)) {
+    SetVector<FragmentsLayoutAttr> layouts;
+    auto layout = getDefaultLayouts(ldMatrixOp)[1];
+    layouts.insert(layout);
+    layouts.insert(layout.transpose());
+    return layouts;
+  }
   if (isExpensiveGlobalRead(op) || isExpensiveGlobalWrite(op)) {
-    auto alignment = getAlignment(op);
     RankedTensorType globalType;
     RankedTensorType tensorType;
     if (isExpensiveGlobalRead(op)) {
@@ -138,10 +168,10 @@ SetVector<FragmentsLayoutAttr> kapy::getCandidateLayouts(Operation *op) {
       globalType = cast<RankedTensorType>(op->getOperand(0).getType());
       tensorType = cast<RankedTensorType>(op->getOperand(3).getType());
     }
-    auto layouts = getCandidateLayoutsImpl(tensorType);
+    auto alignment = getAlignment(op);
+    auto layouts = getCandidateLayoutsImpl(tensorType, true);
     for (auto layout : layouts) {
-      tensorType = RankedTensorType::get(tensorType.getShape(),
-                                         tensorType.getElementType(), layout);
+      tensorType = cloneWithLayout(tensorType, layout);
       if (!isCoalescedGlobalAccess(globalType, tensorType, alignment))
         layouts.remove(layout);
     }
@@ -157,12 +187,26 @@ SetVector<FragmentsLayoutAttr> kapy::getCandidateLayouts(Operation *op) {
       sharedType = cast<RankedTensorType>(op->getOperand(0).getType());
       tensorType = cast<RankedTensorType>(op->getOperand(3).getType());
     }
-    auto layouts = getCandidateLayoutsImpl(tensorType);
+    auto layouts = getCandidateLayoutsImpl(tensorType, false);
     for (auto layout : layouts) {
-      tensorType = RankedTensorType::get(tensorType.getShape(),
-                                         tensorType.getElementType(), layout);
-      if (!is0ConflictSharedAccess(sharedType, tensorType))
-        layouts.remove(layout);
+      tensorType = cloneWithLayout(tensorType, layout);
+      if (hasLayout(sharedType)) {
+        if (!is0ConflictSharedAccess(sharedType, tensorType))
+          layouts.remove(layout);
+      } else {
+        // For shared memory tensor have not set a layout, we try both row major
+        // and column major swizzling layout.
+        auto *context = sharedType.getContext();
+        bool is0Conflict = false;
+        sharedType = cloneWithLayout(sharedType,
+                                     SwizzlingLayoutAttr::get(context, 0, 1));
+        is0Conflict |= is0ConflictSharedAccess(sharedType, tensorType);
+        sharedType = cloneWithLayout(sharedType,
+                                     SwizzlingLayoutAttr::get(context, 1, 0));
+        is0Conflict |= is0ConflictSharedAccess(sharedType, tensorType);
+        if (!is0Conflict)
+          layouts.remove(layout);
+      }
     }
     return layouts;
   }
