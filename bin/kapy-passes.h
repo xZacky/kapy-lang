@@ -11,6 +11,7 @@ namespace test {
 
 void registerTestAlignAnalysisPass();
 void registerTestAllocAnalysisPass();
+void registerTestCandidateLayoutsPass();
 void registerTestOpHelpersPass();
 
 } // namespace test
@@ -25,6 +26,7 @@ inline void registerAllKapyPasses() {
   kapy::registerConvertKapyToKgpuPass();
   test::registerTestAlignAnalysisPass();
   test::registerTestAllocAnalysisPass();
+  test::registerTestCandidateLayoutsPass();
   test::registerTestOpHelpersPass();
 }
 

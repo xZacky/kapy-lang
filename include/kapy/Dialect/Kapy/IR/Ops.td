@@ -109,8 +109,7 @@ def Kapy_SvGlobalOp : Kapy_Op<
 > {
   let description = [{
     Takes a subview of tensor in global memory.
-    Result will be padded to power of 2 size, padded elements are out of range
-    memory access.
+    Result will be padded to power of 2 size, padded element is nullptr.
   }];
 
   let arguments = (ins
@@ -139,8 +138,8 @@ def Kapy_LdGlobalOp : Kapy_Op<
   ]
 > {
   let description = [{
-    For each element, loads `$result` from `$source`.
-    For memory access out of range, pads `$result` with `$filler`.
+    For each element, loads `$result` from `$source` if it is not nullptr,
+    otherwise, pads `$result` with `$filler`.
   }];
 
   let arguments = (ins
@@ -171,8 +170,7 @@ def Kapy_StGlobalOp : Kapy_Op<
   ]
 > {
   let description = [{
-    For each element, stores `$source` to `$target`.
-    For memory access out of range, do nothing.
+    For each element, stores `$source` to `$target` if it is not nullptr.
   }];
 
   let arguments = (ins
@@ -202,8 +200,8 @@ def Kapy_AtomicRMWOp : Kapy_Op<
 > {
   let description = [{
     For each element, loads `$result` from `$source`, computes with `$value` and
-    stores the computation result back.
-    For memory access out of range, pads `$result` with `$filler`.
+    stores the computation result back if it is not nullptr, otherwise, pads
+    `$result` with `$filler`.
   }];
 
   let arguments = (ins
@@ -237,8 +235,7 @@ def Kapy_SvSharedOp : Kapy_Op<
 > {
   let description = [{
     Takes a subview of tensor in shared memory.
-    Result will be padded to power of 2 size, padded elements are out of range
-    memory access.
+    Result will be padded to power of 2 size, padded element is nullptr.
   }];
 
   let arguments = (ins
@@ -261,22 +258,18 @@ def Kapy_LdSharedOp : Kapy_Op<
     SameOperandsAndResultShape,
     SameOperandsAndResultElementType,
     SourceInSharedMemory,
-    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
-    TypesMatchWith<"from filler type infer result type",
-                   "filler", "result", "$_self">
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]
 > {
   let description = [{
-    For each element, loads `$result` from `$source`.
-    For memory access out of range, pads `$result` with `$filler`.
+    For each element, loads `$result` from `$source` if it is not nullptr,
+    otherwise, pads `$result` with zero.
   }];
 
-  let arguments = (ins Kapy_Tensor:$source, Kapy_Tensor:$filler);
+  let arguments = (ins Kapy_Tensor:$source);
   let results = (outs Kapy_Tensor:$result);
 
-  let assemblyFormat = [{
-    $source `,` $filler attr-dict `:` type($source) `->` type($filler)
-  }];
+  let assemblyFormat = "$source attr-dict `:` type($source) `->` type($result)";
 }
 
 def Kapy_StSharedOp : Kapy_Op<
@@ -289,8 +282,7 @@ def Kapy_StSharedOp : Kapy_Op<
   ]
 > {
   let description = [{
-    For each element, stores `$source` to `$target`.
-    For memory access out of range, do nothing.
+    For each element, stores `$source` to `$target` if it is not nullptr.
   }];
 
   let arguments = (ins Kapy_Tensor:$source, Kapy_Tensor:$target);
@@ -310,8 +302,8 @@ def Kapy_LdMatrixOp : Kapy_Op<
   ]
 > {
   let description = [{
-    For each element, loads `$result` from `$source`.
-    For memory access out of range, pads `$result` with `$zero`.
+    For each element, loads `$result` from `$source` if it is not nullptr,
+    otherwise, pads `$result` with `$zero`.
     The `$loader` is a virtual operand, it is used to indicate the layout of
     pointers when lowering this operation.
   }];
@@ -338,8 +330,8 @@ def Kapy_CpAsyncGlobalToSharedOp : Kapy_Op<
   ]
 > {
   let description = [{
-    For each elements, copies from `$source` to `$result`.
-    For memory access out of range, pads `$result` with zero.
+    For each elements, copies from `$source` to `$result` if it is not nullptr,
+    otherwise, pads `$result` with zero.
     The `$loader` is a virtual operand, it is used to indicate the layout of
     pointers when lowering this operation.
   }];

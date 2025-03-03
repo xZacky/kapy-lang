@@ -39,7 +39,7 @@ include "mlir/IR/OpBase.td"
 def ValidTensorShape : NativeOpTrait<"ValidTensorShape">;
 
 // Tensor should in register file unless there are other trait indicates it.
-// NOTE: SelectOp is ignored.
+// NOTE: CallOp, ReturnOp, SelectOp is ignored.
 def ValidMemorySpace : NativeOpTrait<"ValidMemorySpace">;
 
 // Source (operand 0) is a tensor in global memory.

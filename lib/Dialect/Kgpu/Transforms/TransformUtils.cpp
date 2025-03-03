@@ -35,9 +35,9 @@ void kapy::propagateMemoryLayout(Value value, Attribute layout,
     if (auto yieldOp = dyn_cast<scf::YieldOp>(user)) {
       auto *parentOp = yieldOp->getParentOp();
       if (auto forOp = dyn_cast<scf::ForOp>(parentOp)) {
-        auto iterArg = forOp.getTiedLoopRegionIterArg(&use);
+        auto iterArg = forOp.getRegionIterArg(index);
         propagateMemoryLayout(iterArg, layout, seen);
-        auto result = forOp.getTiedLoopResult(&use);
+        auto result = forOp->getResult(index);
         propagateMemoryLayout(result, layout, seen);
         continue;
       }

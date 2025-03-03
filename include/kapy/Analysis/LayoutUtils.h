@@ -19,6 +19,7 @@ namespace kapy {
 class MatmulOp;
 class LdMatrixOp;
 class FragmentsLayoutAttr;
+class SwizzlingLayoutAttr;
 
 /// Get a fragments layout with the given parameters, this function will try to
 /// make as many contiguous threads on the major axis as possible.
@@ -34,17 +35,12 @@ std::array<FragmentsLayoutAttr, 3> getDefaultLayouts(MatmulOp op);
 
 std::array<FragmentsLayoutAttr, 2> getDefaultLayouts(LdMatrixOp op);
 
-/// Get all the candidate layouts for the given operation (must be memory access
-/// operation), we will select from these layouts in KgpuOptimizeLayoutPass.
+/// Get all the candidate layouts for the given operation (must be global access
+/// operation). We will select from these layouts in KgpuOptimizeLayoutPass.
 SetVector<FragmentsLayoutAttr> getCandidateLayouts(Operation *op);
 
-/// Return true if global memory access is coalesced.
-bool isCoalescedGlobalAccess(RankedTensorType globalType,
-                             RankedTensorType tensorType, int64_t alignment);
-
-/// Return true if shared memory access is 0 bank conflict.
-bool is0ConflictSharedAccess(RankedTensorType sharedType,
-                             RankedTensorType tensorType);
+/// Get swizzling layouts that can avoid bank conflicts for the given access.
+SetVector<SwizzlingLayoutAttr> getSwizzlingLayouts(RankedTensorType tensorType);
 
 } // namespace kapy
 } // namespace mlir

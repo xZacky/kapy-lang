@@ -92,17 +92,13 @@ int64_t getNumWarps(ModuleOp module);
 
 int64_t getAlignment(Operation *op);
 
-/// Return true if this operation is expensive global memory read.
-bool isExpensiveGlobalRead(Operation *op);
+bool isGlobalRead(Operation *op);
 
-/// Return true if this operation is expensive global memory write.
-bool isExpensiveGlobalWrite(Operation *op);
+bool isGlobalWrite(Operation *op);
 
-/// Return true if this operation is expensive shared memory read.
-bool isExpensiveSharedRead(Operation *op);
+bool isSharedRead(Operation *op);
 
-/// Return true if this operation is expensive shared memory write.
-bool isExpensiveSharedWrite(Operation *op);
+bool isSharedWrite(Operation *op);
 
 bool inGlobalMemory(RankedTensorType tensorType);
 

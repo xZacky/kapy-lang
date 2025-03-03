@@ -1,30 +1,6 @@
-//===- CoalescePass.cpp -----------------------------------------*- C++ -*-===//
+//===- Coalesce.cpp ---------------------------------------------*- C++ -*-===//
 //
-// Copyright 2018-2020 Philippe Tillet
-// Copyright 2020-2022 OpenAI
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in
-// all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
-//
-//===----------------------------------------------------------------------===//
-//
-// This file is modified from the triton project.
-// https://github.com/triton-lang/triton
+// This file implements the KgpuCoalescePass.
 //
 //===----------------------------------------------------------------------===//
 
@@ -67,12 +43,16 @@ static FragmentsLayoutAttr getGlobalAccessLayout(Operation *op,
   return getFragmentsLayout(laneLoops, globalType, j == 1);
 }
 
-static FragmentsLayoutAttr getSharedAccessLayout(Operation *op,
-                                                 RankedTensorType sharedType) {
-  auto bitWidth = getIntOrFloatBitWidth(sharedType);
-  auto vecWidth = 128 / bitWidth;
-  SmallVector<int64_t, 2> laneLoops{1, vecWidth};
-  return getFragmentsLayout(laneLoops, sharedType);
+static FragmentsLayoutAttr getSharedAccessLayout(RankedTensorType sharedType) {
+  unsigned j = 1;
+  if (hasLayout(sharedType)) {
+    auto sharedLayout = getLayout<SwizzlingLayoutAttr>(sharedType);
+    j = sharedLayout.getMajorAxis();
+  }
+  auto vecWidth = 128 / getIntOrFloatBitWidth(sharedType);
+  SmallVector<int64_t, 2> laneLoops{1, 1};
+  laneLoops[j] = vecWidth;
+  return getFragmentsLayout(laneLoops, sharedType, j == 1);
 }
 
 namespace {
@@ -83,25 +63,36 @@ namespace {
 class KgpuCoalescePass : public impl::KgpuCoalesceBase<KgpuCoalescePass> {
 public:
   virtual void runOnOperation() override {
-    updateGlobalTensorType();
+    setGlobalMemoryLayouts();
     processGlobalAccessOps();
+    setSharedMemoryLayouts();
     processSharedAccessOps();
-    updateSharedTensorType();
+    if (failed(checkCpAsyncGlobalToSharedOps()))
+      signalPassFailure();
   }
 
 private:
-  void updateGlobalTensorType();
+  /// Set global memory layouts with known information.
+  void setGlobalMemoryLayouts();
 
-  void coalesceOp(Operation *op, FragmentsLayoutAttr layout);
-
+  /// Process global access operations.
   void processGlobalAccessOps();
 
+  /// Set shared memory layouts by the CpAsyncGlobalToSharedOps.
+  void setSharedMemoryLayouts();
+
+  /// Process LdMatrixOps and update corresponding shared memory layouts.
   void processSharedAccessOps();
 
-  void updateSharedTensorType();
+  /// Check if CpAsyncGlobalToSharedOp's source layout and target layout are
+  /// compatible.
+  LogicalResult checkCpAsyncGlobalToSharedOps();
+
+  /// Coalesce the given memory access operation.
+  void coalesceOp(Operation *op, FragmentsLayoutAttr layout);
 };
 
-void KgpuCoalescePass::updateGlobalTensorType() {
+void KgpuCoalescePass::setGlobalMemoryLayouts() {
   auto module = getOperation();
   module.walk([](MkGlobalOp op) {
     SmallVector<int64_t, 2> shape;
@@ -139,45 +130,6 @@ void KgpuCoalescePass::updateGlobalTensorType() {
   });
 }
 
-void KgpuCoalescePass::coalesceOp(Operation *op, FragmentsLayoutAttr layout) {
-  OpBuilder builder(op);
-  auto *context = op->getContext();
-  auto loc = op->getLoc();
-
-  SmallVector<Value> newOperands;
-  for (auto operand : op->getOperands()) {
-    auto tensorType = dyn_cast<RankedTensorType>(operand.getType());
-    if (!tensorType || !inRegisterFile(tensorType)) {
-      newOperands.push_back(operand);
-    } else {
-      tensorType = cloneWithLayout(tensorType, layout);
-      newOperands.push_back(builder.create<ChangeOp>(loc, tensorType, operand));
-    }
-  }
-
-  SmallVector<Type> newTypes;
-  for (auto type : op->getResultTypes()) {
-    auto tensorType = dyn_cast<RankedTensorType>(type);
-    if (!tensorType || !inRegisterFile(tensorType)) {
-      newTypes.push_back(type);
-    } else {
-      tensorType = cloneWithLayout(tensorType, layout);
-      newTypes.push_back(tensorType);
-    }
-  }
-
-  auto opName = op->getName().getIdentifier();
-  auto *newOp =
-      builder.create(loc, opName, newOperands, newTypes, op->getAttrs());
-  for (unsigned i = 0; i < op->getNumResults(); ++i) {
-    auto oldResult = op->getResult(i);
-    auto newResult = newOp->getResult(i);
-    oldResult.replaceAllUsesWith(
-        builder.create<ChangeOp>(loc, oldResult.getType(), newResult));
-  }
-  op->erase();
-}
-
 void KgpuCoalescePass::processGlobalAccessOps() {
   auto module = getOperation();
   module.walk([&](Operation *op) {
@@ -197,8 +149,54 @@ void KgpuCoalescePass::processGlobalAccessOps() {
   });
 }
 
+void KgpuCoalescePass::setSharedMemoryLayouts() {
+  auto module = getOperation();
+  module.walk([](MkSharedOp op) {
+    if (hasLayout(op.getResult().getType()))
+      return;
+    auto slice = multiRootGetSlice(op);
+    bool rowMajor = true;
+    for (auto *op : slice) {
+      if (auto cpAsyncOp = dyn_cast<CpAsyncGlobalToSharedOp>(op)) {
+        auto type = cast<RankedTensorType>(cpAsyncOp.getSource().getType());
+        auto layout = getLayout<Strided2dLayoutAttr>(type);
+        rowMajor = layout.isRowMajor();
+        break;
+      }
+    }
+    auto *context = op.getContext();
+    auto dynamic = ShapedType::kDynamic;
+    auto layout = SwizzlingLayoutAttr::get(context, dynamic, dynamic, rowMajor);
+    DenseSet<Value> seen;
+    propagateMemoryLayout(op.getResult(), layout, seen);
+  });
+}
+
 void KgpuCoalescePass::processSharedAccessOps() {
   auto module = getOperation();
+  module.walk([](LdMatrixOp op) {
+    auto *context = op.getContext();
+    auto source = op.getSource();
+    auto sourceType = source.getType();
+    if (hasLayout(sourceType)) {
+      if (getLayout<SwizzlingLayoutAttr>(sourceType).isColMajor()) {
+        OpBuilder builder(op);
+        auto loc = op.getLoc();
+        auto loader = op.getLoader();
+        auto loaderType = loader.getType();
+        auto layout = getLayout<FragmentsLayoutAttr>(loaderType).transpose();
+        loaderType = cloneWithLayout(loaderType, layout);
+        op.setOperand(1, builder.create<ChangeOp>(loc, loaderType, loader));
+        DenseSet<Value> seen;
+        propagateMemoryLayout(
+            source, SwizzlingLayoutAttr::get(context, 4, 8, 1, 0), seen);
+      } else {
+        DenseSet<Value> seen;
+        propagateMemoryLayout(
+            source, SwizzlingLayoutAttr::get(context, 4, 8, 0, 1), seen);
+      }
+    }
+  });
   module.walk([&](Operation *op) {
     if (isa<LdMatrixOp, CpAsyncGlobalToSharedOp>(op))
       return;
@@ -211,34 +209,70 @@ void KgpuCoalescePass::processSharedAccessOps() {
       if (effect.getResource() == SharedMemory::get() &&
           isa<MemoryEffects::Read, MemoryEffects::Write>(effect.getEffect())) {
         auto sharedType = cast<RankedTensorType>(effect.getValue().getType());
-        coalesceOp(op, getSharedAccessLayout(op, sharedType));
+        coalesceOp(op, getSharedAccessLayout(sharedType));
         break;
       }
     }
   });
 }
 
-void KgpuCoalescePass::updateSharedTensorType() {
+static LogicalResult checkImpl(CpAsyncGlobalToSharedOp op) {
+  auto sourceType = op.getSource().getType();
+  auto targetType = op.getTarget().getType();
+  auto sourceLayout = getLayout<Strided2dLayoutAttr>(sourceType);
+  auto targetLayout = getLayout<SwizzlingLayoutAttr>(targetType);
+  if (sourceLayout.isRowMajor() != targetLayout.isRowMajor())
+    return op->emitError("has incompatible source and target layout, "
+                         "consider use another shared tensor for it");
+  return success();
+}
+
+LogicalResult KgpuCoalescePass::checkCpAsyncGlobalToSharedOps() {
+  bool noInvalid = true;
   auto module = getOperation();
-  module.walk([](MkSharedOp op) {
-    if (hasLayout(op.getResult().getType()))
-      return;
-    auto slice = multiRootGetSlice(op);
-    bool rowMajor = true;
-    for (auto *op : slice) {
-      if (auto cpAsyncOp = dyn_cast<CpAsyncGlobalToSharedOp>(op)) {
-        auto type = cast<RankedTensorType>(cpAsyncOp.getSource().getType());
-        auto layout = getLayout<Strided2dLayoutAttr>(type);
-        rowMajor = layout.isRowMajor();
-        // Currently we assume that all the same.
-        break;
-      }
-    }
-    auto *context = op.getContext();
-    auto layout = SwizzlingLayoutAttr::get(context, rowMajor);
-    DenseSet<Value> seen;
-    propagateMemoryLayout(op.getResult(), layout, seen);
+  module.walk([&](CpAsyncGlobalToSharedOp op) {
+    if (failed(checkImpl(op)))
+      noInvalid = false;
   });
+  return success(noInvalid);
+}
+
+void KgpuCoalescePass::coalesceOp(Operation *op, FragmentsLayoutAttr layout) {
+  OpBuilder builder(op);
+  auto *context = op->getContext();
+  auto loc = op->getLoc();
+
+  SmallVector<Value> operands;
+  for (auto operand : op->getOperands()) {
+    auto tensorType = dyn_cast<RankedTensorType>(operand.getType());
+    if (!tensorType || !inRegisterFile(tensorType)) {
+      operands.push_back(operand);
+    } else {
+      tensorType = cloneWithLayout(tensorType, layout);
+      operands.push_back(builder.create<ChangeOp>(loc, tensorType, operand));
+    }
+  }
+
+  SmallVector<Type> types;
+  for (auto type : op->getResultTypes()) {
+    auto tensorType = dyn_cast<RankedTensorType>(type);
+    if (!tensorType || !inRegisterFile(tensorType)) {
+      types.push_back(type);
+    } else {
+      tensorType = cloneWithLayout(tensorType, layout);
+      types.push_back(tensorType);
+    }
+  }
+
+  auto opName = op->getName().getIdentifier();
+  auto *newOp = builder.create(loc, opName, operands, types, op->getAttrs());
+  for (unsigned i = 0; i < op->getNumResults(); ++i) {
+    auto oldResult = op->getResult(i);
+    auto newResult = newOp->getResult(i);
+    oldResult.replaceAllUsesWith(
+        builder.create<ChangeOp>(loc, oldResult.getType(), newResult));
+  }
+  op->erase();
 }
 
 } // namespace

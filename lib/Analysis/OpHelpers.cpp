@@ -8,6 +8,7 @@
 #include "kapy/Dialect/Kapy/IR/Kapy.h"
 #include "kapy/Dialect/Kgpu/IR/Kgpu.h"
 #include "kapy/Support/CommonUtils.h"
+#include "llvm/ADT/MapVector.h"
 
 using namespace mlir;
 using namespace mlir::kapy;
@@ -61,12 +62,22 @@ ChangeOpHelper::ChangeOpHelper(RankedTensorType sourceType,
 int64_t ChangeOpHelper::getNumShfls() const {
   auto layout = getLayout<FragmentsLayoutAttr>(resultType);
   auto loopSize = product(layout.getLoopSpace(resultType.getShape()));
+  auto bitWidth = getIntOrFloatBitWidth(resultType);
   auto map = getShflIdxMap();
-  int64_t numShfls = 0;
+  llvm::MapVector<int64_t, int64_t> laneIdToNumValues;
   for (int64_t loopIv = 0; loopIv < loopSize; ++loopIv) {
     auto laneId = map.compose({0, loopIv})[0];
-    if (laneId != 0)
-      ++numShfls;
+    if (laneIdToNumValues.contains(laneId))
+      laneIdToNumValues[laneId] += 1;
+    else
+      laneIdToNumValues[laneId] = 1;
+  }
+  int64_t numShfls = 0;
+  for (auto [laneId, numValues] : laneIdToNumValues) {
+    if (laneId == 0)
+      continue;
+    // We can exchange 32 bits in each shuffle.
+    numShfls += ceilDiv<int64_t>(numValues * bitWidth, 32);
   }
   return numShfls;
 }

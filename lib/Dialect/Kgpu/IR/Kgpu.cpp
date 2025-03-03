@@ -72,9 +72,9 @@ public:
     auto implWay = op.getMatmulImplWay();
     if (failed(verifyMatmulOpAccLayout(accType, implWay)))
       return op->emitOpError("acc has incompatible layout");
-    if (failed(verifyMatmulOpLhsLayout(lhsType, accType, implWay)))
+    if (failed(verifyMatmulOpLhsLayout(lhsType, implWay)))
       return op->emitOpError("lhs has incompatible layout");
-    if (failed(verifyMatmulOpRhsLayout(rhsType, rhsType, implWay)))
+    if (failed(verifyMatmulOpRhsLayout(rhsType, implWay)))
       return op->emitOpError("rhs has incompatible layout");
     return success();
   }
@@ -83,12 +83,6 @@ private:
   static LogicalResult verifyMatmulOpAccLayout(RankedTensorType accType,
                                                MatmulImplWay implWay) {
     auto accLayout = getLayout<FragmentsLayoutAttr>(accType);
-    if (implWay == MatmulImplWay::FMA) {
-      if (accLayout.getLaneLoops() != SmallVector<int64_t, 2>{2, 2} &&
-          accLayout.getLaneLoops() != SmallVector<int64_t, 2>{4, 4})
-        return failure();
-      return success();
-    }
     if (accLayout.isColMajor())
       return failure();
     if (accLayout.getLaneArray() != SmallVector<int64_t, 2>{8, 4})
@@ -101,23 +95,9 @@ private:
   }
 
   static LogicalResult verifyMatmulOpLhsLayout(RankedTensorType lhsType,
-                                               RankedTensorType accType,
                                                MatmulImplWay implWay) {
     auto lhsLayout = getLayout<FragmentsLayoutAttr>(lhsType);
-    auto accLayout = getLayout<FragmentsLayoutAttr>(accType);
-    if (implWay == MatmulImplWay::FMA) {
-      if (lhsLayout.getLaneArray() != accLayout.getLaneArray())
-        return failure();
-      if (lhsLayout.getLaneLoops()[0] != accLayout.getLaneLoops()[0])
-        return failure();
-      if (lhsLayout.getLaneLoops()[1] != lhsType.getShape()[1])
-        return failure();
-      return success();
-    }
     if (lhsLayout.isColMajor())
-      return failure();
-    if (lhsLayout.getWarpLoops(lhsType.getShape())[0] !=
-        accLayout.getWarpLoops(accType.getShape())[0])
       return failure();
     if (lhsLayout.getLaneArray() != SmallVector<int64_t, 2>{8, 4})
       return failure();
@@ -141,22 +121,9 @@ private:
   }
 
   static LogicalResult verifyMatmulOpRhsLayout(RankedTensorType rhsType,
-                                               RankedTensorType accType,
                                                MatmulImplWay implWay) {
     auto rhsLayout = getLayout<FragmentsLayoutAttr>(rhsType);
-    auto accLayout = getLayout<FragmentsLayoutAttr>(accType);
-    if (implWay == MatmulImplWay::FMA) {
-      if (rhsLayout.getLaneArray() != accLayout.getLaneArray())
-        return failure();
-      if (rhsLayout.getLaneLoops()[0] != rhsType.getShape()[0])
-        return failure();
-      if (rhsLayout.getLaneLoops()[1] != accLayout.getLaneLoops()[1])
-        return failure();
-    }
     if (rhsLayout.isRowMajor())
-      return failure();
-    if (rhsLayout.getWarpLoops(rhsType.getShape())[1] !=
-        accLayout.getWarpLoops(accType.getShape())[1])
       return failure();
     if (rhsLayout.getLaneArray() != SmallVector<int64_t, 2>{4, 8})
       return failure();
@@ -196,7 +163,7 @@ void KgpuDialect::initialize() {
 
 Attribute Strided2dLayoutAttr::parse(AsmParser &parser, Type type) {
   if (failed(parser.parseLess()))
-    return nullptr;
+    return Attribute();
 
   SmallVector<int64_t, 2> strides;
   auto parseStride = [&]() -> ParseResult {
@@ -213,10 +180,10 @@ Attribute Strided2dLayoutAttr::parse(AsmParser &parser, Type type) {
   };
   if (failed(parser.parseCommaSeparatedList(AsmParser::Delimiter::Square,
                                             parseStride)))
-    return nullptr;
+    return Attribute();
 
   if (failed(parser.parseGreater()))
-    return nullptr;
+    return Attribute();
 
   assert(strides.size() == 2);
   return Strided2dLayoutAttr::get(parser.getContext(), strides[0], strides[1]);
@@ -237,21 +204,73 @@ void Strided2dLayoutAttr::print(AsmPrinter &printer) const {
   printer << "]>";
 }
 
-AffineMap Strided2dLayoutAttr::getAffineMap() const {
-  auto result = getAffineConstantExpr(0, getContext());
-  unsigned numDims = 0;
-  unsigned numSyms = 0;
-  for (auto stride : {getStrideX(), getStrideY()}) {
-    auto dim = getAffineDimExpr(numDims++, getContext());
-    if (ShapedType::isDynamic(stride)) {
-      auto coeff = getAffineSymbolExpr(numSyms++, getContext());
-      result = result + dim * coeff;
-    } else {
-      auto coeff = getAffineConstantExpr(stride, getContext());
-      result = result + dim * coeff;
+Attribute SwizzlingLayoutAttr::parse(AsmParser &parser, Type type) {
+  if (failed(parser.parseLess()))
+    return Attribute();
+
+  SmallVector<int64_t, 2> params;
+  auto parseParam = [&]() -> ParseResult {
+    auto param = ShapedType::kDynamic;
+    if (succeeded(parser.parseOptionalQuestion())) {
+      params.push_back(param);
+      return success();
     }
-  }
-  return AffineMap::get(numDims, numSyms, result);
+    if (succeeded(parser.parseInteger(param))) {
+      params.push_back(param);
+      return success();
+    }
+    return failure();
+  };
+  if (failed(parser.parseCommaSeparatedList(AsmParser::Delimiter::Square,
+                                            parseParam)))
+    return Attribute();
+
+  if (failed(parser.parseComma()))
+    return Attribute();
+
+  SmallVector<unsigned, 2> axes;
+  auto parseAxis = [&]() -> ParseResult {
+    unsigned axis;
+    if (succeeded(parser.parseInteger(axis))) {
+      axes.push_back(axis);
+      return success();
+    }
+    return failure();
+  };
+  if (failed(parser.parseCommaSeparatedList(AsmParser::Delimiter::Paren,
+                                            parseAxis)))
+    return Attribute();
+
+  if (failed(parser.parseGreater()))
+    return Attribute();
+
+  assert(params.size() == 2 && axes.size() == 2);
+  return SwizzlingLayoutAttr::get(parser.getContext(), params[0], params[1],
+                                  axes[0], axes[1]);
+}
+
+void SwizzlingLayoutAttr::print(AsmPrinter &printer) const {
+  auto printQuestionOrInt = [&](int64_t value) {
+    if (ShapedType::isDynamic(value))
+      printer << "?";
+    else
+      printer << value;
+  };
+  printer << "<[";
+  printQuestionOrInt(getBankParam());
+  printer << ", ";
+  printQuestionOrInt(getLineParam());
+  printer << "], (";
+  printer << getMinorAxis();
+  printer << ", ";
+  printer << getMajorAxis();
+  printer << ")>";
+}
+
+bool SwizzlingLayoutAttr::isDynamicParams() const {
+  auto bankParam = getBankParam();
+  auto lineParam = getLineParam();
+  return ShapedType::isDynamic(bankParam) && ShapedType::isDynamic(lineParam);
 }
 
 SmallVector<int64_t, 2>
@@ -368,20 +387,25 @@ LogicalResult ChangeOp::canonicalize(ChangeOp op, PatternRewriter &rewriter) {
     return success();
   }
   if (auto inOp = dyn_cast<arith::ConstantOp>(defOp)) {
-    if (auto splatAttr = dyn_cast<SplatElementsAttr>(inOp.getValue())) {
-      rewriter.replaceOpWithNewOp<arith::ConstantOp>(
-          op, SplatElementsAttr::get(resultType,
-                                     splatAttr.getSplatValue<Attribute>()));
-      return success();
-    }
+    auto splatAttr = cast<SplatElementsAttr>(inOp.getValue());
+    rewriter.replaceOpWithNewOp<arith::ConstantOp>(
+        op, SplatElementsAttr::get(resultType,
+                                   splatAttr.getSplatValue<Attribute>()));
+    return success();
   }
   return failure();
 }
 
-int64_t kapy::getAllocatedSize(ModuleOp module) {
-  if (!module->hasAttr(allocatedSizeAttrName))
+int64_t kapy::getSharedNeeded(ModuleOp module) {
+  if (!module->hasAttr(sharedNeededAttrName))
     llvm_unreachable("can not get named attribute");
-  return cast<IntegerAttr>(module->getAttr(allocatedSizeAttrName)).getInt();
+  return cast<IntegerAttr>(module->getAttr(sharedNeededAttrName)).getInt();
+}
+
+int64_t kapy::getSharedOffset(MkSharedOp op) {
+  if (!op->hasAttr(sharedOffsetAttrName))
+    llvm_unreachable("can not get named attribute");
+  return cast<IntegerAttr>(op->getAttr(sharedOffsetAttrName)).getInt();
 }
 
 static unsigned getIdWidth(int64_t id) {
@@ -415,10 +439,10 @@ static std::string getElementString(std::array<int64_t, 2> idPair,
 }
 
 std::string kapy::getLayoutString(RankedTensorType tensorType) {
-  auto shape = tensorType.getShape();
   auto numElems = tensorType.getNumElements();
   std::vector<std::vector<std::array<int64_t, 2>>> indexToIdPairs(numElems);
   auto layout = getLayout<FragmentsLayoutAttr>(tensorType);
+  auto shape = tensorType.getShape();
   auto option = FragmentsLayoutAttr::MapOption::TO_TENSOR;
   auto map = layout.getAffineMap(shape, option);
   auto loopSize = product(layout.getLoopSpace(shape));

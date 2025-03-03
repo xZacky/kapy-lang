@@ -109,7 +109,6 @@ def Kapy_MatmulImplWayAttr : Kapy_EnumAttr<
   "MatmulImplWay",
   "how to implement matmul",
   [
-    I32EnumAttrCase<"FMA", 0, "fma">,
     I32EnumAttrCase<"MMA_M16N8K8_F16", 1, "mma_m16n8k8_f16">,
     I32EnumAttrCase<"MMA_M16N8K16_F16", 2, "mma_m16n8k16_f16">,
     I32EnumAttrCase<"MMA_M16N8K8_TF32", 3, "mma_m16n8k8_tf32">,

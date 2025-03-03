@@ -331,7 +331,7 @@ void WarpIdOp::inferResultRanges(ArrayRef<ConstantIntRanges> argRanges,
 OpFoldResult ArangeOp::fold(FoldAdaptor adaptor) {
   if (adaptor.getStart() + 1 == adaptor.getEnd())
     return SplatElementsAttr::get(getType(), adaptor.getStartAttr());
-  return nullptr;
+  return OpFoldResult();
 }
 
 LogicalResult ArangeOp::verify() {
@@ -380,12 +380,6 @@ LogicalResult MatmulOp::verify() {
     return emitOpError("result must have f16 or f32 element type");
 
   switch (getMatmulImplWay()) {
-  case (MatmulImplWay::FMA): {
-    if (lhsElementType != accElementType || rhsElementType != accElementType)
-      return emitOpError("fma operands and result must have same element type");
-    break;
-  }
-
   case (MatmulImplWay::MMA_M16N8K8_F16): {
     if (!lhsElementType.isF16() && !lhsElementType.isBF16())
       return emitOpError(
@@ -536,7 +530,7 @@ LogicalResult ReduceOp::verifyRegions() {
 OpFoldResult SplatOp::fold(FoldAdaptor adaptor) {
   if (auto source = adaptor.getSource())
     return SplatElementsAttr::get(getType(), source);
-  return nullptr;
+  return OpFoldResult();
 }
 
 LogicalResult BroadcastOp::canonicalize(BroadcastOp op,
@@ -565,7 +559,7 @@ OpFoldResult BroadcastOp::fold(FoldAdaptor adaptor) {
   auto source = adaptor.getSource();
   if (auto splatAttr = dyn_cast_if_present<SplatElementsAttr>(source))
     return splatAttr.resizeSplat(getType());
-  return nullptr;
+  return OpFoldResult();
 }
 
 LogicalResult BroadcastOp::verify() {
@@ -624,7 +618,7 @@ OpFoldResult TransposeOp::fold(FoldAdaptor adaptor) {
   auto source = adaptor.getSource();
   if (auto splatAttr = dyn_cast_if_present<SplatElementsAttr>(source))
     return splatAttr.resizeSplat(getType());
-  return nullptr;
+  return OpFoldResult();
 }
 
 void ElementwiseExternLibOp::getEffects(
@@ -748,11 +742,7 @@ int64_t kapy::getAlignment(Operation *op) {
   return cast<IntegerAttr>(op->getAttr(alignmentAttrName)).getInt();
 }
 
-static bool thereAreMoreElementsThanLanes(Operation *op, Value value) {
-  return cast<RankedTensorType>(value.getType()).getNumElements() > warpSize;
-}
-
-bool kapy::isExpensiveGlobalRead(Operation *op) {
+bool kapy::isGlobalRead(Operation *op) {
   auto effectOp = dyn_cast<MemoryEffectOpInterface>(op);
   if (!effectOp)
     return false;
@@ -760,13 +750,12 @@ bool kapy::isExpensiveGlobalRead(Operation *op) {
   effectOp.getEffects(effects);
   for (auto &effect : effects)
     if (effect.getResource() == GlobalMemory::get() &&
-        isa<MemoryEffects::Read>(effect.getEffect()) &&
-        thereAreMoreElementsThanLanes(op, effect.getValue()))
+        isa<MemoryEffects::Read>(effect.getEffect()))
       return true;
   return false;
 }
 
-bool kapy::isExpensiveGlobalWrite(Operation *op) {
+bool kapy::isGlobalWrite(Operation *op) {
   auto effectOp = dyn_cast<MemoryEffectOpInterface>(op);
   if (!effectOp)
     return false;
@@ -774,15 +763,12 @@ bool kapy::isExpensiveGlobalWrite(Operation *op) {
   effectOp.getEffects(effects);
   for (auto &effect : effects)
     if (effect.getResource() == GlobalMemory::get() &&
-        isa<MemoryEffects::Write>(effect.getEffect()) &&
-        thereAreMoreElementsThanLanes(op, effect.getValue()))
+        isa<MemoryEffects::Write>(effect.getEffect()))
       return true;
   return false;
 }
 
-bool kapy::isExpensiveSharedRead(Operation *op) {
-  if (isa<LdMatrixOp>(op))
-    return false;
+bool kapy::isSharedRead(Operation *op) {
   auto effectOp = dyn_cast<MemoryEffectOpInterface>(op);
   if (!effectOp)
     return false;
@@ -790,15 +776,12 @@ bool kapy::isExpensiveSharedRead(Operation *op) {
   effectOp.getEffects(effects);
   for (auto &effect : effects)
     if (effect.getResource() == SharedMemory::get() &&
-        isa<MemoryEffects::Read>(effect.getEffect()) &&
-        thereAreMoreElementsThanLanes(op, effect.getValue()))
+        isa<MemoryEffects::Read>(effect.getEffect()))
       return true;
   return false;
 }
 
-bool kapy::isExpensiveSharedWrite(Operation *op) {
-  if (isa<CpAsyncGlobalToSharedOp>(op))
-    return false;
+bool kapy::isSharedWrite(Operation *op) {
   auto effectOp = dyn_cast<MemoryEffectOpInterface>(op);
   if (!effectOp)
     return false;
@@ -806,8 +789,7 @@ bool kapy::isExpensiveSharedWrite(Operation *op) {
   effectOp.getEffects(effects);
   for (auto &effect : effects)
     if (effect.getResource() == SharedMemory::get() &&
-        isa<MemoryEffects::Write>(effect.getEffect()) &&
-        thereAreMoreElementsThanLanes(op, effect.getValue()))
+        isa<MemoryEffects::Write>(effect.getEffect()))
       return true;
   return false;
 }

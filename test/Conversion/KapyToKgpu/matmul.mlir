@@ -51,8 +51,8 @@ module attributes {kapy.num_warps = 4 : i64, kapy.nvidia_cc = 89 : i64} {
       %40 = arith.select %39, %26, %28 : tensor<64x64xf16, #shared>
       %41 = arith.select %39, %27, %29 : tensor<64x64xf16, #shared>
       kapy.cp_async_wait_group {num_pending = 2 : i32}
-      // %42 = kapy.ld_shared %40, %cst : tensor<64x64xf16, #shared> -> tensor<64x64xf16, #values>
-      // %43 = kapy.ld_shared %41, %cst : tensor<64x64xf16, #shared> -> tensor<64x64xf16, #values>
+      // %42 = kapy.ld_shared %40 : tensor<64x64xf16, #shared> -> tensor<64x64xf16, #values>
+      // %43 = kapy.ld_shared %41 : tensor<64x64xf16, #shared> -> tensor<64x64xf16, #values>
       %42 = kapy.ld_matrix %40, %cst : tensor<64x64xf16, #shared>, tensor<64x64xf16, #values> -> tensor<64x64xf16, #values>
       %43 = kapy.ld_matrix %41, %cst : tensor<64x64xf16, #shared>, tensor<64x64xf16, #values> -> tensor<64x64xf16, #values>
       %44 = kapy.matmul mma_m16n8k8_f16 %42, %43, %arg13 : tensor<64x64xf16, #values>, tensor<64x64xf16, #values> -> tensor<64x64xf16, #values>
@@ -66,14 +66,14 @@ module attributes {kapy.num_warps = 4 : i64, kapy.nvidia_cc = 89 : i64} {
       scf.yield %44 : tensor<64x64xf16, #values>
     }
     kapy.cp_async_wait_group {num_pending = 2 : i32}
-    // %31 = kapy.ld_shared %26, %cst : tensor<64x64xf16, #shared> -> tensor<64x64xf16, #values>
-    // %32 = kapy.ld_shared %27, %cst : tensor<64x64xf16, #shared> -> tensor<64x64xf16, #values>
+    // %31 = kapy.ld_shared %26 : tensor<64x64xf16, #shared> -> tensor<64x64xf16, #values>
+    // %32 = kapy.ld_shared %27 : tensor<64x64xf16, #shared> -> tensor<64x64xf16, #values>
     %31 = kapy.ld_matrix %26, %cst : tensor<64x64xf16, #shared>, tensor<64x64xf16, #values> -> tensor<64x64xf16, #values>
     %32 = kapy.ld_matrix %27, %cst : tensor<64x64xf16, #shared>, tensor<64x64xf16, #values> -> tensor<64x64xf16, #values>
     %33 = kapy.matmul mma_m16n8k8_f16 %31, %32, %30 : tensor<64x64xf16, #values>, tensor<64x64xf16, #values> -> tensor<64x64xf16, #values>
     kapy.cp_async_wait_group {num_pending = 0 : i32}
-    // %34 = kapy.ld_shared %28, %cst : tensor<64x64xf16, #shared> -> tensor<64x64xf16, #values>
-    // %35 = kapy.ld_shared %29, %cst : tensor<64x64xf16, #shared> -> tensor<64x64xf16, #values>
+    // %34 = kapy.ld_shared %28 : tensor<64x64xf16, #shared> -> tensor<64x64xf16, #values>
+    // %35 = kapy.ld_shared %29 : tensor<64x64xf16, #shared> -> tensor<64x64xf16, #values>
     %34 = kapy.ld_matrix %28, %cst : tensor<64x64xf16, #shared>, tensor<64x64xf16, #values> -> tensor<64x64xf16, #values>
     %35 = kapy.ld_matrix %29, %cst : tensor<64x64xf16, #shared>, tensor<64x64xf16, #values> -> tensor<64x64xf16, #values>
     %36 = kapy.matmul mma_m16n8k16_f16 %34, %35, %33 : tensor<64x64xf16, #values>, tensor<64x64xf16, #values> -> tensor<64x64xf16, #values>

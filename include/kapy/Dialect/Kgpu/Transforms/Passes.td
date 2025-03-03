@@ -39,11 +39,11 @@ def KgpuCoalesce : Pass<"kgpu-coalesce", "ModuleOp"> {
   let dependentDialects = ["kapy::KapyDialect", "kapy::KgpuDialect"];
 }
 
-// def KgpuOptimizeLayout : Pass<"kgpu-optimize-layout", "ModuleOp"> {
-//   let constructor = "kapy::createKgpuOptimizeLayoutPass()";
-//
-//   let dependentDialects = ["kapy::KapyDialect", "kapy::KgpuDialect"];
-// }
+def KgpuOptimizeLayout : Pass<"kgpu-optimize-layout", "ModuleOp"> {
+  let constructor = "kapy::createKgpuOptimizeLayoutPass()";
+
+  let dependentDialects = ["kapy::KapyDialect", "kapy::KgpuDialect"];
+}
 
 /*
 def KgpuPrefetch : Pass<"kgpu-prefetch", "ModuleOp"> {

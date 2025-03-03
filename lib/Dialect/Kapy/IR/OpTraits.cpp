@@ -29,13 +29,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "kapy/Dialect/Kapy/IR/OpTraits.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/IR/BuiltinTypes.h"
-
-#include "kapy/Dialect/Kapy/IR/Enums.h.inc"
-
-#define GET_ATTRDEF_CLASSES
-#include "kapy/Dialect/Kapy/IR/Attrs.h.inc"
+#include "kapy/Dialect/Kapy/IR/Kapy.h"
 
 using namespace mlir;
 using namespace mlir::kapy;
@@ -73,7 +67,7 @@ LogicalResult OpTrait::impl::verifyValidTensorShape(Operation *op) {
 }
 
 static LogicalResult verifyValidMemorySpaceImpl(Operation *op) {
-  if (isa<arith::SelectOp>(op))
+  if (isa<CallOp, ReturnOp, arith::SelectOp>(op))
     return success();
   for (auto &operand : op->getOpOperands()) {
     if (operand.getOperandNumber() == 0 &&
@@ -85,20 +79,18 @@ static LogicalResult verifyValidMemorySpaceImpl(Operation *op) {
          op->hasTrait<OpTrait::TargetInSharedMemory>()))
       continue;
     if (auto tensorType = dyn_cast<RankedTensorType>(operand.get().getType())) {
-      auto encoding = cast<EncodingAttr>(tensorType.getEncoding());
-      if (encoding.getMemory() != MemorySpace::REGISTER_FILE)
+      if (!inRegisterFile(tensorType))
         return op->emitOpError("operand ")
                << operand.getOperandNumber() << " must in register file";
     }
   }
-  for (auto result : op->getOpResults()) {
+  for (auto result : op->getResults()) {
     if (result.getResultNumber() == 0 &&
         (op->hasTrait<OpTrait::ResultInGlobalMemory>() ||
          op->hasTrait<OpTrait::ResultInSharedMemory>()))
       continue;
     if (auto tensorType = dyn_cast<RankedTensorType>(result.getType())) {
-      auto encoding = cast<EncodingAttr>(tensorType.getEncoding());
-      if (encoding.getMemory() != MemorySpace::REGISTER_FILE)
+      if (!inRegisterFile(tensorType))
         return op->emitOpError("result ")
                << result.getResultNumber() << " must in register file";
     }
@@ -120,8 +112,7 @@ LogicalResult OpTrait::impl::verifySourceInGlobalMemory(Operation *op) {
   auto sourceType = dyn_cast<RankedTensorType>(source.getType());
   if (!sourceType)
     return op->emitOpError("source must be a tensor");
-  auto encoding = cast<EncodingAttr>(sourceType.getEncoding());
-  if (encoding.getMemory() != MemorySpace::GLOBAL_MEMORY)
+  if (!inGlobalMemory(sourceType))
     return op->emitOpError("source must in global memory");
   return success();
 }
@@ -131,8 +122,7 @@ LogicalResult OpTrait::impl::verifyTargetInGlobalMemory(Operation *op) {
   auto targetType = dyn_cast<RankedTensorType>(target.getType());
   if (!targetType)
     return op->emitOpError("target must be a tensor");
-  auto encoding = cast<EncodingAttr>(targetType.getEncoding());
-  if (encoding.getMemory() != MemorySpace::GLOBAL_MEMORY)
+  if (!inGlobalMemory(targetType))
     return op->emitOpError("target must in global memory");
   return success();
 }
@@ -142,8 +132,7 @@ LogicalResult OpTrait::impl::verifyResultInGlobalMemory(Operation *op) {
   auto resultType = dyn_cast<RankedTensorType>(result.getType());
   if (!resultType)
     return op->emitOpError("result must be a tensor");
-  auto encoding = cast<EncodingAttr>(resultType.getEncoding());
-  if (encoding.getMemory() != MemorySpace::GLOBAL_MEMORY)
+  if (!inGlobalMemory(resultType))
     return op->emitOpError("result must in global memory");
   return success();
 }
@@ -153,8 +142,7 @@ LogicalResult OpTrait::impl::verifySourceInSharedMemory(Operation *op) {
   auto sourceType = dyn_cast<RankedTensorType>(source.getType());
   if (!sourceType)
     return op->emitOpError("source must be a tensor");
-  auto encoding = cast<EncodingAttr>(sourceType.getEncoding());
-  if (encoding.getMemory() != MemorySpace::SHARED_MEMORY)
+  if (!inSharedMemory(sourceType))
     return op->emitOpError("source must in shared memory");
   return success();
 }
@@ -164,8 +152,7 @@ LogicalResult OpTrait::impl::verifyTargetInSharedMemory(Operation *op) {
   auto targetType = dyn_cast<RankedTensorType>(target.getType());
   if (!targetType)
     return op->emitOpError("target must be a tensor");
-  auto encoding = cast<EncodingAttr>(targetType.getEncoding());
-  if (encoding.getMemory() != MemorySpace::SHARED_MEMORY)
+  if (!inSharedMemory(targetType))
     return op->emitOpError("target must in shared memory");
   return success();
 }
@@ -175,8 +162,7 @@ LogicalResult OpTrait::impl::verifyResultInSharedMemory(Operation *op) {
   auto resultType = dyn_cast<RankedTensorType>(result.getType());
   if (!resultType)
     return op->emitOpError("result must be a tensor");
-  auto encoding = cast<EncodingAttr>(resultType.getEncoding());
-  if (encoding.getMemory() != MemorySpace::SHARED_MEMORY)
+  if (!inSharedMemory(resultType))
     return op->emitOpError("result must in shared memory");
   return success();
 }

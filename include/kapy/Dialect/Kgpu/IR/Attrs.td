@@ -25,33 +25,42 @@ def Strided2dLayoutAttr : Kgpu_AttrDef<"Strided2dLayout", "strided2d"> {
   let extraClassDeclaration = [{
     inline bool isRowMajor() const { return getStrideY() == 1; }
     inline bool isColMajor() const { return getStrideX() == 1; }
-
-    AffineMap getAffineMap() const;
   }];
 }
 
 def SwizzlingLayoutAttr : Kgpu_AttrDef<"SwizzlingLayout", "swizzling"> {
-  let summary = "swizzling that take 4 banks as a unit";
+  let summary = "swizzling layout";
 
   let mnemonic = "swizzling";
-  let parameters = (ins "unsigned":$minorAxis, "unsigned":$majorAxis);
+  let parameters = (ins
+    "int64_t":$bankParam,
+    "int64_t":$lineParam,
+    "unsigned":$minorAxis,
+    "unsigned":$majorAxis
+  );
 
   let builders = [
     AttrBuilder<
-      (ins CArg<"bool", "true">:$rowMajor),
+      (ins
+        "int64_t":$bankParam,
+        "int64_t":$lineParam,
+        CArg<"bool", "true">:$rowMajor
+      ),
       [{
         unsigned i = rowMajor ? 0 : 1;
         unsigned j = rowMajor ? 1 : 0;
-        return get(context, i, j);
+        return get(context, bankParam, lineParam, i, j);
       }]
     >
   ];
 
-  let assemblyFormat = "`<` `(` $minorAxis `,` $majorAxis `)` `>`";
+  let hasCustomAssemblyFormat = 1;
 
   let extraClassDeclaration = [{
     inline bool isRowMajor() const { return getMajorAxis() == 1; }
     inline bool isColMajor() const { return getMajorAxis() == 0; }
+
+    bool isDynamicParams() const;
   }];
 }
 
