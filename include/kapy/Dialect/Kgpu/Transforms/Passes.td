@@ -45,7 +45,6 @@ def KgpuOptimizeLayout : Pass<"kgpu-optimize-layout", "ModuleOp"> {
   let dependentDialects = ["kapy::KapyDialect", "kapy::KgpuDialect"];
 }
 
-/*
 def KgpuAllocSharedMemory : Pass<"kgpu-alloc-shared-memory", "ModuleOp"> {
   let constructor = "kapy::createKgpuAllocSharedMemoryPass()";
 
@@ -53,10 +52,9 @@ def KgpuAllocSharedMemory : Pass<"kgpu-alloc-shared-memory", "ModuleOp"> {
 }
 
 def KgpuInsertSyncBarrier : Pass<"kgpu-insert-sync-barrier", "ModuleOp"> {
-  let constructor = "kapy::createInsertSyncBarrierPass()";
+  let constructor = "kapy::createKgpuInsertSyncBarrierPass()";
 
   let dependentDialects = ["kapy::KapyDialect", "kapy::KgpuDialect"];
 }
-*/
 
 #endif // KAPY_DIALECT_KGPU_TRANSFORMS_PASSES

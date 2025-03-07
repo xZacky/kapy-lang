@@ -289,16 +289,16 @@ LogicalResult ChangeOp::canonicalize(ChangeOp op, PatternRewriter &rewriter) {
   return failure();
 }
 
-int64_t kapy::getSharedMemoryNeeded(ModuleOp module) {
-  if (!module->hasAttr(sharedNeededAttrName))
+int64_t kapy::getSharedMemorySize(ModuleOp module) {
+  if (!module->hasAttr(sizeAttrName))
     llvm_unreachable("can not get named attribute");
-  return cast<IntegerAttr>(module->getAttr(sharedNeededAttrName)).getInt();
+  return cast<IntegerAttr>(module->getAttr(sizeAttrName)).getInt();
 }
 
 int64_t kapy::getSharedMemoryOffset(MkSharedOp op) {
-  if (!op->hasAttr(sharedOffsetAttrName))
+  if (!op->hasAttr(offsetAttrName))
     llvm_unreachable("can not get named attribute");
-  return cast<IntegerAttr>(op->getAttr(sharedOffsetAttrName)).getInt();
+  return cast<IntegerAttr>(op->getAttr(offsetAttrName)).getInt();
 }
 
 static unsigned getIdWidth(int64_t id) {

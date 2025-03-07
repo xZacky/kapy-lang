@@ -44,12 +44,12 @@
 namespace mlir {
 namespace kapy {
 
-constexpr char sharedNeededAttrName[] = "kgpu.shared_needed";
-constexpr char sharedOffsetAttrName[] = "kgpu.shared_offset";
+constexpr char sizeAttrName[] = "kgpu.size";
+constexpr char offsetAttrName[] = "kgpu.offset";
 
-/// Get shared memory size needed from module attributes, must be used after
+/// Get allocated shared memory size from module attributes, must be used after
 /// running KgpuAllocSharedMemoryPass.
-int64_t getSharedMemoryNeeded(ModuleOp module);
+int64_t getSharedMemorySize(ModuleOp module);
 
 /// Get shared memory offset from attributes, must be used after running
 /// KgpuAllocSharedMemoryPass.

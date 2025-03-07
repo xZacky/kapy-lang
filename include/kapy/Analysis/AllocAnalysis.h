@@ -72,8 +72,6 @@ private:
 };
 template <typename T> Interval(T, T) -> Interval<T>;
 
-class AllocAnalysis;
-
 class AllocInfo {
 public:
   using BufferId = int;
