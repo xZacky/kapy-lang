@@ -29,8 +29,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "kapy/Conversion/KapyToKgpu/TypeConverter.h"
-#include "kapy/Analysis/LayoutUtils.h"
 #include "kapy/Dialect/Kgpu/IR/Kgpu.h"
+#include "kapy/Support/LayoutUtils.h"
 
 using namespace mlir;
 using namespace mlir::kapy;

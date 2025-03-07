@@ -185,28 +185,6 @@ kapy::multiRootGetSlice(Operation *op,
   return multiRootTopoSort(slice);
 }
 
-bool kapy::hasRestrictedPath(Operation *sourceOp, Operation *targetOp,
-                             const SetVector<Operation *> &slice,
-                             std::function<bool(Operation *)> filter) {
-  SmallVector<Operation *> list;
-  DenseSet<Operation *> seen;
-  list.push_back(sourceOp);
-  while (!list.empty()) {
-    auto *op = list.pop_back_val();
-    for (auto result : op->getResults()) {
-      for (auto *user : result.getUsers()) {
-        if (!seen.insert(user).second)
-          continue;
-        if (user == targetOp)
-          return true;
-        if (slice.contains(user) && filter(user))
-          list.push_back(user);
-      }
-    }
-  }
-  return false;
-}
-
 namespace {
 
 /// Copied from TestDeadCodeAnalysis.cpp, because some dead code analysis

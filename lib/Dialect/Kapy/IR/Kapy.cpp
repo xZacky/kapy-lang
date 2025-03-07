@@ -139,6 +139,125 @@ Operation *KapyDialect::materializeConstant(OpBuilder &builder, Attribute value,
   return arith::ConstantOp::materialize(builder, value, type, loc);
 }
 
+Attribute Strided2dLayoutAttr::parse(AsmParser &parser, Type type) {
+  if (failed(parser.parseLess()))
+    return Attribute();
+
+  SmallVector<int64_t, 2> strides;
+  auto parseStride = [&]() -> ParseResult {
+    auto stride = ShapedType::kDynamic;
+    if (succeeded(parser.parseOptionalQuestion())) {
+      strides.push_back(stride);
+      return success();
+    }
+    if (succeeded(parser.parseInteger(stride))) {
+      strides.push_back(stride);
+      return success();
+    }
+    return failure();
+  };
+  if (failed(parser.parseCommaSeparatedList(AsmParser::Delimiter::Square,
+                                            parseStride)))
+    return Attribute();
+
+  if (failed(parser.parseGreater()))
+    return Attribute();
+
+  assert(strides.size() == 2);
+  return Strided2dLayoutAttr::get(parser.getContext(), strides[0], strides[1]);
+}
+
+void Strided2dLayoutAttr::print(AsmPrinter &printer) const {
+  auto printQuestionOrInt = [&](int64_t value) {
+    if (ShapedType::isDynamic(value))
+      printer << "?";
+    else
+      printer << value;
+  };
+
+  printer << "<[";
+  printQuestionOrInt(getStrideX());
+  printer << ", ";
+  printQuestionOrInt(getStrideY());
+  printer << "]>";
+}
+
+Attribute SwizzlingLayoutAttr::parse(AsmParser &parser, Type type) {
+  if (failed(parser.parseLess()))
+    return Attribute();
+
+  SmallVector<int64_t, 2> strides;
+  auto parseStride = [&]() -> ParseResult {
+    int64_t stride;
+    if (succeeded(parser.parseInteger(stride))) {
+      strides.push_back(stride);
+      return success();
+    }
+    return failure();
+  };
+  if (failed(parser.parseCommaSeparatedList(AsmParser::Delimiter::Square,
+                                            parseStride)))
+    return Attribute();
+
+  if (failed(parser.parseComma()))
+    return Attribute();
+
+  SmallVector<int64_t, 2> params;
+  auto parseParam = [&]() -> ParseResult {
+    auto param = ShapedType::kDynamic;
+    if (succeeded(parser.parseOptionalQuestion())) {
+      params.push_back(param);
+      return success();
+    }
+    if (succeeded(parser.parseInteger(param))) {
+      params.push_back(param);
+      return success();
+    }
+    return failure();
+  };
+  if (failed(parser.parseCommaSeparatedList(AsmParser::Delimiter::Paren,
+                                            parseParam)))
+    return Attribute();
+
+  if (failed(parser.parseGreater()))
+    return Attribute();
+
+  assert(strides.size() == 2 && params.size() == 2);
+  return SwizzlingLayoutAttr::get(parser.getContext(), strides[0], strides[1],
+                                  params[0], params[1]);
+}
+
+void SwizzlingLayoutAttr::print(AsmPrinter &printer) const {
+  auto printQuestionOrInt = [&](int64_t value) {
+    if (ShapedType::isDynamic(value))
+      printer << "?";
+    else
+      printer << value;
+  };
+
+  printer << "<[";
+  printer << getStrideX();
+  printer << ", ";
+  printer << getStrideY();
+  printer << "], (";
+  printQuestionOrInt(getBankParam());
+  printer << ", ";
+  printQuestionOrInt(getLineParam());
+  printer << ")>";
+}
+
+bool SwizzlingLayoutAttr::isDynamicParams() const {
+  auto bankParam = getBankParam();
+  auto lineParam = getLineParam();
+  return ShapedType::isDynamic(bankParam) && ShapedType::isDynamic(lineParam);
+}
+
+SwizzlingLayoutAttr SwizzlingLayoutAttr::setParams(int64_t bankParam,
+                                                   int64_t lineParam) const {
+  return SwizzlingLayoutAttr::get(getContext(), getStrideX(), getStrideY(),
+                                  bankParam, lineParam);
+}
+
 LogicalResult FPToFPOp::verify() {
   if (isDownCast() && !getRoundingMode())
     return emitOpError("rounding mode is required for down cast");
@@ -155,24 +274,6 @@ bool FPToFPOp::isDownCast() {
   auto oldBitWidth = getIntOrFloatBitWidth(getSource().getType());
   auto newBitWidth = getIntOrFloatBitWidth(getType());
   return newBitWidth < oldBitWidth;
-}
-
-LogicalResult SvGlobalOp::canonicalize(SvGlobalOp op,
-                                       PatternRewriter &rewriter) {
-  auto inOp = op.getSource().getDefiningOp<SvGlobalOp>();
-  if (!inOp)
-    return failure();
-  Value startX = rewriter.create<arith::AddIOp>(op.getLoc(), inOp.getStartX(),
-                                                op.getStartX());
-  Value startY = rewriter.create<arith::AddIOp>(op.getLoc(), inOp.getStartY(),
-                                                op.getStartY());
-  Value endX = rewriter.create<arith::AddIOp>(op.getLoc(), inOp.getStartX(),
-                                              op.getEndX());
-  Value endY = rewriter.create<arith::AddIOp>(op.getLoc(), inOp.getStartY(),
-                                              op.getEndY());
-  rewriter.replaceOpWithNewOp<SvGlobalOp>(op, op.getType(), inOp.getSource(),
-                                          startX, endX, startY, endY);
-  return success();
 }
 
 LogicalResult SvGlobalOp::verify() {
@@ -241,24 +342,6 @@ void MkSharedOp::getEffects(
   if (std::distance(getResult().use_begin(), getResult().use_end()) == 0)
     return;
   effects.emplace_back(MemoryEffects::Allocate::get(), SharedMemory::get());
-}
-
-LogicalResult SvSharedOp::canonicalize(SvSharedOp op,
-                                       PatternRewriter &rewriter) {
-  auto inOp = op.getSource().getDefiningOp<SvSharedOp>();
-  if (!inOp)
-    return failure();
-  Value startX = rewriter.create<arith::AddIOp>(op.getLoc(), inOp.getStartX(),
-                                                op.getStartX());
-  Value startY = rewriter.create<arith::AddIOp>(op.getLoc(), inOp.getStartY(),
-                                                op.getStartY());
-  Value endX = rewriter.create<arith::AddIOp>(op.getLoc(), inOp.getStartX(),
-                                              op.getEndX());
-  Value endY = rewriter.create<arith::AddIOp>(op.getLoc(), inOp.getStartY(),
-                                              op.getEndY());
-  rewriter.replaceOpWithNewOp<SvSharedOp>(op, op.getType(), inOp.getSource(),
-                                          startX, endX, startY, endY);
-  return success();
 }
 
 LogicalResult SvSharedOp::verify() {
@@ -719,9 +802,12 @@ LogicalResult ReturnOp::verify() {
 }
 
 unsigned kapy::getIntOrFloatBitWidth(Type type) {
+  unsigned bitWidth;
   if (auto shapedType = dyn_cast<ShapedType>(type))
-    return shapedType.getElementTypeBitWidth();
-  return type.getIntOrFloatBitWidth();
+    bitWidth = shapedType.getElementTypeBitWidth();
+  else
+    bitWidth = type.getIntOrFloatBitWidth();
+  return std::max<unsigned>(bitWidth, 8);
 }
 
 int64_t kapy::getNvidiaCC(ModuleOp module) {
@@ -742,7 +828,7 @@ int64_t kapy::getAlignment(Operation *op) {
   return cast<IntegerAttr>(op->getAttr(alignmentAttrName)).getInt();
 }
 
-bool kapy::isGlobalRead(Operation *op) {
+bool kapy::isGlobalMemoryRead(Operation *op) {
   auto effectOp = dyn_cast<MemoryEffectOpInterface>(op);
   if (!effectOp)
     return false;
@@ -755,7 +841,7 @@ bool kapy::isGlobalRead(Operation *op) {
   return false;
 }
 
-bool kapy::isGlobalWrite(Operation *op) {
+bool kapy::isGlobalMemoryWrite(Operation *op) {
   auto effectOp = dyn_cast<MemoryEffectOpInterface>(op);
   if (!effectOp)
     return false;
@@ -768,7 +854,7 @@ bool kapy::isGlobalWrite(Operation *op) {
   return false;
 }
 
-bool kapy::isSharedRead(Operation *op) {
+bool kapy::isSharedMemoryRead(Operation *op) {
   auto effectOp = dyn_cast<MemoryEffectOpInterface>(op);
   if (!effectOp)
     return false;
@@ -781,7 +867,7 @@ bool kapy::isSharedRead(Operation *op) {
   return false;
 }
 
-bool kapy::isSharedWrite(Operation *op) {
+bool kapy::isSharedMemoryWrite(Operation *op) {
   auto effectOp = dyn_cast<MemoryEffectOpInterface>(op);
   if (!effectOp)
     return false;
@@ -799,37 +885,37 @@ bool kapy::inGlobalMemory(RankedTensorType tensorType) {
   return encoding.getMemory() == MemorySpace::GLOBAL_MEMORY;
 }
 
-bool kapy::inSharedMemory(RankedTensorType tensorType) {
-  auto encoding = cast<EncodingAttr>(tensorType.getEncoding());
+bool kapy::inSharedMemory(RankedTensorType rankedType) {
+  auto encoding = cast<EncodingAttr>(rankedType.getEncoding());
   return encoding.getMemory() == MemorySpace::SHARED_MEMORY;
 }
 
-bool kapy::inRegisterFile(RankedTensorType tensorType) {
-  auto encoding = cast<EncodingAttr>(tensorType.getEncoding());
+bool kapy::inRegisterFile(RankedTensorType rankedType) {
+  auto encoding = cast<EncodingAttr>(rankedType.getEncoding());
   return encoding.getMemory() == MemorySpace::REGISTER_FILE;
 }
 
-bool kapy::hasLayout(RankedTensorType tensorType) {
-  auto encoding = cast<EncodingAttr>(tensorType.getEncoding());
+bool kapy::hasLayout(RankedTensorType rankedType) {
+  auto encoding = cast<EncodingAttr>(rankedType.getEncoding());
   return encoding.getLayout() != nullptr;
 }
 
-Attribute kapy::getLayout(RankedTensorType tensorType) {
-  auto encoding = cast<EncodingAttr>(tensorType.getEncoding());
+Attribute kapy::getLayout(RankedTensorType rankedType) {
+  auto encoding = cast<EncodingAttr>(rankedType.getEncoding());
   return encoding.getLayout();
 }
 
-RankedTensorType kapy::cloneWithShape(RankedTensorType tensorType,
+RankedTensorType kapy::cloneWithShape(RankedTensorType rankedType,
                                       ArrayRef<int64_t> shape) {
-  return RankedTensorType::get(shape, tensorType.getElementType(),
-                               tensorType.getEncoding());
+  return RankedTensorType::get(shape, rankedType.getElementType(),
+                               rankedType.getEncoding());
 }
 
-RankedTensorType kapy::cloneWithLayout(RankedTensorType tensorType,
+RankedTensorType kapy::cloneWithLayout(RankedTensorType rankedType,
                                        Attribute layout) {
-  auto encoding = cast<EncodingAttr>(tensorType.getEncoding());
   auto *context = layout.getContext();
+  auto encoding = cast<EncodingAttr>(rankedType.getEncoding());
   encoding = EncodingAttr::get(context, encoding.getMemory(), layout);
-  return RankedTensorType::get(tensorType.getShape(),
-                               tensorType.getElementType(), encoding);
+  return RankedTensorType::get(rankedType.getShape(),
+                               rankedType.getElementType(), encoding);
 }

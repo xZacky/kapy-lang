@@ -55,7 +55,6 @@ constexpr char nvidiaCCAttrName[] = "kapy.nvidia_cc";
 constexpr char numWarpsAttrName[] = "kapy.num_warps";
 
 constexpr int64_t warpSize = 32;
-constexpr int64_t quadSize = 8;
 
 constexpr char alignmentAttrName[] = "kapy.alignment";
 
@@ -92,32 +91,32 @@ int64_t getNumWarps(ModuleOp module);
 
 int64_t getAlignment(Operation *op);
 
-bool isGlobalRead(Operation *op);
+bool isGlobalMemoryRead(Operation *op);
 
-bool isGlobalWrite(Operation *op);
+bool isGlobalMemoryWrite(Operation *op);
 
-bool isSharedRead(Operation *op);
+bool isSharedMemoryRead(Operation *op);
 
-bool isSharedWrite(Operation *op);
+bool isSharedMemoryWrite(Operation *op);
 
-bool inGlobalMemory(RankedTensorType tensorType);
+bool inGlobalMemory(RankedTensorType rankedType);
 
-bool inSharedMemory(RankedTensorType tensorType);
+bool inSharedMemory(RankedTensorType rankedType);
 
-bool inRegisterFile(RankedTensorType tensorType);
+bool inRegisterFile(RankedTensorType rankedType);
 
-bool hasLayout(RankedTensorType tensorType);
+bool hasLayout(RankedTensorType rankedType);
 
-Attribute getLayout(RankedTensorType tensorType);
+Attribute getLayout(RankedTensorType rankedType);
 
-template <typename LayoutT> LayoutT getLayout(RankedTensorType tensorType) {
-  return dyn_cast<LayoutT>(getLayout(tensorType));
+template <typename LayoutT> LayoutT getLayout(RankedTensorType rankedType) {
+  return dyn_cast<LayoutT>(getLayout(rankedType));
 }
 
-RankedTensorType cloneWithShape(RankedTensorType tensorType,
+RankedTensorType cloneWithShape(RankedTensorType rankedType,
                                 ArrayRef<int64_t> shape);
 
-RankedTensorType cloneWithLayout(RankedTensorType tensorType, Attribute layout);
+RankedTensorType cloneWithLayout(RankedTensorType rankedType, Attribute layout);
 
 } // namespace kapy
 } // namespace mlir

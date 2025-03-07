@@ -4,8 +4,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef KAPY_DIALECT_KGPU_TRANSFORMS_TRANSFORMUTILS_H
-#define KAPY_DIALECT_KGPU_TRANSFORMS_TRANSFORMUTILS_H
+#ifndef KAPY_DIALECT_KAPY_TRANSFORMS_TRANSFORMUTILS_H
+#define KAPY_DIALECT_KAPY_TRANSFORMS_TRANSFORMUTILS_H
 
 #include "mlir/IR/Value.h"
 
@@ -19,4 +19,4 @@ void propagateMemoryLayout(Value value, Attribute layout,
 } // namespace kapy
 } // namespace mlir
 
-#endif // KAPY_DIALECT_KGPU_TRANSFORMS_TRANSFORMUTILS_H
+#endif // KAPY_DIALECT_KAPY_TRANSFORMS_TRANSFORMUTILS_H

@@ -49,11 +49,11 @@ constexpr char sharedOffsetAttrName[] = "kgpu.shared_offset";
 
 /// Get shared memory size needed from module attributes, must be used after
 /// running KgpuAllocSharedMemoryPass.
-int64_t getSharedNeeded(ModuleOp module);
+int64_t getSharedMemoryNeeded(ModuleOp module);
 
 /// Get shared memory offset from attributes, must be used after running
 /// KgpuAllocSharedMemoryPass.
-int64_t getSharedOffset(MkSharedOp op);
+int64_t getSharedMemoryOffset(MkSharedOp op);
 
 /// Get a string to show how we distribute elements to lanes.
 std::string getLayoutString(RankedTensorType tensorType);

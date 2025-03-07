@@ -55,12 +55,6 @@ multiRootGetSlice(Operation *op,
                   std::function<bool(Operation *)> bwFilter = nullptr,
                   std::function<bool(Operation *)> fwFilter = nullptr);
 
-/// Return true if there is a path from `sourceOp` to `targetOp` in `slice`, and
-/// all the operations on this path meet with `filter`.
-bool hasRestrictedPath(Operation *sourceOp, Operation *targetOp,
-                       const SetVector<Operation *> &slice,
-                       std::function<bool(Operation *)> filter = nullptr);
-
 /// Create a basic DataFlowSolver that contains DeadCodeAnalysis and
 /// ConstantAnalysis.
 std::unique_ptr<DataFlowSolver> createDataFlowSolver();

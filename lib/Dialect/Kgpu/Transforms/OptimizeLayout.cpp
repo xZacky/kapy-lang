@@ -4,14 +4,12 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "kapy/Analysis/AnalysisUtils.h"
-#include "kapy/Analysis/LayoutUtils.h"
-#include "kapy/Analysis/OpHelpers.h"
 #include "kapy/Dialect/Kapy/IR/Kapy.h"
+#include "kapy/Dialect/Kapy/Transforms/TransformUtils.h"
 #include "kapy/Dialect/Kgpu/IR/Kgpu.h"
 #include "kapy/Dialect/Kgpu/Transforms/Passes.h"
-#include "kapy/Dialect/Kgpu/Transforms/TransformUtils.h"
 #include "kapy/Support/CommonUtils.h"
+#include "kapy/Support/LayoutUtils.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "llvm/ADT/MapVector.h"
 
@@ -29,6 +27,18 @@ namespace {
 /// 3. Resolve conflicts by deciding which one of the layouts each tensor should
 ///    keep, insert ChangeOp when necessary.
 /// 4. Rewrite the IR by walking the function in dominance order.
+///
+/// This algorithm is similar to LayoutPropagation in Triton but different at:
+/// 1. Triton only do forward propagation and this algorithm do both forward and
+///    backward propagation.
+/// 2. Triton depends on backward rematerialization to remove some layout change
+///    and may duplicate computation. Currently this algorithm does not consider
+///    duplicate computation, but try to reduce cost of layout change by using a
+///    better layout.
+/// 3. This algorithm will search in a larger space and select from combinations
+///    according to a simple cost model (see CostInfo).
+///
+/// TODO: Enhance the cost model.
 class LayoutOptimization {
 public:
   explicit LayoutOptimization(FuncOp funcOp);
@@ -75,7 +85,7 @@ private:
     DenseMap<Value, FragmentsLayoutAttr> valueToLayout;
     // Operands that need a new layout for its owner.
     llvm::MapVector<OpOperand *, FragmentsLayoutAttr> operandToLayout;
-    // Shared memory to valid layouts.
+    // Shared memory to valid layouts (no bank conflict).
     DenseMap<Value, SetVector<SwizzlingLayoutAttr>> sharedToLayouts;
     // CostInfo of this state.
     CostInfo cost;
@@ -109,7 +119,7 @@ private:
                             SmallVectorImpl<Value> &changedValues);
 
   /// Resolve conflicts for the remain part of the IR.
-  /// Fails if we can not avoid bank conflicts.
+  /// Fails if we can not avoid bank conflict.
   LogicalResult resolve(ResolveState &curState);
 
   llvm::MapVector<Value, SetVector<FragmentsLayoutAttr>>
@@ -146,7 +156,7 @@ LayoutOptimization::LayoutOptimization(FuncOp funcOp) : funcOp(funcOp) {
 void LayoutOptimization::initialize() {
   funcOp.walk([&](Operation *op) {
     // Currently anchor operations:
-    // MatmulOp, LdMatrixOp, LdGlobalOp, StGlobalOp, AtomicRMWOp
+    // MatmulOp, LdGlobalOp, StGlobalOp, AtomicRMWOp
     if (isa<MatmulOp>(op)) {
       anchorOps.push_back(op);
       auto &lhs = op->getOpOperand(0);
@@ -165,18 +175,9 @@ void LayoutOptimization::initialize() {
       resultToLayouts[result].insert(accLayout);
       return;
     }
-    if (isa<LdMatrixOp>(op)) {
-      anchorOps.push_back(op);
-      auto result = op->getResult(0);
-      auto resultType = cast<RankedTensorType>(result.getType());
-      auto layout = getLayout<FragmentsLayoutAttr>(resultType);
-      resultToLayouts[result].insert(layout);
-      resultToLayouts[result].insert(layout.transpose());
+    if (isa<LdMatrixOp, CpAsyncGlobalToSharedOp>(op))
       return;
-    }
-    if (isa<CpAsyncGlobalToSharedOp>(op))
-      return;
-    if (isGlobalRead(op) || isGlobalWrite(op)) {
+    if (isGlobalMemoryRead(op) || isGlobalMemoryWrite(op)) {
       anchorOps.push_back(op);
       auto layouts = getCandidateLayouts(op);
       for (auto &operand : op->getOpOperands()) {
@@ -224,9 +225,17 @@ void LayoutOptimization::propagate() {
   }
 }
 
+static bool alwaysLessThan(ArrayRef<int64_t> lhsArray,
+                           ArrayRef<int64_t> rhsArray) {
+  for (unsigned i = 0; i < lhsArray.size(); ++i)
+    if (lhsArray[i] >= rhsArray[i])
+      return false;
+  return true;
+}
+
 void LayoutOptimization::resolve() {
   // Now we regard these operations as anchors too:
-  // 1. ConstantOp, SplatOp, it is start point.
+  // 1. LdMatrixOp, LdSharedOp, ConstantOp, SplatOp, it is start point.
   // Now we regard these operands as anchors too:
   // 1. Operands of ForOp, WhileOp, ConditionOp.
   // 2. Operands of YieldOp with an IfOp parent.
@@ -264,8 +273,8 @@ void LayoutOptimization::resolve() {
       for (auto &operand : op->getOpOperands())
         if (valueToLayouts.contains(operand.get()))
           anchorOperands.push_back(&operand);
-    // ConstantOp and SplatOp.
-    if (isa<arith::ConstantOp, SplatOp>(op)) {
+    // LdMatrixOp, LdSharedOp, ConstantOp and SplatOp.
+    if (isa<LdMatrixOp, LdSharedOp, arith::ConstantOp, SplatOp>(op)) {
       auto result = op->getResult(0);
       if (valueToLayouts.contains(result))
         anchorOps.push_back(op);
@@ -278,13 +287,42 @@ void LayoutOptimization::resolve() {
   for (unsigned anchorId = 0; anchorId < numAnchors; ++anchorId) {
     if (anchorId < anchorOps.size()) {
       auto *op = anchorOps[anchorId];
-      if (isa<MatmulOp>(op)) {
-        combDomain[anchorId] = 1;
+      if (isa<LdMatrixOp>(op)) {
+        auto result = op->getResult(0);
+        auto resultType = cast<RankedTensorType>(result.getType());
+        auto nLayout = getLayout<FragmentsLayoutAttr>(resultType);
+        SmallVector<int64_t> nCosts;
+        for (auto newLayout : valueToLayouts[result]) {
+          auto oldType = cloneWithLayout(resultType, nLayout);
+          auto newType = cloneWithLayout(resultType, newLayout);
+          ChangeOpHelper helper(oldType, newType);
+          nCosts.push_back(helper.getNumShfls());
+        }
+        auto tLayout = nLayout.transpose();
+        SmallVector<int64_t> tCosts;
+        for (auto newLayout : valueToLayouts[result]) {
+          auto oldType = cloneWithLayout(resultType, tLayout);
+          auto newType = cloneWithLayout(resultType, newLayout);
+          ChangeOpHelper helper(oldType, newType);
+          tCosts.push_back(helper.getNumShfls());
+        }
+        if (alwaysLessThan(nCosts, tCosts)) {
+          resultToLayouts[result].insert(nLayout);
+          combDomain[anchorId] = 1;
+          continue;
+        }
+        if (alwaysLessThan(tCosts, nCosts)) {
+          resultToLayouts[result].insert(tLayout);
+          combDomain[anchorId] = 1;
+          continue;
+        }
+        resultToLayouts[result].insert(nLayout);
+        resultToLayouts[result].insert(tLayout);
+        combDomain[anchorId] = 2;
         continue;
       }
-      if (isa<LdMatrixOp>(op)) {
-        // 2 (loader layouts) * 2 (result layouts)
-        combDomain[anchorId] = 4;
+      if (isa<MatmulOp>(op)) {
+        combDomain[anchorId] = 1;
         continue;
       }
       if (op->getNumResults() == 1) {
@@ -318,6 +356,12 @@ void LayoutOptimization::resolve() {
       auto select = selects[anchorId];
       if (anchorId < anchorOps.size()) {
         auto *op = anchorOps[anchorId];
+        if (isa<LdMatrixOp>(op)) {
+          auto result = op->getResult(0);
+          auto layout = resultToLayouts[result][select];
+          curState.valueToLayout[result] = layout;
+          continue;
+        }
         if (isa<MatmulOp>(op)) {
           auto &lhs = op->getOpOperand(0);
           auto lhsLayout = operandToLayouts[&lhs][select];
@@ -332,25 +376,13 @@ void LayoutOptimization::resolve() {
           curState.valueToLayout[result] = accLayout;
           continue;
         }
-        if (isa<LdMatrixOp>(op)) {
-          auto &loader = op->getOpOperand(1);
-          auto loaderType = cast<RankedTensorType>(loader.get().getType());
-          auto loaderLayout = getLayout<FragmentsLayoutAttr>(loaderType);
-          if (select / 2 == 1)
-            loaderLayout = loaderLayout.transpose();
-          curState.operandToLayout[&loader] = loaderLayout;
-          auto result = op->getResult(0);
-          auto resultLayout = resultToLayouts[result][select % 2];
-          curState.valueToLayout[result] = resultLayout;
-          continue;
-        }
-        if (isa<arith::ConstantOp, SplatOp>(op)) {
+        if (isa<LdSharedOp, arith::ConstantOp, SplatOp>(op)) {
           auto result = op->getResult(0);
           auto layout = valueToLayouts[result][select];
           curState.valueToLayout[result] = layout;
           continue;
         }
-        if (isGlobalRead(op) || isGlobalWrite(op)) {
+        if (isGlobalMemoryRead(op) || isGlobalMemoryWrite(op)) {
           for (auto &operand : op->getOpOperands()) {
             if (operandToLayouts.contains(&operand)) {
               auto layout = operandToLayouts[&operand][select];
@@ -449,25 +481,14 @@ static bool willPassLayout(Operation *op) {
          op->hasTrait<OpTrait::Elementwise>();
 }
 
-static FragmentsLayoutAttr inferUseLayout(Operation *op,
-                                          FragmentsLayoutAttr defLayout) {
+static FragmentsLayoutAttr inferLayout(Operation *op,
+                                       FragmentsLayoutAttr layout) {
   if (willPassLayout(op))
-    return defLayout;
+    return layout;
   if (isa<scf::ForOp, scf::WhileOp, scf::IfOp, ChangeOp>(op))
-    return defLayout;
+    return layout;
   if (isa<TransposeOp>(op))
-    return defLayout.transpose();
-  return FragmentsLayoutAttr();
-}
-
-static FragmentsLayoutAttr inferDefLayout(Operation *op,
-                                          FragmentsLayoutAttr useLayout) {
-  if (willPassLayout(op))
-    return useLayout;
-  if (isa<scf::ForOp, scf::WhileOp, scf::IfOp, ChangeOp>(op))
-    return useLayout;
-  if (isa<TransposeOp>(op))
-    return useLayout.transpose();
+    return layout.transpose();
   return FragmentsLayoutAttr();
 }
 
@@ -530,7 +551,7 @@ void LayoutOptimization::propagateToUseValues(
       continue;
     bool changed = false;
     for (auto layout : layouts) {
-      auto newLayout = inferUseLayout(op, layout);
+      auto newLayout = inferLayout(op, layout);
       if (newLayout)
         changed |= valueToLayouts[value].insert(newLayout);
     }
@@ -607,29 +628,13 @@ void LayoutOptimization::propagateToDefValues(
       continue;
     bool changed = false;
     for (auto layout : layouts) {
-      auto newLayout = inferDefLayout(op, layout);
+      auto newLayout = inferLayout(op, layout);
       if (newLayout)
         changed |= valueToLayouts[value].insert(newLayout);
     }
     if (changed)
       changedValues.push_back(value);
   }
-}
-
-static SetVector<SwizzlingLayoutAttr>
-intersect(const SetVector<SwizzlingLayoutAttr> &lhsSet,
-          const SetVector<SwizzlingLayoutAttr> &rhsSet) {
-  SetVector<SwizzlingLayoutAttr> resultSet;
-  for (auto lhs : lhsSet) {
-    if (lhs.isDynamicParams()) {
-      for (auto rhs : rhsSet)
-        if (lhs.isRowMajor() == rhs.isRowMajor())
-          resultSet.insert(rhs);
-    } else if (rhsSet.contains(lhs)) {
-      resultSet.insert(lhs);
-    }
-  }
-  return resultSet;
 }
 
 /// Collect operations read or write this shared memory.
@@ -646,9 +651,9 @@ static void collectAccessOps(MkSharedOp op, SetVector<Operation *> &ops) {
         list.push_back(user);
         continue;
       }
-      if (isa<CpAsyncGlobalToSharedOp>(user))
+      if (isa<LdMatrixOp, CpAsyncGlobalToSharedOp>(user))
         continue;
-      if (isSharedRead(user) || isSharedWrite(user)) {
+      if (isSharedMemoryRead(user) || isSharedMemoryWrite(user)) {
         ops.insert(user);
         continue;
       }
@@ -656,10 +661,28 @@ static void collectAccessOps(MkSharedOp op, SetVector<Operation *> &ops) {
   }
 }
 
+static SetVector<SwizzlingLayoutAttr>
+intersect(const SetVector<SwizzlingLayoutAttr> &lhsSet,
+          const SetVector<SwizzlingLayoutAttr> &rhsSet) {
+  SetVector<SwizzlingLayoutAttr> resultSet;
+  for (auto lhs : lhsSet) {
+    if (lhs.isDynamicParams()) {
+      for (auto rhs : rhsSet)
+        resultSet.insert(rhs);
+    } else if (rhsSet.contains(lhs)) {
+      resultSet.insert(lhs);
+    }
+  }
+  return resultSet;
+}
+
 LogicalResult LayoutOptimization::resolve(ResolveState &curState) {
   funcOp.walk([&](Operation *op) {
     if (op->getNumOperands() == 1 && op->getNumResults() == 1) {
       auto &operand = op->getOpOperand(0);
+      auto result = op->getResult(0);
+      if (curState.valueToLayout.contains(result))
+        return;
       auto tensorType = dyn_cast<RankedTensorType>(operand.get().getType());
       if (!tensorType || !inRegisterFile(tensorType))
         return;
@@ -672,7 +695,7 @@ LogicalResult LayoutOptimization::resolve(ResolveState &curState) {
         layout = getLayout<FragmentsLayoutAttr>(tensorType);
       if (isa<TransposeOp>(op))
         layout = layout.transpose();
-      curState.valueToLayout[op->getResult(0)] = layout;
+      curState.valueToLayout[result] = layout;
     }
     // Other operations should have been processed.
   });
@@ -680,67 +703,34 @@ LogicalResult LayoutOptimization::resolve(ResolveState &curState) {
   bool noBankConflict = true;
   funcOp.walk([&](MkSharedOp op) {
     auto shared = op.getResult();
-    bool init = !hasLayout(shared.getType());
-    if (!init) {
-      auto sharedLayout = getLayout<SwizzlingLayoutAttr>(shared.getType());
-      curState.sharedToLayouts[shared].insert(sharedLayout);
-    }
+    auto sharedType = shared.getType();
+    auto sharedLayout = getLayout<SwizzlingLayoutAttr>(sharedType);
+    curState.sharedToLayouts[shared].insert(sharedLayout);
     SetVector<Operation *> ops;
     collectAccessOps(op, ops);
     for (auto *op : ops) {
-      if (isa<LdMatrixOp>(op)) {
-        auto &loader = op->getOpOperand(1);
-        auto loaderType = cast<RankedTensorType>(loader.get().getType());
-        auto loaderLayout = getLayout<FragmentsLayoutAttr>(loaderType);
-        if (curState.operandToLayout.contains(&loader))
-          loaderLayout = curState.operandToLayout[&loader];
-        SetVector<SwizzlingLayoutAttr> validLayouts;
-        auto *context = op->getContext();
-        if (loaderLayout.isColMajor())
-          validLayouts.insert(SwizzlingLayoutAttr::get(context, 4, 8, 0, 1));
-        else
-          validLayouts.insert(SwizzlingLayoutAttr::get(context, 4, 8, 1, 0));
-        if (init) {
-          curState.sharedToLayouts[shared] = std::move(validLayouts);
-          init = false;
-        } else {
-          curState.sharedToLayouts[shared] =
-              intersect(curState.sharedToLayouts[shared], validLayouts);
-        }
-        continue;
-      }
-      if (isSharedRead(op)) {
+      if (isSharedMemoryRead(op)) {
         auto result = op->getResult(0);
         auto resultType = cast<RankedTensorType>(result.getType());
         auto resultLayout = getLayout<FragmentsLayoutAttr>(resultType);
         if (curState.valueToLayout.contains(result))
           resultLayout = curState.valueToLayout[result];
         resultType = cloneWithLayout(resultType, resultLayout);
-        auto validLayouts = getSwizzlingLayouts(resultType);
-        if (init) {
-          curState.sharedToLayouts[shared] = std::move(validLayouts);
-          init = false;
-        } else {
-          curState.sharedToLayouts[shared] =
-              intersect(curState.sharedToLayouts[shared], validLayouts);
-        }
+        curState.sharedToLayouts[shared] = intersect(
+            curState.sharedToLayouts[shared],
+            getSwizzlingLayouts(sharedType, resultType, getAlignment(op)));
         continue;
       }
-      if (isSharedWrite(op)) {
+      if (isSharedMemoryWrite(op)) {
         auto source = op->getOperand(0);
         auto sourceType = cast<RankedTensorType>(source.getType());
         auto sourceLayout = getLayout<FragmentsLayoutAttr>(sourceType);
         if (curState.valueToLayout.contains(source))
           sourceLayout = curState.valueToLayout[source];
         sourceType = cloneWithLayout(sourceType, sourceLayout);
-        auto validLayouts = getSwizzlingLayouts(sourceType);
-        if (init) {
-          curState.sharedToLayouts[shared] = std::move(validLayouts);
-          init = false;
-        } else {
-          curState.sharedToLayouts[shared] =
-              intersect(curState.sharedToLayouts[shared], validLayouts);
-        }
+        curState.sharedToLayouts[shared] = intersect(
+            curState.sharedToLayouts[shared],
+            getSwizzlingLayouts(sharedType, sourceType, getAlignment(op)));
         continue;
       }
     }

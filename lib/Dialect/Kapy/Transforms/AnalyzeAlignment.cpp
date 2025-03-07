@@ -7,52 +7,10 @@
 #include "kapy/Analysis/AlignAnalysis.h"
 #include "kapy/Dialect/Kapy/IR/Kapy.h"
 #include "kapy/Dialect/Kapy/Transforms/Passes.h"
-#include "kapy/Support/CommonUtils.h"
+#include "kapy/Dialect/Kapy/Transforms/TransformUtils.h"
 
 using namespace mlir;
 using namespace mlir::kapy;
-
-/// Implementation of euclidean algorithm.
-template <typename T> static T gcdImpl(T a, T b, T &x, T &y) {
-  if (a == 0) {
-    x = 0;
-    y = 1;
-    return b;
-  }
-  T x1, y1; // to store results of recursive call
-  T g = gcdImpl(b % a, a, x1, y1);
-  // update `x` and `y` using results of recursive call
-  x = y1 - (b / a) * x1;
-  y = x1;
-  return g;
-}
-
-/// Greatest common divisor.
-template <typename T> static T gcd(T a, T b) {
-  static_assert(std::is_integral_v<T>);
-  if (a == 0)
-    return b;
-  if (b == 0)
-    return a;
-  T x, y;
-  return gcdImpl(a, b, x, y);
-}
-
-/// Greatest power of two divisor. If `x == 0`, return the greatest power of two
-/// for type `I`.
-template <typename T> static T gpd(T x) {
-  static_assert(std::is_integral_v<T>);
-  if (x == 0)
-    return static_cast<T>(1) << (sizeof(T) * 8 - 2);
-  return x & (~(x - 1));
-}
-
-/// If `a * b` overflows, return greatest the power of two for type `I`.
-template <typename T> static T mul(T a, T b) {
-  static_assert(std::is_integral_v<T>);
-  T g = gpd<T>(0);
-  return a > g / b ? g : a * b;
-}
 
 namespace {
 
@@ -63,66 +21,86 @@ class KapyAnalyzeAlignmentPass
     : public impl::KapyAnalyzeAlignmentBase<KapyAnalyzeAlignmentPass> {
 public:
   virtual void runOnOperation() override {
+    setGlobalMemoryLayouts();
+    setSharedMemoryLayouts();
     auto module = getOperation();
     ModuleAlignAnalysis analysis(module);
     module.walk([&](Operation *op) {
-      if (auto mkGlobalOp = dyn_cast<MkGlobalOp>(op))
-        return processMkGlobalOp(mkGlobalOp, analysis);
-      if (auto svGlobalOp = dyn_cast<SvGlobalOp>(op))
-        return processSvGlobalOp(svGlobalOp, analysis);
       if (auto effectOp = dyn_cast<MemoryEffectOpInterface>(op))
-        return processEffectOp(effectOp);
+        processEffectOp(effectOp, analysis);
     });
   }
 
 private:
-  void processMkGlobalOp(MkGlobalOp mkGlobalOp, ModuleAlignAnalysis &analysis);
+  /// Set global memory layouts with known information.
+  void setGlobalMemoryLayouts();
 
-  void processSvGlobalOp(SvGlobalOp svGlobalOp, ModuleAlignAnalysis &analysis);
+  /// Set shared memory layouts with known information.
+  void setSharedMemoryLayouts();
 
-  void processEffectOp(MemoryEffectOpInterface op);
+  void processEffectOp(MemoryEffectOpInterface op,
+                       ModuleAlignAnalysis &analysis);
 };
 
-void KapyAnalyzeAlignmentPass::processMkGlobalOp(
-    MkGlobalOp mkGlobalOp, ModuleAlignAnalysis &analysis) {
-  auto funcOp = mkGlobalOp->getParentOfType<FunctionOpInterface>();
-  auto *valueToInfo = analysis.getData(funcOp);
-  auto alignment = valueToInfo->lookup(mkGlobalOp.getAddress()).getAlignment();
-  auto i64Type = IntegerType::get(&getContext(), 64);
-  mkGlobalOp->setAttr(alignmentAttrName, IntegerAttr::get(i64Type, alignment));
+void KapyAnalyzeAlignmentPass::setGlobalMemoryLayouts() {
+  auto module = getOperation();
+  module.walk([](MkGlobalOp op) {
+    SmallVector<int64_t, 2> strides;
+    for (auto stride : {op.getStrideX(), op.getStrideY()}) {
+      auto constantOp = stride.getDefiningOp<arith::ConstantOp>();
+      if (!constantOp) {
+        strides.push_back(ShapedType::kDynamic);
+        continue;
+      }
+      auto intAttr = dyn_cast<IntegerAttr>(constantOp.getValue());
+      if (!intAttr) {
+        strides.push_back(ShapedType::kDynamic);
+        continue;
+      }
+      strides.push_back(intAttr.getInt());
+    }
+    auto *context = op.getContext();
+    auto layout = Strided2dLayoutAttr::get(context, strides[0], strides[1]);
+    DenseSet<Value> seen;
+    propagateMemoryLayout(op.getResult(), layout, seen);
+  });
 }
 
-void KapyAnalyzeAlignmentPass::processSvGlobalOp(
-    SvGlobalOp svGlobalOp, ModuleAlignAnalysis &analysis) {
-  auto funcOp = svGlobalOp->getParentOfType<FunctionOpInterface>();
-  auto *valueToInfo = analysis.getData(funcOp);
-  auto mkGlobalOp = svGlobalOp.getSource().getDefiningOp<MkGlobalOp>();
-  auto alignment = getAlignment(mkGlobalOp);
-  auto alignmentX =
-      mul(valueToInfo->lookup(svGlobalOp.getStartX()).getAlignment(),
-          valueToInfo->lookup(mkGlobalOp.getStrideX()).getAlignment());
-  auto alignmentY =
-      mul(valueToInfo->lookup(svGlobalOp.getStartY()).getAlignment(),
-          valueToInfo->lookup(mkGlobalOp.getStrideY()).getAlignment());
-  auto bitWidth = getIntOrFloatBitWidth(svGlobalOp.getType());
-  alignmentX = mul(alignmentX, ceilDiv<int64_t>(bitWidth, 8));
-  alignmentY = mul(alignmentY, ceilDiv<int64_t>(bitWidth, 8));
-  alignment = gcd(alignment, gcd(alignmentX, alignmentY));
-  auto i64Type = IntegerType::get(&getContext(), 64);
-  svGlobalOp->setAttr(alignmentAttrName, IntegerAttr::get(i64Type, alignment));
+void KapyAnalyzeAlignmentPass::setSharedMemoryLayouts() {
+  auto module = getOperation();
+  module.walk([](MkSharedOp op) {
+    auto strideX = op.getStrideX();
+    auto strideY = op.getStrideY();
+    auto dynamic = ShapedType::kDynamic;
+    auto *context = op.getContext();
+    auto layout =
+        SwizzlingLayoutAttr::get(context, strideX, strideY, dynamic, dynamic);
+    DenseSet<Value> seen;
+    propagateMemoryLayout(op.getResult(), layout, seen);
+  });
 }
 
-void KapyAnalyzeAlignmentPass::processEffectOp(MemoryEffectOpInterface op) {
+void KapyAnalyzeAlignmentPass::processEffectOp(MemoryEffectOpInterface op,
+                                               ModuleAlignAnalysis &analysis) {
   SmallVector<SideEffects::EffectInstance<MemoryEffects::Effect>> effects;
   op.getEffects(effects);
+  int64_t alignment = 0;
   for (auto &effect : effects) {
-    if (effect.getResource() == GlobalMemory::get() &&
-        isa<MemoryEffects::Read, MemoryEffects::Write>(effect.getEffect())) {
-      auto alignment = getAlignment(effect.getValue().getDefiningOp());
-      auto i64Type = IntegerType::get(&getContext(), 64);
-      op->setAttr(alignmentAttrName, IntegerAttr::get(i64Type, alignment));
-      break;
+    if (effect.getResource() != GlobalMemory::get() &&
+        effect.getResource() != SharedMemory::get())
+      continue;
+    if (isa<MemoryEffects::Read, MemoryEffects::Write>(effect.getEffect())) {
+      auto funcOp = op->getParentOfType<FunctionOpInterface>();
+      auto info = analysis.getData(funcOp)->lookup(effect.getValue());
+      if (alignment == 0)
+        alignment = info.getAlignment();
+      else
+        alignment = std::min(alignment, info.getAlignment());
     }
+  }
+  if (alignment != 0) {
+    auto i64Type = IntegerType::get(&getContext(), 64);
+    op->setAttr(alignmentAttrName, IntegerAttr::get(i64Type, alignment));
   }
 }
 

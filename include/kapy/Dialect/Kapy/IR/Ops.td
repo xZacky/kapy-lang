@@ -99,8 +99,8 @@ def Kapy_MkGlobalOp : Kapy_Op<"mk_global", [Pure, ResultInGlobalMemory]> {
   let results = (outs Kapy_Tensor:$result);
 
   let assemblyFormat = [{
-    $address `,` `[` $size_x `,` $size_y `]` `,` `[` $stride_x `,` $stride_y `]`
-    attr-dict `:` type($result)
+    $address `,` `shape` `=` `[` $size_x `,` $size_y `]` `,` `strides` `=` `[`
+    $stride_x `,` $stride_y `]` attr-dict `:` type($result)
   }];
 }
 
@@ -109,7 +109,7 @@ def Kapy_SvGlobalOp : Kapy_Op<
 > {
   let description = [{
     Takes a subview of tensor in global memory.
-    Result will be padded to power of 2 size, padded element is nullptr.
+    Result will be padded to power of 2 size, padded element is out of bound.
   }];
 
   let arguments = (ins
@@ -122,7 +122,6 @@ def Kapy_SvGlobalOp : Kapy_Op<
     type($source) `->` type($result)
   }];
 
-  let hasCanonicalizeMethod = 1;
   let hasVerifier = 1;
 }
 
@@ -133,27 +132,23 @@ def Kapy_LdGlobalOp : Kapy_Op<
     SameOperandsAndResultElementType,
     SourceInGlobalMemory,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
-    TypesMatchWith<"from filler type infer result type",
-                   "filler", "result", "$_self">
   ]
 > {
   let description = [{
-    For each element, loads `$result` from `$source` if it is not nullptr,
-    otherwise, pads `$result` with `$filler`.
+    For each element, loads `$result` from `$source` if it is not out of bound,
+    otherwise pads `$result` by `$padding_option`.
   }];
 
   let arguments = (ins
     Kapy_Tensor:$source,
-    Kapy_Tensor:$filler,
+    Kapy_DefaultValuedPaddingOptionAttr:$padding_option,
     Kapy_DefaultValuedCacheModifierAttr:$cache_modifier,
     Kapy_DefaultValuedEvictPriorityAttr:$evict_priority,
     DefaultValuedAttr<BoolAttr, "false">:$if_volatile
   );
   let results = (outs Kapy_Tensor:$result);
 
-  let assemblyFormat = [{
-    $source `,` $filler attr-dict `:` type($source) `->` type($filler)
-  }];
+  let assemblyFormat = "$source attr-dict `:` type($source) `->` type($result)";
 
   let extraClassDeclaration = [{
     inline bool isVolatile() { return getIfVolatile(); }
@@ -170,7 +165,8 @@ def Kapy_StGlobalOp : Kapy_Op<
   ]
 > {
   let description = [{
-    For each element, stores `$source` to `$target` if it is not nullptr.
+    For each element, stores `$source` to `$target` if it is not out of bound,
+    otherwise do nothing.
   }];
 
   let arguments = (ins
@@ -192,30 +188,26 @@ def Kapy_AtomicRMWOp : Kapy_Op<
     SameOperandsAndResultElementType,
     SourceInGlobalMemory,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
-    TypesMatchWith<"from value type infer filler type",
-                   "value", "filler", "$_self">,
     TypesMatchWith<"from value type infer result type",
                    "value", "result", "$_self">
   ]
 > {
   let description = [{
     For each element, loads `$result` from `$source`, computes with `$value` and
-    stores the computation result back if it is not nullptr, otherwise, pads
-    `$result` with `$filler`.
+    stores the computation result back if it is not out of bound, otherwise pads
+    `$result` with zero.
   }];
 
   let arguments = (ins
     Kapy_AtomicRMWKindAttr:$kind,
     Kapy_Tensor:$source,
     Kapy_Tensor:$value,
-    Kapy_Tensor:$filler,
     Kapy_MemSemanticAttr:$mem_semantic
   );
   let results = (outs Kapy_Tensor:$result);
 
   let assemblyFormat = [{
-    $kind $source `,` $value `,` $filler attr-dict `:` type($source) `->`
-    type($value)
+    $kind $source `,` $value attr-dict `:` type($source) `->` type($value)
   }];
 
   let hasVerifier = 1;
@@ -225,9 +217,12 @@ def Kapy_MkSharedOp : Kapy_Op<
   "mk_shared",
   [ResultInSharedMemory, DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]
 > {
+  let arguments = (ins I32Attr:$stride_x, I32Attr:$stride_y);
   let results = (outs Kapy_Tensor:$result);
 
-  let assemblyFormat = "attr-dict `:` type($result)";
+  let assemblyFormat = [{
+    `strides` `=` `[` $stride_x `,` $stride_y `]` attr-dict `:` type($result)
+  }];
 }
 
 def Kapy_SvSharedOp : Kapy_Op<
@@ -235,7 +230,7 @@ def Kapy_SvSharedOp : Kapy_Op<
 > {
   let description = [{
     Takes a subview of tensor in shared memory.
-    Result will be padded to power of 2 size, padded element is nullptr.
+    Result will be padded to power of 2 size, padded element is out of bound.
   }];
 
   let arguments = (ins
@@ -248,7 +243,6 @@ def Kapy_SvSharedOp : Kapy_Op<
     type($source) `->` type($result)
   }];
 
-  let hasCanonicalizeMethod = 1;
   let hasVerifier = 1;
 }
 
@@ -262,8 +256,8 @@ def Kapy_LdSharedOp : Kapy_Op<
   ]
 > {
   let description = [{
-    For each element, loads `$result` from `$source` if it is not nullptr,
-    otherwise, pads `$result` with zero.
+    For each element, loads `$result` from `$source` if it is not out of bound,
+    otherwise pads `$result` with zero.
   }];
 
   let arguments = (ins Kapy_Tensor:$source);
@@ -282,7 +276,8 @@ def Kapy_StSharedOp : Kapy_Op<
   ]
 > {
   let description = [{
-    For each element, stores `$source` to `$target` if it is not nullptr.
+    For each element, stores `$source` to `$target` if it is not out of bound,
+    otherwise do nothing.
   }];
 
   let arguments = (ins Kapy_Tensor:$source, Kapy_Tensor:$target);
@@ -302,8 +297,9 @@ def Kapy_LdMatrixOp : Kapy_Op<
   ]
 > {
   let description = [{
-    For each element, loads `$result` from `$source` if it is not nullptr,
-    otherwise, pads `$result` with `$zero`.
+    For each element, loads `$result` from `$source` if it is not out of bound,
+    otherwise pads `$result` with `$zero`.
+
     The `$loader` is a virtual operand, it is used to indicate the layout of
     pointers when lowering this operation.
   }];
@@ -330,8 +326,9 @@ def Kapy_CpAsyncGlobalToSharedOp : Kapy_Op<
   ]
 > {
   let description = [{
-    For each elements, copies from `$source` to `$result` if it is not nullptr,
-    otherwise, pads `$result` with zero.
+    For each elements, copies from `$source` to `$result` if it is not out of
+    bound, otherwise pads `$result` with zero.
+
     The `$loader` is a virtual operand, it is used to indicate the layout of
     pointers when lowering this operation.
   }];
@@ -364,9 +361,7 @@ def Kapy_SplatOp : Kapy_Op<"splat", [Pure, SameOperandsAndResultElementType]> {
   let arguments = (ins Kapy_Number:$source);
   let results = (outs Kapy_Tensor:$result);
 
-  let assemblyFormat = [{
-    $source attr-dict `:` type($source) `->` type($result)
-  }];
+  let assemblyFormat = "$source attr-dict `:` type($source) `->` type($result)";
 
   let hasFolder = 1;
 }
@@ -398,9 +393,7 @@ def Kapy_TransposeOp : Kapy_Op<
   let arguments = (ins Kapy_Tensor:$source);
   let results = (outs Kapy_Tensor:$result);
 
-  let assemblyFormat = [{
-    $source attr-dict `:` type($source) `->` type($result)
-  }];
+  let assemblyFormat = "$source attr-dict `:` type($source) `->` type($result)";
 
   let hasCanonicalizeMethod = 1;
   let hasFolder = 1;

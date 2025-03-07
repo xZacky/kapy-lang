@@ -125,7 +125,7 @@ auto delinearize(AffineExpr index, const ArrayT &shape) {
 
 template <typename T> T getSizeInBytes(T numElements, T bitWidth) {
   static_assert(std::is_integral_v<T>);
-  return numElements * ceilDiv<T>(bitWidth, 8);
+  return numElements * bitWidth / 8;
 }
 
 } // namespace kapy

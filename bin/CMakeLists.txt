@@ -9,7 +9,7 @@ target_link_libraries(kapy-opt
   ${dialect_libs}
   ${conversion_libs}
   KapyAnalysis
-  TestKapyAnalysis
+  KapySupport
   MLIROptLib
   MLIRPass
   MLIRTransforms

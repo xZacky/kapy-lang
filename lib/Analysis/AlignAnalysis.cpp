@@ -457,6 +457,86 @@ public:
   }
 };
 
+class MkGlobalOpAlignInfoVisitor : public OpAlignInfoVisitor<MkGlobalOp> {
+public:
+  using OpAlignInfoVisitor<MkGlobalOp>::OpAlignInfoVisitor;
+
+  virtual AlignInfo
+  getAlignInfo(MkGlobalOp op,
+               ArrayRef<const Lattice<AlignInfo> *> operands) override {
+    return operands[0]->getValue();
+  }
+};
+
+class SvGlobalOpAlignInfoVisitor : public OpAlignInfoVisitor<SvGlobalOp> {
+public:
+  using OpAlignInfoVisitor<SvGlobalOp>::OpAlignInfoVisitor;
+
+  virtual AlignInfo
+  getAlignInfo(SvGlobalOp op,
+               ArrayRef<const Lattice<AlignInfo> *> operands) override {
+    auto sourceType = op.getSource().getType();
+    auto sourceLayout = getLayout<Strided2dLayoutAttr>(sourceType);
+    auto strideX = sourceLayout.getStrideX();
+    auto strideY = sourceLayout.getStrideY();
+    strideX = ShapedType::isDynamic(strideX) ? 1 : strideX;
+    strideY = ShapedType::isDynamic(strideY) ? 1 : strideY;
+    auto startX = operands[1]->getValue();
+    auto startY = operands[3]->getValue();
+    auto alignmentX = mul(startX.getAlignment(), strideX);
+    auto alignmentY = mul(startY.getAlignment(), strideY);
+    auto endX = operands[2]->getValue();
+    auto endY = operands[4]->getValue();
+    alignmentX = gcd(alignmentX, mul(endX.getAlignment(), strideX));
+    alignmentY = gcd(alignmentY, mul(endY.getAlignment(), strideY));
+    auto bitWidth = getIntOrFloatBitWidth(sourceType);
+    alignmentX = mul<int64_t>(alignmentX, bitWidth / 8);
+    alignmentY = mul<int64_t>(alignmentY, bitWidth / 8);
+    auto source = operands[0]->getValue();
+    auto alignment = gcd(source.getAlignment(), gcd(alignmentX, alignmentY));
+    return AlignInfo(alignment);
+  }
+};
+
+class MkSharedOpAlignInfoVisitor : public OpAlignInfoVisitor<MkSharedOp> {
+public:
+  using OpAlignInfoVisitor<MkSharedOp>::OpAlignInfoVisitor;
+
+  virtual AlignInfo
+  getAlignInfo(MkSharedOp op,
+               ArrayRef<const Lattice<AlignInfo> *> operands) override {
+    return AlignInfo(128);
+  }
+};
+
+class SvSharedOpAlignInfoVisitor : public OpAlignInfoVisitor<SvSharedOp> {
+public:
+  using OpAlignInfoVisitor<SvSharedOp>::OpAlignInfoVisitor;
+
+  virtual AlignInfo
+  getAlignInfo(SvSharedOp op,
+               ArrayRef<const Lattice<AlignInfo> *> operands) override {
+    auto sourceType = op.getSource().getType();
+    auto sourceLayout = getLayout<SwizzlingLayoutAttr>(sourceType);
+    auto strideX = sourceLayout.getStrideX();
+    auto strideY = sourceLayout.getStrideY();
+    auto startX = operands[1]->getValue();
+    auto startY = operands[3]->getValue();
+    auto alignmentX = mul(startX.getAlignment(), strideX);
+    auto alignmentY = mul(startY.getAlignment(), strideY);
+    auto endX = operands[2]->getValue();
+    auto endY = operands[4]->getValue();
+    alignmentX = gcd(alignmentX, mul(endX.getAlignment(), strideX));
+    alignmentY = gcd(alignmentY, mul(endY.getAlignment(), strideY));
+    auto bitWidth = getIntOrFloatBitWidth(sourceType);
+    alignmentX = mul<int64_t>(alignmentX, bitWidth / 8);
+    alignmentY = mul<int64_t>(alignmentY, bitWidth / 8);
+    auto source = operands[0]->getValue();
+    auto alignment = gcd(source.getAlignment(), gcd(alignmentX, alignmentY));
+    return AlignInfo(alignment);
+  }
+};
+
 class AlignAnalysis : public SparseForwardDataFlowAnalysis<Lattice<AlignInfo>> {
 public:
   AlignAnalysis(DataFlowSolver &solver)
@@ -485,6 +565,8 @@ public:
                     MaxMinOpAlignInfoVisitor<arith::MaxUIOp>,
                     MaxMinOpAlignInfoVisitor<arith::MinSIOp>,
                     MaxMinOpAlignInfoVisitor<arith::MinUIOp>>();
+    visitors.append<MkGlobalOpAlignInfoVisitor, SvGlobalOpAlignInfoVisitor,
+                    MkSharedOpAlignInfoVisitor, SvSharedOpAlignInfoVisitor>();
   }
 
   using SparseForwardDataFlowAnalysis<Lattice<AlignInfo>>::getLatticeElement;

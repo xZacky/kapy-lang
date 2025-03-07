@@ -4,7 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "kapy/Dialect/Kgpu/Transforms/TransformUtils.h"
+#include "kapy/Dialect/Kapy/Transforms/TransformUtils.h"
 #include "kapy/Dialect/Kapy/IR/Kapy.h"
 
 using namespace mlir;

@@ -6,17 +6,6 @@
 #include "kapy/Dialect/Kgpu/Transforms/Passes.h"
 #include "mlir/InitAllPasses.h"
 
-namespace mlir {
-namespace test {
-
-void registerTestAlignAnalysisPass();
-void registerTestAllocAnalysisPass();
-void registerTestCandidateLayoutsPass();
-void registerTestOpHelpersPass();
-
-} // namespace test
-} // namespace mlir
-
 using namespace mlir;
 
 inline void registerAllKapyPasses() {
@@ -24,10 +13,6 @@ inline void registerAllKapyPasses() {
   kapy::registerKapyPasses();
   kapy::registerKgpuPasses();
   kapy::registerConvertKapyToKgpuPass();
-  test::registerTestAlignAnalysisPass();
-  test::registerTestAllocAnalysisPass();
-  test::registerTestCandidateLayoutsPass();
-  test::registerTestOpHelpersPass();
 }
 
 #endif // KAPY_PASSES_H

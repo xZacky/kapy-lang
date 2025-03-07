@@ -28,11 +28,11 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "kapy/Analysis/LayoutUtils.h"
 #include "kapy/Conversion/KapyToKgpu/Passes.h"
 #include "kapy/Conversion/KapyToKgpu/TypeConverter.h"
 #include "kapy/Dialect/Kapy/IR/Kapy.h"
 #include "kapy/Dialect/Kgpu/IR/Kgpu.h"
+#include "kapy/Support/LayoutUtils.h"
 
 using namespace mlir;
 using namespace mlir::kapy;
@@ -148,11 +148,6 @@ public:
                   ConversionPatternRewriter &rewriter) const override {
     auto [lhsLayout, rhsLayout, accLayout] = getDefaultLayouts(op);
 
-    auto acc = adaptor.getAcc();
-    auto accType = cast<RankedTensorType>(acc.getType());
-    accType = cloneWithLayout(accType, accLayout);
-    acc = rewriter.create<ChangeOp>(acc.getLoc(), accType, acc);
-
     auto lhs = adaptor.getLhs();
     auto lhsType = cast<RankedTensorType>(lhs.getType());
     lhsType = cloneWithLayout(lhsType, lhsLayout);
@@ -162,6 +157,11 @@ public:
     auto rhsType = cast<RankedTensorType>(rhs.getType());
     rhsType = cloneWithLayout(rhsType, rhsLayout);
     rhs = rewriter.create<ChangeOp>(rhs.getLoc(), rhsType, rhs);
+
+    auto acc = adaptor.getAcc();
+    auto accType = cast<RankedTensorType>(acc.getType());
+    accType = cloneWithLayout(accType, accLayout);
+    acc = rewriter.create<ChangeOp>(acc.getLoc(), accType, acc);
 
     auto newOp = rewriter.replaceOpWithNewOp<MatmulOp>(op, lhs, rhs, acc,
                                                        op.getMatmulImplWay());

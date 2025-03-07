@@ -34,7 +34,7 @@ public:
     auto resultLayout = getLayout<FragmentsLayoutAttr>(resultType);
     auto bitWidth = getIntOrFloatBitWidth(resultType);
     auto vecWidth = 128 / bitWidth;
-    auto pacWidth = 32 / bitWidth;
+    auto packWidth = 32 / bitWidth;
     if (loaderLayout.isColMajor()) {
       if (loaderLayout.getLaneArray() != SmallVector<int64_t, 2>{16, 2})
         return op->emitOpError("loader has incompatible layout");
@@ -49,12 +49,12 @@ public:
     if (resultLayout.isRowMajor()) {
       if (resultLayout.getLaneArray() != SmallVector<int64_t, 2>{8, 4})
         return op->emitOpError("result has incompatible layout");
-      if (resultLayout.getLaneLoops() != SmallVector<int64_t, 2>{1, pacWidth})
+      if (resultLayout.getLaneLoops() != SmallVector<int64_t, 2>{1, packWidth})
         return op->emitOpError("result has incompatible layout");
     } else {
       if (resultLayout.getLaneArray() != SmallVector<int64_t, 2>{4, 8})
         return op->emitOpError("result has incompatible layout");
-      if (resultLayout.getLaneLoops() != SmallVector<int64_t, 2>{pacWidth, 1})
+      if (resultLayout.getLaneLoops() != SmallVector<int64_t, 2>{packWidth, 1})
         return op->emitOpError("result has incompatible layout");
     }
     return success();
@@ -161,118 +161,6 @@ void KgpuDialect::initialize() {
   addInterfaces<KgpuLayoutInterface>();
 }
 
-Attribute Strided2dLayoutAttr::parse(AsmParser &parser, Type type) {
-  if (failed(parser.parseLess()))
-    return Attribute();
-
-  SmallVector<int64_t, 2> strides;
-  auto parseStride = [&]() -> ParseResult {
-    auto stride = ShapedType::kDynamic;
-    if (succeeded(parser.parseOptionalQuestion())) {
-      strides.push_back(stride);
-      return success();
-    }
-    if (succeeded(parser.parseInteger(stride))) {
-      strides.push_back(stride);
-      return success();
-    }
-    return failure();
-  };
-  if (failed(parser.parseCommaSeparatedList(AsmParser::Delimiter::Square,
-                                            parseStride)))
-    return Attribute();
-
-  if (failed(parser.parseGreater()))
-    return Attribute();
-
-  assert(strides.size() == 2);
-  return Strided2dLayoutAttr::get(parser.getContext(), strides[0], strides[1]);
-}
-
-void Strided2dLayoutAttr::print(AsmPrinter &printer) const {
-  auto printQuestionOrInt = [&](int64_t value) {
-    if (ShapedType::isDynamic(value))
-      printer << "?";
-    else
-      printer << value;
-  };
-
-  printer << "<[";
-  printQuestionOrInt(getStrideX());
-  printer << ", ";
-  printQuestionOrInt(getStrideY());
-  printer << "]>";
-}
-
-Attribute SwizzlingLayoutAttr::parse(AsmParser &parser, Type type) {
-  if (failed(parser.parseLess()))
-    return Attribute();
-
-  SmallVector<int64_t, 2> params;
-  auto parseParam = [&]() -> ParseResult {
-    auto param = ShapedType::kDynamic;
-    if (succeeded(parser.parseOptionalQuestion())) {
-      params.push_back(param);
-      return success();
-    }
-    if (succeeded(parser.parseInteger(param))) {
-      params.push_back(param);
-      return success();
-    }
-    return failure();
-  };
-  if (failed(parser.parseCommaSeparatedList(AsmParser::Delimiter::Square,
-                                            parseParam)))
-    return Attribute();
-
-  if (failed(parser.parseComma()))
-    return Attribute();
-
-  SmallVector<unsigned, 2> axes;
-  auto parseAxis = [&]() -> ParseResult {
-    unsigned axis;
-    if (succeeded(parser.parseInteger(axis))) {
-      axes.push_back(axis);
-      return success();
-    }
-    return failure();
-  };
-  if (failed(parser.parseCommaSeparatedList(AsmParser::Delimiter::Paren,
-                                            parseAxis)))
-    return Attribute();
-
-  if (failed(parser.parseGreater()))
-    return Attribute();
-
-  assert(params.size() == 2 && axes.size() == 2);
-  return SwizzlingLayoutAttr::get(parser.getContext(), params[0], params[1],
-                                  axes[0], axes[1]);
-}
-
-void SwizzlingLayoutAttr::print(AsmPrinter &printer) const {
-  auto printQuestionOrInt = [&](int64_t value) {
-    if (ShapedType::isDynamic(value))
-      printer << "?";
-    else
-      printer << value;
-  };
-  printer << "<[";
-  printQuestionOrInt(getBankParam());
-  printer << ", ";
-  printQuestionOrInt(getLineParam());
-  printer << "], (";
-  printer << getMinorAxis();
-  printer << ", ";
-  printer << getMajorAxis();
-  printer << ")>";
-}
-
-bool SwizzlingLayoutAttr::isDynamicParams() const {
-  auto bankParam = getBankParam();
-  auto lineParam = getLineParam();
-  return ShapedType::isDynamic(bankParam) && ShapedType::isDynamic(lineParam);
-}
-
 SmallVector<int64_t, 2>
 FragmentsLayoutAttr::getWarpLoops(ArrayRef<int64_t> shape) const {
   auto laneArray = getLaneArray();
@@ -368,6 +256,11 @@ FragmentsLayoutAttr FragmentsLayoutAttr::transpose() const {
                                   getMajorAxis(), getMinorAxis());
 }
 
+FragmentsLayoutAttr FragmentsLayoutAttr::exchangeAxes() const {
+  return FragmentsLayoutAttr::get(getContext(), getLaneArray(), getLaneLoops(),
+                                  getMajorAxis(), getMinorAxis());
+}
+
 LogicalResult ChangeOp::canonicalize(ChangeOp op, PatternRewriter &rewriter) {
   auto source = op.getSource();
   auto resultType = op.getType();
@@ -396,13 +289,13 @@ LogicalResult ChangeOp::canonicalize(ChangeOp op, PatternRewriter &rewriter) {
   return failure();
 }
 
-int64_t kapy::getSharedNeeded(ModuleOp module) {
+int64_t kapy::getSharedMemoryNeeded(ModuleOp module) {
   if (!module->hasAttr(sharedNeededAttrName))
     llvm_unreachable("can not get named attribute");
   return cast<IntegerAttr>(module->getAttr(sharedNeededAttrName)).getInt();
 }
 
-int64_t kapy::getSharedOffset(MkSharedOp op) {
+int64_t kapy::getSharedMemoryOffset(MkSharedOp op) {
   if (!op->hasAttr(sharedOffsetAttrName))
     llvm_unreachable("can not get named attribute");
   return cast<IntegerAttr>(op->getAttr(sharedOffsetAttrName)).getInt();

@@ -42,12 +42,12 @@ static SmallVector<Type> getOperandsAndResultType(Operation *op) {
 
 static LogicalResult verifyValidTensorShapeImpl(Operation *op) {
   for (auto type : getOperandsAndResultType(op)) {
-    if (auto tensorType = dyn_cast<RankedTensorType>(type)) {
-      if (tensorType.getRank() != 2)
+    if (auto rankedType = dyn_cast<RankedTensorType>(type)) {
+      if (rankedType.getRank() != 2)
         return op->emitError("ranked tensor can only have rank 2");
-      if (tensorType.isDynamicDim(0) || tensorType.isDynamicDim(1))
+      if (rankedType.isDynamicDim(0) || rankedType.isDynamicDim(1))
         continue;
-      auto numElements = tensorType.getNumElements();
+      auto numElements = rankedType.getNumElements();
       if ((numElements & (numElements - 1)) != 0)
         return op->emitError("number of elements must be power of 2, but ")
                << *op << " has " << numElements << " doesn't follow the rule";
@@ -78,8 +78,8 @@ static LogicalResult verifyValidMemorySpaceImpl(Operation *op) {
         (op->hasTrait<OpTrait::TargetInGlobalMemory>() ||
          op->hasTrait<OpTrait::TargetInSharedMemory>()))
       continue;
-    if (auto tensorType = dyn_cast<RankedTensorType>(operand.get().getType())) {
-      if (!inRegisterFile(tensorType))
+    if (auto rankedType = dyn_cast<RankedTensorType>(operand.get().getType())) {
+      if (!inRegisterFile(rankedType))
         return op->emitOpError("operand ")
                << operand.getOperandNumber() << " must in register file";
     }
@@ -89,8 +89,8 @@ static LogicalResult verifyValidMemorySpaceImpl(Operation *op) {
         (op->hasTrait<OpTrait::ResultInGlobalMemory>() ||
          op->hasTrait<OpTrait::ResultInSharedMemory>()))
       continue;
-    if (auto tensorType = dyn_cast<RankedTensorType>(result.getType())) {
-      if (!inRegisterFile(tensorType))
+    if (auto rankedType = dyn_cast<RankedTensorType>(result.getType())) {
+      if (!inRegisterFile(rankedType))
         return op->emitOpError("result ")
                << result.getResultNumber() << " must in register file";
     }
@@ -168,10 +168,10 @@ LogicalResult OpTrait::impl::verifyResultInSharedMemory(Operation *op) {
 }
 
 static LogicalResult verifySameLayoutImpl(Type type1, Type type2) {
-  auto getLayout = [](Type type) -> Attribute {
-    if (auto tensorType = dyn_cast<RankedTensorType>(type))
-      return cast<EncodingAttr>(tensorType.getEncoding()).getLayout();
-    return nullptr;
+  auto getLayout = [](Type type) {
+    if (auto rankedType = dyn_cast<RankedTensorType>(type))
+      return cast<EncodingAttr>(rankedType.getEncoding()).getLayout();
+    return Attribute();
   };
   auto layout1 = getLayout(type1);
   auto layout2 = getLayout(type2);

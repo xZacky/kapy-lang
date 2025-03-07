@@ -9,6 +9,7 @@ add_mlir_conversion_library(KapyToKgpu
   KapyIR
   KgpuIR
   KapyAnalysis
+  KapySupport
   MLIRPass
   MLIRTransforms
 )

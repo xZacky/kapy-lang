@@ -46,18 +46,6 @@ def KgpuOptimizeLayout : Pass<"kgpu-optimize-layout", "ModuleOp"> {
 }
 
 /*
-def KgpuPrefetch : Pass<"kgpu-prefetch", "ModuleOp"> {
-  let constructor = "kapy::createKgpuPrefetchPass()";
-
-  let dependentDialects = ["kapy::KapyDialect", "kapy::KgpuDialect"];
-}
-
-def KgpuReorderInstruction : Pass<"kgpu-reorder-instruction", "ModuleOp"> {
-  let constructor = "kapy::createKgpuReorderInstructionPass()";
-
-  let dependentDialects = ["kapy::KapyDialect", "kapy::KgpuDialect"];
-}
-
 def KgpuAllocSharedMemory : Pass<"kgpu-alloc-shared-memory", "ModuleOp"> {
   let constructor = "kapy::createKgpuAllocSharedMemoryPass()";
 

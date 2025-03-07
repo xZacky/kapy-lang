@@ -39,6 +39,15 @@ class Kapy_EnumAttr<
   let cppNamespace = "mlir::kapy";
 }
 
+def Kapy_PaddingOptionAttr : Kapy_EnumAttr<
+  "PaddingOption",
+  "padding option for out of bound memory access",
+  [
+    I32EnumAttrCase<"PAD_ZERO", 0, "pad_zero">,
+    I32EnumAttrCase<"PAD_NAN", 1, "pad_nan">
+  ]
+>;
+
 def Kapy_CacheModifierAttr : Kapy_EnumAttr<
   "CacheModifier",
   "cache operator on load and store instrutions",
@@ -50,7 +59,7 @@ def Kapy_CacheModifierAttr : Kapy_EnumAttr<
     I32EnumAttrCase<"WB", 4, "wb">,
     I32EnumAttrCase<"WT", 5, "wt">,
     I32EnumAttrCase<"LU", 6, "lu">,
-    I32EnumAttrCase<"CV", 7, "cv">,
+    I32EnumAttrCase<"CV", 7, "cv">
   ]
 >;
 
@@ -126,6 +135,9 @@ def Kapy_MemorySpaceAttr : Kapy_EnumAttr<
     I32EnumAttrCase<"REGISTER_FILE", 2, "register_file">
   ]
 >;
+
+def Kapy_DefaultValuedPaddingOptionAttr
+    : DefaultValuedAttr<Kapy_PaddingOptionAttr, "PaddingOption::PAD_ZERO">;
 
 def Kapy_DefaultValuedCacheModifierAttr
     : DefaultValuedAttr<Kapy_CacheModifierAttr, "CacheModifier::NONE">;
