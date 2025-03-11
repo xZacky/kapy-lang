@@ -118,9 +118,9 @@ struct DFSState {
 
 } // namespace
 
-static void postOrderDFS(Operation *rootOp, DFSState &state) {
+static void postOrderDFS(Operation *op, DFSState &state) {
   SetQueue list;
-  list.push_back(rootOp);
+  list.push_back(op);
   while (!list.empty()) {
     // Ready operations are ready to be processed, meaning that either their
     // operands are all processed or they have no operands.
@@ -194,8 +194,8 @@ class ConstantAnalysis : public DataFlowAnalysis {
 public:
   using DataFlowAnalysis::DataFlowAnalysis;
 
-  virtual LogicalResult initialize(Operation *rootOp) override {
-    auto result = rootOp->walk([&](Operation *op) -> WalkResult {
+  virtual LogicalResult initialize(Operation *op) override {
+    auto result = op->walk([&](Operation *op) -> WalkResult {
       ProgramPoint point(op);
       if (failed(visit(point)))
         return WalkResult::interrupt();

@@ -1,4 +1,4 @@
-//===- InsertSyncBarrier.h --------------------------------------*- C++ -*-===//
+//===- BlockAnalysis.cpp ----------------------------------------*- C++ -*-===//
 //
 // Copyright 2018-2020 Philippe Tillet
 // Copyright 2020-2022 OpenAI
@@ -28,107 +28,13 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "kapy/Analysis/AllocAnalysis.h"
-#include "kapy/Dialect/Kgpu/IR/Kgpu.h"
-#include "kapy/Dialect/Kgpu/Transforms/Passes.h"
+#include "kapy/Analysis/BlockAnalysis.h"
+#include "kapy/Dialect/Kapy/IR/Kapy.h"
+#include "mlir/Dialect/LLVMIR/NVVMDialect.h"
 #include <deque>
-#include <set>
 
 using namespace mlir;
 using namespace mlir::kapy;
-
-namespace {
-
-class BlockInfo {
-public:
-  BlockInfo() = default;
-
-  BlockInfo &join(const BlockInfo &other) {
-    readIntervals.insert(other.readIntervals.begin(),
-                         other.readIntervals.end());
-    writeIntervals.insert(other.writeIntervals.begin(),
-                          other.writeIntervals.end());
-    return *this;
-  }
-
-  bool isIntersected(const BlockInfo &other) const {
-    return /*RAW*/ isIntersected(writeIntervals, other.readIntervals) ||
-           /*WAR*/ isIntersected(readIntervals, other.writeIntervals) ||
-           /*WAW*/ isIntersected(writeIntervals, other.writeIntervals);
-  }
-
-  void sync() {
-    readIntervals.clear();
-    writeIntervals.clear();
-  }
-
-  bool operator==(const BlockInfo &other) const {
-    return readIntervals == other.readIntervals &&
-           writeIntervals == other.writeIntervals;
-  }
-  bool operator!=(const BlockInfo &other) const { return !(*this == other); }
-
-private:
-  std::set<Interval<uint64_t>> readIntervals;
-  std::set<Interval<uint64_t>> writeIntervals;
-
-  bool isIntersected(const std::set<Interval<uint64_t>> &lhsSet,
-                     const std::set<Interval<uint64_t>> &rhsSet) const {
-    for (const auto &lhs : lhsSet)
-      for (const auto &rhs : rhsSet)
-        if (lhs.intersects(rhs))
-          return true;
-    return false;
-  }
-
-  friend class BlockAnalysis;
-};
-
-class BlockAnalysis {
-public:
-  explicit BlockAnalysis(AllocInfo *allocInfo) : allocInfo(allocInfo) {
-    builder = std::make_unique<OpBuilder>(allocInfo->getFunction());
-  }
-
-  /// Run this analysis on the function, insert a barrier if necessary.
-  void run(DenseMap<FunctionOpInterface, BlockInfo> &funcToInfo) const;
-
-private:
-  AllocInfo *allocInfo;
-  std::unique_ptr<OpBuilder> builder;
-
-  /// Visit an operation and update the given BlockInfo.
-  void visit(Operation *op, BlockInfo &infoToUpdate,
-             DenseMap<FunctionOpInterface, BlockInfo> &funcToInfo) const;
-
-  /// Collect the successors of the terminator.
-  void visit(Operation *op, SmallVectorImpl<Block *> &successors) const;
-
-  void insertBarrier(Operation *op, bool after = false) const;
-};
-
-class ModuleBlockAnalysis : public CallGraph<BlockInfo> {
-public:
-  ModuleBlockAnalysis(ModuleAllocAnalysis *allocAnalysis)
-      : CallGraph<BlockInfo>(allocAnalysis->getModule()),
-        allocAnalysis(allocAnalysis) {}
-
-  void run() {
-    walk<WalkOrder::PreOrder, WalkOrder::PostOrder>(
-        [](CallOpInterface caller, FunctionOpInterface callee) {},
-        [&](FunctionOpInterface funcOp) {
-          auto *allocInfo = allocAnalysis->getData(funcOp);
-          auto [it, inserted] = funcToData.try_emplace(funcOp, BlockInfo());
-          if (inserted) {
-            BlockAnalysis blockAnalysis(allocInfo);
-            blockAnalysis.run(funcToData);
-          }
-        });
-  }
-
-private:
-  ModuleAllocAnalysis *allocAnalysis;
-};
 
 void BlockAnalysis::run(
     DenseMap<FunctionOpInterface, BlockInfo> &funcToInfo) const {
@@ -140,8 +46,8 @@ void BlockAnalysis::run(
       // Check if the operation belongs to SCF dialect, if so, we need to throw
       // an error.
       if (isa<scf::SCFDialect>(op.getDialect()))
-        llvm_unreachable("SCFDialect is not supported, please lower it to "
-                         "ControlFlowDialect first");
+        llvm_unreachable("scf dialect is not supported, please lower it to "
+                         "control flow dialect first");
     }
     if (block->isEntryBlock())
       list.push_back(block);
@@ -154,21 +60,21 @@ void BlockAnalysis::run(
     auto *block = list.front();
     list.pop_front();
     // Make a copy of the old info.
-    auto curInfo = oldBlockToInfo[block];
+    auto info = oldBlockToInfo[block];
     SmallVector<Block *> successors;
     // Visit all the operations in this block.
     for (auto &op : block->getOperations())
       if (op.hasTrait<OpTrait::IsTerminator>())
         visit(&op, successors);
       else
-        visit(&op, curInfo, funcToInfo);
-    if (newBlockToInfo.contains(block) && curInfo == newBlockToInfo[block]) {
+        visit(&op, info, funcToInfo);
+    if (newBlockToInfo.contains(block) && info == newBlockToInfo[block]) {
       // If we have seen the block before and the there are no update for this
       // block, we skip it and its successors.
       continue;
     }
     // Update the current block.
-    newBlockToInfo[block].join(curInfo);
+    newBlockToInfo[block].join(info);
     // Update the successors.
     for (auto *successor : successors) {
       oldBlockToInfo[successor].join(newBlockToInfo[block]);
@@ -176,10 +82,10 @@ void BlockAnalysis::run(
     }
   }
   // Update the final dangling buffers that haven't been synced.
-  auto &newInfo = funcToInfo[funcOp];
+  auto &info = funcToInfo[funcOp];
   funcOp.walk<WalkOrder::PreOrder>([&](Block *block) {
     if (block->getParentOp() == funcOp && isa<ReturnOp>(block->getTerminator()))
-      newInfo.join(newBlockToInfo[block]);
+      info.join(newBlockToInfo[block]);
   });
 }
 
@@ -202,19 +108,20 @@ void BlockAnalysis::insertBarrier(Operation *op, bool after) const {
     builder->setInsertionPointAfter(op);
   else
     builder->setInsertionPoint(op);
-  builder->create<Barrier0Op>(op->getLoc());
+  builder->create<NVVM::Barrier0Op>(op->getLoc());
 }
 
 void BlockAnalysis::visit(
     Operation *op, BlockInfo &infoToUpdate,
     DenseMap<FunctionOpInterface, BlockInfo> &funcToInfo) const {
-  if (isa<Barrier0Op>(op)) {
+  if (isa<NVVM::Barrier0Op>(op)) {
     // If the current operation is a Barrier0Op, we sync previous reads and
     // writes.
     infoToUpdate.sync();
     return;
   }
-  if (isa<CpAsyncWaitGroupOp>(op) && !isa<Barrier0Op>(op->getNextNode())) {
+  if (isa<CpAsyncWaitGroupOp>(op) &&
+      !isa<NVVM::Barrier0Op>(op->getNextNode())) {
     insertBarrier(op, true);
     infoToUpdate.sync();
     return;
@@ -228,9 +135,8 @@ void BlockAnalysis::visit(
     if (auto funcOp = dyn_cast_if_present<FunctionOpInterface>(callable))
       info = funcToInfo.lookup(funcOp);
   } else {
-    // Intra-function dependencies.
     if (auto effectOp = dyn_cast<MemoryEffectOpInterface>(op)) {
-      // Explicit buffer read or write.
+      // Intra-function dependencies. Explicit buffer read or write.
       SmallVector<SideEffects::EffectInstance<MemoryEffects::Effect>> effects;
       effectOp.getEffects(effects);
       for (auto &effect : effects) {
@@ -245,7 +151,7 @@ void BlockAnalysis::visit(
         }
       }
     } else {
-      // Virtual buffer read and write.
+      // Inter-function dependencies. Virtual buffer read and write.
       auto id = allocInfo->getBufferId(op);
       if (id != AllocInfo::INVALID_ID) {
         info.readIntervals.insert(allocInfo->getInterval(id));
@@ -260,24 +166,4 @@ void BlockAnalysis::visit(
   // Update the BlockInfo, even if barrier is inserted, we have to maintain the
   // current operation's read/write intervals.
   infoToUpdate.join(info);
-}
-
-#define GEN_PASS_DEF_KGPUINSERTSYNCBARRIER
-#include "kapy/Dialect/Kgpu/Transforms/Passes.h.inc"
-
-class KgpuInsertSyncBarrierPass
-    : public impl::KgpuInsertSyncBarrierBase<KgpuInsertSyncBarrierPass> {
-public:
-  virtual void runOnOperation() override {
-    auto module = getOperation();
-    ModuleAllocAnalysis allocAnalysis(module);
-    ModuleBlockAnalysis blockAnalysis(&allocAnalysis);
-    blockAnalysis.run();
-  }
-};
-
-} // namespace
-
-std::unique_ptr<Pass> kapy::createKgpuInsertSyncBarrierPass() {
-  return std::make_unique<KgpuInsertSyncBarrierPass>();
 }

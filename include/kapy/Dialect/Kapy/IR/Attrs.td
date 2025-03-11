@@ -29,13 +29,13 @@ def Strided2dLayoutAttr : Kapy_AttrDef<"Strided2dLayout", "strided2d"> {
   let summary = "strided 2d layout";
 
   let mnemonic = "strided2d";
-  let parameters = (ins "int64_t":$strideX, "int64_t":$strideY);
+  let parameters = (ins "int64_t":$stride0, "int64_t":$stride1);
 
   let hasCustomAssemblyFormat = 1;
 
   let extraClassDeclaration = [{
-    inline bool isRowMajor() const { return getStrideY() == 1; }
-    inline bool isColMajor() const { return getStrideX() == 1; }
+    inline bool isRowMajor() const { return getStride1() == 1; }
+    inline bool isColMajor() const { return getStride0() == 1; }
   }];
 }
 
@@ -44,18 +44,18 @@ def SwizzlingLayoutAttr : Kapy_AttrDef<"SwizzlingLayout", "swizzling"> {
 
   let mnemonic = "swizzling";
   let parameters = (ins
-    "int64_t":$strideX,
-    "int64_t":$strideY,
+    "int64_t":$stride0,
+    "int64_t":$stride1,
     "int64_t":$bankParam,
     "int64_t":$lineParam
   );
 
   let builders = [
     AttrBuilder<
-      (ins "int64_t":$strideX, "int64_t":$strideY),
+      (ins "int64_t":$stride0, "int64_t":$stride1),
       [{
         auto dynamic = ShapedType::kDynamic;
-        return get(context, strideX, strideY, dynamic, dynamic);
+        return get(context, stride0, stride1, dynamic, dynamic);
       }]
     >
   ];
@@ -63,8 +63,8 @@ def SwizzlingLayoutAttr : Kapy_AttrDef<"SwizzlingLayout", "swizzling"> {
   let hasCustomAssemblyFormat = 1;
 
   let extraClassDeclaration = [{
-    inline bool isRowMajor() const { return getStrideY() == 1; }
-    inline bool isColMajor() const { return getStrideX() == 1; }
+    inline bool isRowMajor() const { return getStride1() == 1; }
+    inline bool isColMajor() const { return getStride0() == 1; }
 
     bool isDynamicParams() const;
 

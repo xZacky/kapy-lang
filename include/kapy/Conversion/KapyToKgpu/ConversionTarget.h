@@ -1,4 +1,4 @@
-//===- Kgpu.h ---------------------------------------------------*- C++ -*-===//
+//===- ConversionTarget.h ---------------------------------------*- C++ -*-===//
 //
 // Copyright 2018-2020 Philippe Tillet
 // Copyright 2020-2022 OpenAI
@@ -28,26 +28,23 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef KAPY_DIALECT_KGPU_IR_KGPU_H
-#define KAPY_DIALECT_KGPU_IR_KGPU_H
+#ifndef KAPY_CONVERSION_KAPYTOKGPU_CONVERSIONTARGET_H
+#define KAPY_CONVERSION_KAPYTOKGPU_CONVERSIONTARGET_H
 
-#include "kapy/Dialect/Kapy/IR/Kapy.h"
-
-#include "kapy/Dialect/Kgpu/IR/Dialect.h.inc"
-
-#define GET_ATTRDEF_CLASSES
-#include "kapy/Dialect/Kgpu/IR/Attrs.h.inc"
-
-#define GET_OP_CLASSES
-#include "kapy/Dialect/Kgpu/IR/Ops.h.inc"
+#include "mlir/Transforms/DialectConversion.h"
 
 namespace mlir {
 namespace kapy {
 
-/// Get a string to show how we distribute tensor elements to lanes.
-std::string getLayoutString(RankedTensorType tensorType);
+class KapyToKgpuTypeConverter;
+
+class KapyToKgpuConversionTarget : public ConversionTarget {
+public:
+  explicit KapyToKgpuConversionTarget(
+      MLIRContext *context, const KapyToKgpuTypeConverter &typeConverter);
+};
 
 } // namespace kapy
 } // namespace mlir
 
-#endif // KAPY_DIALECT_KGPU_IR_KGPU_H
+#endif // KAPY_CONVERSION_KAPYTOKGPU_CONVERSIONTARGET_H

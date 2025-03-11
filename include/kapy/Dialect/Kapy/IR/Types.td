@@ -37,8 +37,7 @@ include "kapy/Dialect/Kapy/IR/Dialect.td"
 def Kapy_Int : AnyTypeOf<[I1, I8, I16, I32, I64], "integer">;
 def Kapy_IntLike : AnyTypeOf<[Kapy_Int, RankedTensorOf<[Kapy_Int]>]>;
 
-def Kapy_Float : AnyTypeOf<[F8E4M3, F8E5M2, F16, BF16, F32, F64],
-                           "floating-point">;
+def Kapy_Float : AnyTypeOf<[F8E4M3, F8E5M2, F16, BF16, F32], "floating-point">;
 def Kapy_FloatLike : AnyTypeOf<[Kapy_Float, RankedTensorOf<[Kapy_Float]>]>;
 
 def Kapy_Number : AnyTypeOf<[Kapy_Int, Kapy_Float]>;

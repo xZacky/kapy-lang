@@ -121,9 +121,11 @@ def FragmentsLayoutAttr : Kgpu_AttrDef<"FragmentsLayout", "fragments"> {
 
     SmallVector<int64_t, 2> getLoopSpace(ArrayRef<int64_t> shape) const;
 
-    enum class MapOption { TO_TENSOR, TO_VALUES, FROM_VALUES };
-
-    AffineMap getAffineMap(ArrayRef<int64_t> shape, MapOption option) const;
+    /// Options:
+    /// 1. From lane id and loop iv to tensor indices.
+    /// 2. From lane id and loop iv to values indices.
+    /// 3. From values indices to lane id and loop iv.
+    AffineMap getAffineMap(ArrayRef<int64_t> shape, unsigned option) const;
 
     /// Transpose this layout to get a new layout.
     FragmentsLayoutAttr transpose() const;

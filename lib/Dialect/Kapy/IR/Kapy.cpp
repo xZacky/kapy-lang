@@ -47,8 +47,6 @@ using namespace mlir::kapy;
 #define GET_OP_CLASSES
 #include "kapy/Dialect/Kapy/IR/Ops.cpp.inc"
 
-static constexpr char inlineableAttrName[] = "inlineable";
-
 namespace {
 
 class KapyOpAsmInterface : public OpAsmDialectInterface {
@@ -84,8 +82,8 @@ public:
     auto funcOp = dyn_cast<FuncOp>(callee);
     if (!funcOp)
       return true;
-    if (funcOp->hasAttr(inlineableAttrName))
-      return funcOp->getAttrOfType<BoolAttr>(inlineableAttrName).getValue();
+    if (funcOp->hasAttr("noinline"))
+      return funcOp->getAttrOfType<BoolAttr>("noinline").getValue();
     return true;
   }
 
@@ -176,9 +174,9 @@ void Strided2dLayoutAttr::print(AsmPrinter &printer) const {
   };
 
   printer << "<[";
-  printQuestionOrInt(getStrideX());
+  printQuestionOrInt(getStride0());
   printer << ", ";
-  printQuestionOrInt(getStrideY());
+  printQuestionOrInt(getStride1());
   printer << "]>";
 }
 
@@ -236,9 +234,9 @@ void SwizzlingLayoutAttr::print(AsmPrinter &printer) const {
   };
 
   printer << "<[";
-  printer << getStrideX();
+  printer << getStride0();
   printer << ", ";
-  printer << getStrideY();
+  printer << getStride1();
   printer << "], (";
   printQuestionOrInt(getBankParam());
   printer << ", ";
@@ -254,13 +252,21 @@ bool SwizzlingLayoutAttr::isDynamicParams() const {
 
 SwizzlingLayoutAttr SwizzlingLayoutAttr::setParams(int64_t bankParam,
                                                    int64_t lineParam) const {
-  return SwizzlingLayoutAttr::get(getContext(), getStrideX(), getStrideY(),
+  return SwizzlingLayoutAttr::get(getContext(), getStride0(), getStride1(),
                                   bankParam, lineParam);
 }
 
 LogicalResult FPToFPOp::verify() {
-  if (isDownCast() && !getRoundingMode())
+  if (isDownCast() && !getRoundingMode().has_value())
     return emitOpError("rounding mode is required for down cast");
+  auto oldType = getElementTypeOrSelf(getSource().getType());
+  auto newType = getElementTypeOrSelf(getType());
+  if (oldType.isBF16() && (newType.isFloat8E4M3() || newType.isFloat8E5M2()) &&
+      getRoundingMode().value() == RoundingMode::RZ)
+    return emitOpError("unsupported conversion kind");
+  if ((oldType.isFloat8E4M3() || oldType.isFloat8E5M2()) &&
+      (newType.isFloat8E4M3() || newType.isFloat8E5M2()))
+    return emitOpError("unsupported conversion kind");
   return success();
 }
 
@@ -305,35 +311,6 @@ void StGlobalOp::getEffects(
         &effects) {
   effects.emplace_back(MemoryEffects::Write::get(), &getTargetMutable(),
                        GlobalMemory::get());
-}
-
-void AtomicRMWOp::getEffects(
-    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
-        &effects) {
-  effects.emplace_back(MemoryEffects::Read::get(), &getSourceMutable(),
-                       GlobalMemory::get());
-  effects.emplace_back(MemoryEffects::Write::get(), &getSourceMutable(),
-                       GlobalMemory::get());
-}
-
-LogicalResult AtomicRMWOp::verify() {
-  auto elementType = getSource().getType().getElementType();
-  switch (getKind()) {
-  case (AtomicRMWKind::ADD): {
-    if (elementType.isF16() || elementType.isBF16() || elementType.isF32())
-      return success();
-    else
-      return emitOpError("unsupported element type");
-  }
-  case (AtomicRMWKind::MAX):
-  case (AtomicRMWKind::MIN): {
-    if (elementType.isF16() || elementType.isBF16())
-      return success();
-    else
-      return emitOpError("unsupported element type");
-  }
-  }
-  return emitOpError("usupported atomic rmw kind");
 }
 
 void MkSharedOp::getEffects(
@@ -402,6 +379,13 @@ void CpAsyncGlobalToSharedOp::getEffects(
                        SharedMemory::get());
 }
 
+LogicalResult CpAsyncGlobalToSharedOp::verify() {
+  auto nvidiaCC = getNvidiaCC((*this)->getParentOfType<ModuleOp>());
+  if (nvidiaCC < 80)
+    return emitOpError("is not supported with nvidia compute capability < 80");
+  return success();
+}
+
 void WarpIdOp::inferResultRanges(ArrayRef<ConstantIntRanges> argRanges,
                                  SetIntRangeFn setResultRange) {
   auto numWarps = getNumWarps((*this)->getParentOfType<ModuleOp>());
@@ -458,12 +442,26 @@ LogicalResult MatmulOp::verify() {
   auto rhsElementType = rhsType.getElementType();
   auto accElementType = accType.getElementType();
 
-  // TODO: Support more.
   if (!accElementType.isF16() && !accElementType.isF32())
     return emitOpError("result must have f16 or f32 element type");
 
+  if (!lhsElementType.isF16() && !rhsElementType.isF16() &&
+      accElementType.isF16())
+    return emitOpError("result must have f32 element type when operands are "
+                       "not f16 element type");
+
+  if (!lhsElementType.isFloat8E4M3() && !lhsElementType.isFloat8E5M2())
+    if (lhsElementType != rhsElementType)
+      return emitOpError("lhs and rhs must have same element type unless they "
+                         "have f8 element type");
+
+  auto nvidiaCC = getNvidiaCC((*this)->getParentOfType<ModuleOp>());
+
   switch (getMatmulImplWay()) {
   case (MatmulImplWay::MMA_M16N8K8_F16): {
+    if (nvidiaCC < 80 && lhsElementType.isBF16() && rhsElementType.isBF16())
+      return emitOpError("operands with bf16 element type requires nvidia "
+                         "compute capability >= 80");
     if (!lhsElementType.isF16() && !lhsElementType.isBF16())
       return emitOpError(
           "mma_m16n8k8_f16 operands must have f16 or bf16 element type");
@@ -480,6 +478,9 @@ LogicalResult MatmulOp::verify() {
   }
 
   case (MatmulImplWay::MMA_M16N8K16_F16): {
+    if (nvidiaCC < 80)
+      return emitOpError(
+          "mma_m16n8k16_f16 requires nvidia compute capability >= 80");
     if (!lhsElementType.isF16() && !lhsElementType.isBF16())
       return emitOpError(
           "mma_m16n8k16_f16 operands must have f16 or bf16 element type");
@@ -496,6 +497,9 @@ LogicalResult MatmulOp::verify() {
   }
 
   case (MatmulImplWay::MMA_M16N8K8_TF32): {
+    if (nvidiaCC < 80)
+      return emitOpError(
+          "mma_m16n8k8_tf32 requires nvidia compute capability >= 80");
     if (!lhsElementType.isF32() || !rhsElementType.isF32())
       return emitOpError(
           "mma_m16n8k8_tf32 operands must have f32 element type");
@@ -510,6 +514,9 @@ LogicalResult MatmulOp::verify() {
   }
 
   case (MatmulImplWay::MMA_M16N8K16_F8): {
+    if (nvidiaCC < 89)
+      return emitOpError(
+          "mma_m16n8k16_f8 requires nvidia compute capability >= 89");
     if (!lhsElementType.isFloat8E4M3() && !lhsElementType.isFloat8E5M2())
       return emitOpError(
           "mma_m16n8k16_f8 operands must have f8E4M3 or f8E5M2 element type");
@@ -726,14 +733,15 @@ void ElementwiseInlineAsmOp::getEffects(
                        SideEffects::DefaultResource::get());
 }
 
-void FuncOp::build(OpBuilder &builder, OperationState &state, StringRef name,
-                   FunctionType funcType, bool inlineable,
+void FuncOp::build(OpBuilder &builder, OperationState &state,
+                   StringRef funcName, FunctionType funcType,
+                   ArrayRef<NamedAttribute> attrs,
                    ArrayRef<DictionaryAttr> argAttrs) {
   state.addAttribute(SymbolTable::getSymbolAttrName(),
-                     builder.getStringAttr(name));
+                     builder.getStringAttr(funcName));
   state.addAttribute(getFunctionTypeAttrName(state.name),
                      TypeAttr::get(funcType));
-  state.addAttribute(inlineableAttrName, builder.getBoolAttr(inlineable));
+  state.attributes.append(attrs.begin(), attrs.end());
   state.addRegion();
 
   if (!argAttrs.empty()) {
@@ -811,21 +819,41 @@ unsigned kapy::getIntOrFloatBitWidth(Type type) {
 }
 
 int64_t kapy::getNvidiaCC(ModuleOp module) {
-  if (!module->hasAttr(nvidiaCCAttrName))
-    llvm_unreachable("can not get a named attribute");
-  return cast<IntegerAttr>(module->getAttr(nvidiaCCAttrName)).getInt();
+  if (!module->hasAttr("kapy.nvidia_cc")) {
+    emitError(module.getLoc(), "can not get a named attribute");
+    return 80;
+  }
+  return cast<IntegerAttr>(module->getAttr("kapy.nvidia_cc")).getInt();
 }
 
 int64_t kapy::getNumWarps(ModuleOp module) {
-  if (!module->hasAttr(numWarpsAttrName))
-    llvm_unreachable("can not get a named attribute");
-  return cast<IntegerAttr>(module->getAttr(numWarpsAttrName)).getInt();
+  if (!module->hasAttr("kapy.num_warps")) {
+    emitError(module.getLoc(), "can not get a named attribute");
+    return 4;
+  }
+  return cast<IntegerAttr>(module->getAttr("kapy.num_warps")).getInt();
 }
 
 int64_t kapy::getAlignment(Operation *op) {
-  if (!op->hasAttr(alignmentAttrName))
-    llvm_unreachable("can not get a named attribute");
-  return cast<IntegerAttr>(op->getAttr(alignmentAttrName)).getInt();
+  if (!op->hasAttr("kapy.alignment")) {
+    emitError(op->getLoc(), "can not get a named attribute");
+    return 128;
+  }
+  return cast<IntegerAttr>(op->getAttr("kapy.alignment")).getInt();
+}
+
+int64_t kapy::getSize(ModuleOp module) {
+  if (!module->hasAttr("kapy.size")) {
+    emitError(module.getLoc(), "can not get a named attribute");
+    return 0;
+  }
+  return cast<IntegerAttr>(module->getAttr("kapy.size")).getInt();
+}
+
+int64_t kapy::getOffset(Operation *op) {
+  if (!op->hasAttr("kapy.offset"))
+    return -1;
+  return cast<IntegerAttr>(op->getAttr("kapy.offset")).getInt();
 }
 
 bool kapy::isGlobalMemoryRead(Operation *op) {
@@ -885,37 +913,37 @@ bool kapy::inGlobalMemory(RankedTensorType tensorType) {
   return encoding.getMemory() == MemorySpace::GLOBAL_MEMORY;
 }
 
-bool kapy::inSharedMemory(RankedTensorType rankedType) {
-  auto encoding = cast<EncodingAttr>(rankedType.getEncoding());
+bool kapy::inSharedMemory(RankedTensorType tensorType) {
+  auto encoding = cast<EncodingAttr>(tensorType.getEncoding());
   return encoding.getMemory() == MemorySpace::SHARED_MEMORY;
 }
 
-bool kapy::inRegisterFile(RankedTensorType rankedType) {
-  auto encoding = cast<EncodingAttr>(rankedType.getEncoding());
+bool kapy::inRegisterFile(RankedTensorType tensorType) {
+  auto encoding = cast<EncodingAttr>(tensorType.getEncoding());
   return encoding.getMemory() == MemorySpace::REGISTER_FILE;
 }
 
-bool kapy::hasLayout(RankedTensorType rankedType) {
-  auto encoding = cast<EncodingAttr>(rankedType.getEncoding());
+bool kapy::hasLayout(RankedTensorType tensorType) {
+  auto encoding = cast<EncodingAttr>(tensorType.getEncoding());
   return encoding.getLayout() != nullptr;
 }
 
-Attribute kapy::getLayout(RankedTensorType rankedType) {
-  auto encoding = cast<EncodingAttr>(rankedType.getEncoding());
+Attribute kapy::getLayout(RankedTensorType tensorType) {
+  auto encoding = cast<EncodingAttr>(tensorType.getEncoding());
   return encoding.getLayout();
 }
 
-RankedTensorType kapy::cloneWithShape(RankedTensorType rankedType,
+RankedTensorType kapy::cloneWithShape(RankedTensorType tensorType,
                                       ArrayRef<int64_t> shape) {
-  return RankedTensorType::get(shape, rankedType.getElementType(),
-                               rankedType.getEncoding());
+  return RankedTensorType::get(shape, tensorType.getElementType(),
+                               tensorType.getEncoding());
 }
 
-RankedTensorType kapy::cloneWithLayout(RankedTensorType rankedType,
+RankedTensorType kapy::cloneWithLayout(RankedTensorType tensorType,
                                        Attribute layout) {
   auto *context = layout.getContext();
-  auto encoding = cast<EncodingAttr>(rankedType.getEncoding());
+  auto encoding = cast<EncodingAttr>(tensorType.getEncoding());
   encoding = EncodingAttr::get(context, encoding.getMemory(), layout);
-  return RankedTensorType::get(rankedType.getShape(),
-                               rankedType.getElementType(), encoding);
+  return RankedTensorType::get(tensorType.getShape(),
+                               tensorType.getElementType(), encoding);
 }

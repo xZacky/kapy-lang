@@ -42,14 +42,14 @@ static SmallVector<Type> getOperandsAndResultType(Operation *op) {
 
 static LogicalResult verifyValidTensorShapeImpl(Operation *op) {
   for (auto type : getOperandsAndResultType(op)) {
-    if (auto rankedType = dyn_cast<RankedTensorType>(type)) {
-      if (rankedType.getRank() != 2)
-        return op->emitError("ranked tensor can only have rank 2");
-      if (rankedType.isDynamicDim(0) || rankedType.isDynamicDim(1))
+    if (auto tensorType = dyn_cast<RankedTensorType>(type)) {
+      if (tensorType.getRank() != 2)
+        return op->emitOpError("ranked tensor can only have rank 2");
+      if (tensorType.isDynamicDim(0) || tensorType.isDynamicDim(1))
         continue;
-      auto numElements = rankedType.getNumElements();
+      auto numElements = tensorType.getNumElements();
       if ((numElements & (numElements - 1)) != 0)
-        return op->emitError("number of elements must be power of 2, but ")
+        return op->emitOpError("number of elements must be power of 2, but ")
                << *op << " has " << numElements << " doesn't follow the rule";
       continue;
     }
@@ -67,8 +67,11 @@ LogicalResult OpTrait::impl::verifyValidTensorShape(Operation *op) {
 }
 
 static LogicalResult verifyValidMemorySpaceImpl(Operation *op) {
-  if (isa<CallOp, ReturnOp, arith::SelectOp>(op))
+  if (isa<CallOp, ReturnOp>(op) || isa<scf::SCFDialect>(op->getDialect()))
     return success();
+  if (auto selectOp = dyn_cast<arith::SelectOp>(op))
+    if (!isa<RankedTensorType>(selectOp.getCondition().getType()))
+      return success();
   for (auto &operand : op->getOpOperands()) {
     if (operand.getOperandNumber() == 0 &&
         (op->hasTrait<OpTrait::SourceInGlobalMemory>() ||
@@ -78,8 +81,8 @@ static LogicalResult verifyValidMemorySpaceImpl(Operation *op) {
         (op->hasTrait<OpTrait::TargetInGlobalMemory>() ||
          op->hasTrait<OpTrait::TargetInSharedMemory>()))
       continue;
-    if (auto rankedType = dyn_cast<RankedTensorType>(operand.get().getType())) {
-      if (!inRegisterFile(rankedType))
+    if (auto tensorType = dyn_cast<RankedTensorType>(operand.get().getType())) {
+      if (!inRegisterFile(tensorType))
         return op->emitOpError("operand ")
                << operand.getOperandNumber() << " must in register file";
     }
@@ -89,8 +92,8 @@ static LogicalResult verifyValidMemorySpaceImpl(Operation *op) {
         (op->hasTrait<OpTrait::ResultInGlobalMemory>() ||
          op->hasTrait<OpTrait::ResultInSharedMemory>()))
       continue;
-    if (auto rankedType = dyn_cast<RankedTensorType>(result.getType())) {
-      if (!inRegisterFile(rankedType))
+    if (auto tensorType = dyn_cast<RankedTensorType>(result.getType())) {
+      if (!inRegisterFile(tensorType))
         return op->emitOpError("result ")
                << result.getResultNumber() << " must in register file";
     }
@@ -167,17 +170,17 @@ LogicalResult OpTrait::impl::verifyResultInSharedMemory(Operation *op) {
   return success();
 }
 
-static LogicalResult verifySameLayoutImpl(Type type1, Type type2) {
+static LogicalResult verifySameLayoutImpl(Type type0, Type type1) {
   auto getLayout = [](Type type) {
-    if (auto rankedType = dyn_cast<RankedTensorType>(type))
-      return cast<EncodingAttr>(rankedType.getEncoding()).getLayout();
+    if (auto tensorType = dyn_cast<RankedTensorType>(type))
+      return cast<EncodingAttr>(tensorType.getEncoding()).getLayout();
     return Attribute();
   };
+  auto layout0 = getLayout(type0);
   auto layout1 = getLayout(type1);
-  auto layout2 = getLayout(type2);
-  if (!layout1 || !layout2)
+  if (!layout0 || !layout1)
     return success();
-  return success(layout1 == layout2);
+  return success(layout0 == layout1);
 }
 
 LogicalResult OpTrait::impl::verifySameOperandsLayout(Operation *op) {
@@ -187,7 +190,7 @@ LogicalResult OpTrait::impl::verifySameOperandsLayout(Operation *op) {
   auto types = op->getOperandTypes();
   for (auto type : types)
     if (failed(verifySameLayoutImpl(types[0], type)))
-      return op->emitError("requires same layout for all operands");
+      return op->emitOpError("requires same layout for all operands");
 
   return success();
 }

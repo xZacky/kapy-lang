@@ -33,26 +33,14 @@
 
 include "mlir/Pass/PassBase.td"
 
-def KgpuCoalesce : Pass<"kgpu-coalesce", "ModuleOp"> {
-  let constructor = "kapy::createKgpuCoalescePass()";
+def KgpuCoalesceAccess : Pass<"kgpu-coalesce-access", "ModuleOp"> {
+  let constructor = "kapy::createKgpuCoalesceAccessPass()";
 
   let dependentDialects = ["kapy::KapyDialect", "kapy::KgpuDialect"];
 }
 
 def KgpuOptimizeLayout : Pass<"kgpu-optimize-layout", "ModuleOp"> {
   let constructor = "kapy::createKgpuOptimizeLayoutPass()";
-
-  let dependentDialects = ["kapy::KapyDialect", "kapy::KgpuDialect"];
-}
-
-def KgpuAllocSharedMemory : Pass<"kgpu-alloc-shared-memory", "ModuleOp"> {
-  let constructor = "kapy::createKgpuAllocSharedMemoryPass()";
-
-  let dependentDialects = ["kapy::KapyDialect", "kapy::KgpuDialect"];
-}
-
-def KgpuInsertSyncBarrier : Pass<"kgpu-insert-sync-barrier", "ModuleOp"> {
-  let constructor = "kapy::createKgpuInsertSyncBarrierPass()";
 
   let dependentDialects = ["kapy::KapyDialect", "kapy::KgpuDialect"];
 }

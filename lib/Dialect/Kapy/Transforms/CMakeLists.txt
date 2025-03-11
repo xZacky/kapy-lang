@@ -1,5 +1,5 @@
 add_mlir_dialect_library(KapyTransforms
-  AnalyzeAlignment.cpp
+  Analyze.cpp
   Combine.cpp
   TransformUtils.cpp
 

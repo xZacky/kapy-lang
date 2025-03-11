@@ -28,6 +28,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "kapy/Conversion/KapyToKgpu/ConversionTarget.h"
 #include "kapy/Conversion/KapyToKgpu/Passes.h"
 #include "kapy/Conversion/KapyToKgpu/TypeConverter.h"
 #include "kapy/Dialect/Kapy/IR/Kapy.h"
@@ -44,6 +45,13 @@ static void addNamedAttributes(Operation *op, DictionaryAttr attrs) {
       op->setAttr(it.getName(), it.getValue());
 }
 
+static LogicalResult inlineAndConvertRegion(ConversionPatternRewriter &rewriter,
+                                            const TypeConverter &typeConverter,
+                                            Region &region, Region &parent) {
+  rewriter.inlineRegionBefore(region, parent, parent.end());
+  return rewriter.convertRegionTypes(&parent, typeConverter);
+}
+
 namespace {
 
 template <typename OpT>
@@ -55,11 +63,11 @@ public:
   virtual LogicalResult
   matchAndRewrite(OpT op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    SmallVector<Type> newTypes;
+    SmallVector<Type> resultTypes;
     const TypeConverter *typeConverter = this->getTypeConverter();
-    if (failed(typeConverter->convertTypes(op->getResultTypes(), newTypes)))
+    if (failed(typeConverter->convertTypes(op->getResultTypes(), resultTypes)))
       return failure();
-    rewriter.replaceOpWithNewOp<OpT>(op, newTypes, adaptor.getOperands(),
+    rewriter.replaceOpWithNewOp<OpT>(op, resultTypes, adaptor.getOperands(),
                                      op->getAttrs());
     return success();
   }
@@ -72,13 +80,13 @@ public:
   virtual LogicalResult
   matchAndRewrite(arith::ConstantOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    auto newType =
+    auto resultType =
         cast<RankedTensorType>(typeConverter->convertType(op.getType()));
     auto value = cast<DenseElementsAttr>(adaptor.getValue());
     // This is a hack. We just want to add layout.
-    value = value.reshape(newType);
+    value = value.reshape(resultType);
     auto newOp =
-        rewriter.replaceOpWithNewOp<arith::ConstantOp>(op, newType, value);
+        rewriter.replaceOpWithNewOp<arith::ConstantOp>(op, resultType, value);
     addNamedAttributes(newOp, adaptor.getAttributes());
     return success();
   }
@@ -177,13 +185,11 @@ public:
   virtual LogicalResult
   matchAndRewrite(ReduceOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    auto newOp = rewriter.create<ReduceOp>(op.getLoc(), adaptor.getSource(),
-                                           op.getAxis());
+    auto newOp = rewriter.replaceOpWithNewOp<ReduceOp>(op, adaptor.getSource(),
+                                                       op.getAxis());
     addNamedAttributes(newOp, adaptor.getAttributes());
-    auto &newRegion = newOp.getRegion();
-    rewriter.inlineRegionBefore(op.getRegion(), newRegion, newRegion.end());
-    rewriter.replaceOp(op, newOp.getResult());
-    return success();
+    return inlineAndConvertRegion(rewriter, *typeConverter, op.getRegion(),
+                                  newOp.getRegion());
   }
 };
 
@@ -197,9 +203,8 @@ public:
     auto newOp = rewriter.replaceOpWithNewOp<FuncOp>(op, op.getName(),
                                                      op.getFunctionType());
     addNamedAttributes(newOp, adaptor.getAttributes());
-    auto &newBody = newOp.getBody();
-    rewriter.inlineRegionBefore(op.getBody(), newBody, newBody.end());
-    return rewriter.convertRegionTypes(&newBody, *typeConverter);
+    return inlineAndConvertRegion(rewriter, *typeConverter, op.getBody(),
+                                  newOp.getBody());
   }
 };
 
@@ -213,25 +218,21 @@ public:
     auto newOp =
         cast<scf::ForOp>(rewriter.cloneWithoutRegions(*op.getOperation()));
     addNamedAttributes(newOp, adaptor.getAttributes());
-    auto &newRegion = newOp.getRegion();
-    rewriter.inlineRegionBefore(op.getRegion(), newRegion, newRegion.end());
-    if (failed(rewriter.convertRegionTypes(&newRegion, *typeConverter)))
-      return rewriter.notifyMatchFailure(op, "could not convert body types");
+    if (failed(inlineAndConvertRegion(rewriter, *typeConverter, op.getRegion(),
+                                      newOp.getRegion())))
+      return failure();
 
-    // Change the clone to use the updated operands. We could have cloned with a
-    // IRMapping, but this seems a bit more direct.
     newOp->setOperands(adaptor.getOperands());
 
-    // Update the result types to the new converted types.
-    SmallVector<Type> newTypes;
+    SmallVector<Type> resultTypes;
     for (auto type : op.getResultTypes()) {
-      auto newType = typeConverter->convertType(type);
-      if (!newType)
-        return rewriter.notifyMatchFailure(op, "not a 1:1 type conversion");
-      newTypes.push_back(newType);
+      type = typeConverter->convertType(type);
+      if (!type)
+        return failure();
+      resultTypes.push_back(type);
     }
-    for (auto [newResult, newType] : zip(newOp.getResults(), newTypes))
-      newResult.setType(newType);
+    for (auto [result, type] : zip(newOp.getResults(), resultTypes))
+      result.setType(type);
 
     rewriter.replaceOp(op, newOp.getResults());
     return success();
@@ -248,22 +249,26 @@ public:
     auto newOp =
         cast<scf::IfOp>(rewriter.cloneWithoutRegions(*op.getOperation()));
     addNamedAttributes(newOp, adaptor.getAttributes());
-    auto &newThen = newOp.getThenRegion();
-    rewriter.inlineRegionBefore(op.getThenRegion(), newThen, newThen.end());
-    auto &newElse = newOp.getElseRegion();
-    rewriter.inlineRegionBefore(op.getElseRegion(), newElse, newElse.end());
+    if (failed(inlineAndConvertRegion(rewriter, *typeConverter,
+                                      op.getThenRegion(),
+                                      newOp.getThenRegion())))
+      return failure();
+    if (failed(inlineAndConvertRegion(rewriter, *typeConverter,
+                                      op.getElseRegion(),
+                                      newOp.getElseRegion())))
+      return failure();
 
     newOp->setOperands(adaptor.getOperands());
 
-    SmallVector<Type> newTypes;
+    SmallVector<Type> resultTypes;
     for (auto type : op.getResultTypes()) {
-      auto newType = typeConverter->convertType(type);
-      if (!newType)
-        return rewriter.notifyMatchFailure(op, "not a 1:1 type conversion");
-      newTypes.push_back(newType);
+      type = typeConverter->convertType(type);
+      if (!type)
+        return failure();
+      resultTypes.push_back(type);
     }
-    for (auto [newResult, newType] : zip(newOp.getResults(), newTypes))
-      newResult.setType(newType);
+    for (auto [result, type] : zip(newOp.getResults(), resultTypes))
+      result.setType(type);
 
     rewriter.replaceOp(op, newOp.getResults());
     return success();
@@ -277,18 +282,18 @@ public:
   virtual LogicalResult
   matchAndRewrite(scf::WhileOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    SmallVector<Type> newTypes;
-    if (failed(typeConverter->convertTypes(op.getResultTypes(), newTypes)))
+    SmallVector<Type> resultTypes;
+    if (failed(typeConverter->convertTypes(op.getResultTypes(), resultTypes)))
       return failure();
-    auto newOp = rewriter.create<scf::WhileOp>(op.getLoc(), newTypes,
+    auto newOp = rewriter.create<scf::WhileOp>(op.getLoc(), resultTypes,
                                                adaptor.getOperands());
     addNamedAttributes(newOp, adaptor.getAttributes());
-    for (unsigned i : {0, 1}) {
-      auto &newRegion = newOp.getRegion(i);
-      rewriter.inlineRegionBefore(op.getRegion(i), newRegion, newRegion.end());
-      if (failed(rewriter.convertRegionTypes(&newRegion, *typeConverter)))
-        return rewriter.notifyMatchFailure(op, "could not convert body types");
-    }
+    if (failed(inlineAndConvertRegion(rewriter, *typeConverter, op.getBefore(),
+                                      newOp.getBefore())))
+      return failure();
+    if (failed(inlineAndConvertRegion(rewriter, *typeConverter, op.getAfter(),
+                                      newOp.getAfter())))
+      return failure();
     rewriter.replaceOp(op, newOp.getResults());
     return success();
   }
@@ -317,8 +322,8 @@ public:
     auto newOp = rewriter.replaceOpWithNewOp<cf::BranchOp>(
         op, op.getSuccessor(), adaptor.getOperands());
     addNamedAttributes(newOp, adaptor.getAttributes());
-    auto *newRegion = newOp.getSuccessor()->getParent();
-    return rewriter.convertRegionTypes(newRegion, *typeConverter);
+    return rewriter.convertRegionTypes(newOp.getSuccessor()->getParent(),
+                                       *typeConverter);
   }
 };
 
@@ -334,11 +339,11 @@ public:
         adaptor.getTrueDestOperands(), op.getFalseDest(),
         adaptor.getFalseDestOperands());
     addNamedAttributes(newOp, adaptor.getAttributes());
-    auto *trueRegion = newOp.getTrueDest()->getParent();
-    if (failed(rewriter.convertRegionTypes(trueRegion, *typeConverter)))
+    if (failed(rewriter.convertRegionTypes(newOp.getTrueDest()->getParent(),
+                                           *typeConverter)))
       return failure();
-    auto *falseRegion = newOp.getFalseDest()->getParent();
-    if (failed(rewriter.convertRegionTypes(falseRegion, *typeConverter)))
+    if (failed(rewriter.convertRegionTypes(newOp.getFalseDest()->getParent(),
+                                           *typeConverter)))
       return failure();
     return success();
   }
@@ -346,7 +351,7 @@ public:
 
 } // namespace
 
-static void populateArithConversionPatterns(KgpuTypeConverter &typeConverter,
+static void populateArithConversionPatterns(const TypeConverter &typeConverter,
                                             RewritePatternSet &patterns) {
   auto *context = patterns.getContext();
   patterns.add<ConstantOpConversion>(typeConverter, context);
@@ -382,20 +387,18 @@ static void populateArithConversionPatterns(KgpuTypeConverter &typeConverter,
                GenericOpConversion<arith::MinNumFOp>>(typeConverter, context);
   patterns.add<GenericOpConversion<arith::CmpIOp>,
                GenericOpConversion<arith::CmpFOp>>(typeConverter, context);
-  patterns.add<GenericOpConversion<arith::SelectOp>>(typeConverter, context);
   patterns.add<GenericOpConversion<arith::TruncIOp>,
                GenericOpConversion<arith::TruncFOp>>(typeConverter, context);
   patterns.add<GenericOpConversion<arith::ExtUIOp>,
                GenericOpConversion<arith::ExtSIOp>,
                GenericOpConversion<arith::ExtFOp>>(typeConverter, context);
-  patterns.add<GenericOpConversion<arith::UIToFPOp>,
-               GenericOpConversion<arith::FPToUIOp>>(typeConverter, context);
   patterns.add<GenericOpConversion<arith::SIToFPOp>,
                GenericOpConversion<arith::FPToSIOp>>(typeConverter, context);
   patterns.add<GenericOpConversion<arith::BitcastOp>>(typeConverter, context);
+  patterns.add<GenericOpConversion<arith::SelectOp>>(typeConverter, context);
 }
 
-static void populateMathConversionPatterns(KgpuTypeConverter &typeConverter,
+static void populateMathConversionPatterns(const TypeConverter &typeConverter,
                                            RewritePatternSet &patterns) {
   auto *context = patterns.getContext();
   patterns.add<GenericOpConversion<math::ExpOp>, //
@@ -414,14 +417,13 @@ static void populateMathConversionPatterns(KgpuTypeConverter &typeConverter,
   patterns.add<GenericOpConversion<math::FmaOp>>(typeConverter, context);
 }
 
-static void populateKapyConversionPatterns(KgpuTypeConverter &typeConverter,
+static void populateKapyConversionPatterns(const TypeConverter &typeConverter,
                                            RewritePatternSet &patterns) {
   auto *context = patterns.getContext();
   patterns.add<GenericOpConversion<FPToFPOp>>(typeConverter, context);
   patterns.add<GenericOpConversion<ClampFOp>>(typeConverter, context);
   patterns.add<GenericOpConversion<LdGlobalOp>>(typeConverter, context);
   patterns.add<GenericOpConversion<StGlobalOp>>(typeConverter, context);
-  patterns.add<GenericOpConversion<AtomicRMWOp>>(typeConverter, context);
   patterns.add<GenericOpConversion<LdSharedOp>>(typeConverter, context);
   patterns.add<GenericOpConversion<StSharedOp>>(typeConverter, context);
   patterns.add<LdMatrixOpConversion>(typeConverter, context);
@@ -442,7 +444,7 @@ static void populateKapyConversionPatterns(KgpuTypeConverter &typeConverter,
   patterns.add<GenericOpConversion<ReturnOp>>(typeConverter, context);
 }
 
-static void populateSCFConversionPatterns(KgpuTypeConverter &typeConverter,
+static void populateSCFConversionPatterns(const TypeConverter &typeConverter,
                                           RewritePatternSet &patterns) {
   auto *context = patterns.getContext();
   patterns.add<ForOpConversion>(typeConverter, context);
@@ -452,7 +454,7 @@ static void populateSCFConversionPatterns(KgpuTypeConverter &typeConverter,
   patterns.add<GenericOpConversion<scf::YieldOp>>(typeConverter, context);
 }
 
-static void populateCFConversionPatterns(KgpuTypeConverter &typeConverter,
+static void populateCFConversionPatterns(const TypeConverter &typeConverter,
                                          RewritePatternSet &patterns) {
   auto *context = patterns.getContext();
   patterns.add<BranchOpConversion>(typeConverter, context);
@@ -461,28 +463,6 @@ static void populateCFConversionPatterns(KgpuTypeConverter &typeConverter,
 
 namespace {
 
-class KgpuConversionTarget : public ConversionTarget {
-public:
-  explicit KgpuConversionTarget(MLIRContext *context,
-                                KgpuTypeConverter &typeConverter)
-      : ConversionTarget(*context) {
-    addLegalDialect<KgpuDialect>();
-
-    addIllegalOp<scf::ExecuteRegionOp, scf::ForallOp, scf::InParallelOp,
-                 scf::IndexSwitchOp, scf::ParallelOp, scf::ReduceOp,
-                 scf::ReduceReturnOp>();
-
-    addDynamicallyLegalDialect<KapyDialect, arith::ArithDialect,
-                               math::MathDialect, cf::ControlFlowDialect,
-                               scf::SCFDialect>([&](Operation *op) {
-      bool hasLegalRegions = true;
-      for (auto &region : op->getRegions())
-        hasLegalRegions &= typeConverter.isLegal(op);
-      return hasLegalRegions && typeConverter.isLegal(op);
-    });
-  }
-};
-
 #define GEN_PASS_DEF_CONVERTKAPYTOKGPU
 #include "kapy/Conversion/KapyToKgpu/Passes.h.inc"
 
@@ -490,18 +470,17 @@ class ConvertKapyToKgpuPass
     : public impl::ConvertKapyToKgpuBase<ConvertKapyToKgpuPass> {
 public:
   virtual void runOnOperation() override {
-    auto module = getOperation();
-
     auto *context = &getContext();
     RewritePatternSet patterns(context);
-    KgpuTypeConverter typeConverter(context);
-    KgpuConversionTarget convTarget(context, typeConverter);
+    KapyToKgpuTypeConverter typeConverter(context);
+    KapyToKgpuConversionTarget convTarget(context, typeConverter);
     populateArithConversionPatterns(typeConverter, patterns);
     populateMathConversionPatterns(typeConverter, patterns);
     populateKapyConversionPatterns(typeConverter, patterns);
     populateSCFConversionPatterns(typeConverter, patterns);
     populateCFConversionPatterns(typeConverter, patterns);
 
+    auto module = getOperation();
     if (failed(applyPartialConversion(module, convTarget, std::move(patterns))))
       return signalPassFailure();
   }

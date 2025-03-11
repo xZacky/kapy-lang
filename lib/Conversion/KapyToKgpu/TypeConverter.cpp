@@ -35,7 +35,8 @@
 using namespace mlir;
 using namespace mlir::kapy;
 
-KgpuTypeConverter::KgpuTypeConverter(MLIRContext *context) : context(context) {
+KapyToKgpuTypeConverter::KapyToKgpuTypeConverter(MLIRContext *context)
+    : context(context) {
   addConversion([](Type type) { return type; });
 
   addConversion([](RankedTensorType tensorType) {
@@ -44,9 +45,9 @@ KgpuTypeConverter::KgpuTypeConverter(MLIRContext *context) : context(context) {
     return cloneWithLayout(tensorType, getFragmentsLayout(tensorType));
   });
 
-  addTargetMaterialization([](OpBuilder &builder, RankedTensorType tensorType,
+  addTargetMaterialization([](OpBuilder &builder, RankedTensorType targetType,
                               ValueRange valuesToChange,
                               Location loc) -> std::optional<Value> {
-    return builder.create<ChangeOp>(loc, tensorType, valuesToChange);
+    return builder.create<ChangeOp>(loc, targetType, valuesToChange);
   });
 }

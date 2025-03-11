@@ -94,11 +94,11 @@ static void combineSelectOpAndIfOp(ModuleOp module) {
     // then yield the select value in the then block and the else block.
     OpBuilder builder(ifOp);
     auto loc = ifOp.getLoc();
-    SmallVector<Type> newTypes(ifOp.getResultTypes());
+    SmallVector<Type> resultTypes(ifOp.getResultTypes());
     for (auto selectOp : selectOps)
-      newTypes.push_back(selectOp.getResult().getType());
+      resultTypes.push_back(selectOp.getResult().getType());
     auto newIfOp =
-        builder.create<scf::IfOp>(loc, newTypes, ifOp.getCondition(), true);
+        builder.create<scf::IfOp>(loc, resultTypes, ifOp.getCondition(), true);
     newIfOp.getThenRegion().takeBody(ifOp.getThenRegion());
     if (ifOp.elseBlock())
       newIfOp.getElseRegion().takeBody(ifOp.getElseRegion());
@@ -138,7 +138,6 @@ namespace {
 class KapyCombinePass : public impl::KapyCombineBase<KapyCombinePass> {
 public:
   virtual void runOnOperation() override {
-    auto module = getOperation();
 
     auto *context = &getContext();
     RewritePatternSet patterns(context);
@@ -147,10 +146,9 @@ public:
     patterns.add<CombineMatmulOpAsAddFOpLhs>(context);
     patterns.add<CombineMatmulOpAsAddFOpRhs>(context);
 
+    auto module = getOperation();
     if (failed(applyPatternsAndFoldGreedily(module, std::move(patterns))))
       signalPassFailure();
-
-    combineSelectOpAndIfOp(module);
   }
 };
 

@@ -48,8 +48,4 @@ def Kgpu_ChangeOp : Kgpu_Op<
   let hasCanonicalizeMethod = 1;
 }
 
-def Kgpu_Barrier0Op : Kgpu_Op<"barrier0"> {
-  let assemblyFormat = "attr-dict";
-}
-
 #endif // KAPY_DIALECT_KGPU_IR_OPS

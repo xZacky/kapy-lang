@@ -32,7 +32,6 @@
 #include "kapy/Analysis/AliasAnalysis.h"
 #include "kapy/Analysis/AnalysisUtils.h"
 #include "kapy/Dialect/Kapy/IR/Kapy.h"
-#include "kapy/Support/CommonUtils.h"
 #include "mlir/Analysis/Liveness.h"
 
 namespace mlir {
@@ -80,6 +79,10 @@ void AllocInfo::run(DenseMap<FunctionOpInterface, AllocInfo> &funcToInfo) {
   AllocAnalysis(funcOp, this).run(funcToInfo);
 }
 
+static uint64_t getSizeInBytes(int64_t numElems, unsigned bitWidth) {
+  return numElems * bitWidth / 8;
+}
+
 void AllocAnalysis::addBuffers(
     DenseMap<FunctionOpInterface, AllocInfo> &funcToInfo) {
   funcOp->walk<WalkOrder::PreOrder>([&](Operation *op) {
@@ -87,7 +90,7 @@ void AllocAnalysis::addBuffers(
       auto sharedType = mkSharedOp.getType();
       auto numElems = sharedType.getNumElements();
       auto bitWidth = getIntOrFloatBitWidth(sharedType);
-      auto size = getSizeInBytes<uint64_t>(numElems, bitWidth);
+      auto size = getSizeInBytes(numElems, bitWidth);
       auto result = mkSharedOp.getResult();
       info->addBuffer<Buffer::BufferKind::EXPLICIT>(result, size);
     } else if (auto callOp = dyn_cast<CallOpInterface>(op)) {
@@ -198,16 +201,16 @@ void AllocAnalysis::computeAndAlloc() {
   auto buildGraph = [&]() {
     // Reset interference graph.
     graph.clear();
-    for (auto *bufferA : buffers) {
-      for (auto *bufferB : buffers) {
-        if (bufferA == bufferB)
+    for (auto *buffer0 : buffers) {
+      for (auto *buffer1 : buffers) {
+        if (buffer0 == buffer1)
           continue;
-        auto livenessA = bufferToLiveness.lookup(bufferA);
-        auto livenessB = bufferToLiveness.lookup(bufferB);
-        auto memRangeA = info->getInterval(bufferA->id);
-        auto memRangeB = info->getInterval(bufferB->id);
-        if (livenessA.intersects(livenessB) && memRangeA.intersects(memRangeB))
-          graph[bufferA].insert(bufferB);
+        auto liveness0 = bufferToLiveness.lookup(buffer0);
+        auto liveness1 = bufferToLiveness.lookup(buffer1);
+        auto memRange0 = info->getInterval(buffer0->id);
+        auto memRange1 = info->getInterval(buffer1->id);
+        if (liveness0.intersects(liveness1) && memRange0.intersects(memRange1))
+          graph[buffer0].insert(buffer1);
       }
     }
   };
@@ -221,19 +224,19 @@ void AllocAnalysis::computeAndAlloc() {
     // finding the position of the first available non-neighboring node or first
     // neighboring node without any color.
     DenseMap<Buffer *, int> bufferToColor;
-    // color < 0 means uncolored
     for (auto *buffer : buffers)
-      bufferToColor[buffer] = buffer == buffers[0] ? 0 : -1;
+      bufferToColor[buffer] = -1; // color < 0 means uncolored
+    bufferToColor[buffers[0]] = 0;
     SmallVector<bool> available(buffers.size());
-    for (auto *bufferA : buffers) {
+    for (auto *buffer0 : buffers) {
       std::fill(available.begin(), available.end(), true);
-      for (auto *bufferB : graph.lookup(bufferA)) {
-        auto color = bufferToColor[bufferB];
+      for (auto *buffer1 : graph.lookup(buffer0)) {
+        auto color = bufferToColor[buffer1];
         if (color >= 0)
           available[color] = false;
       }
       auto it = std::find(available.begin(), available.end(), true);
-      bufferToColor[bufferA] = std::distance(available.begin(), it);
+      bufferToColor[buffer0] = std::distance(available.begin(), it);
     }
     // Perform allocation.
     // Example:
@@ -243,17 +246,17 @@ void AllocAnalysis::computeAndAlloc() {
     //   color1: [7, 9) -> [16, 16 + 9 - 7) -> [16, 18)
     //   color2: [8, 12) -> [18, 18 + 12 - 8) -> [18, 22)
     //
-    for (auto *bufferA : buffers) {
+    for (auto *buffer0 : buffers) {
       uint64_t offset = 0;
-      if (bufferToColor.lookup(bufferA) == 0) {
-        bufferA->setOffsetAligned(offset);
+      if (bufferToColor.lookup(buffer0) == 0) {
+        buffer0->setOffsetAligned(offset);
       } else {
-        for (auto *bufferB : graph.lookup(bufferA))
-          offset = std::max(offset, bufferB->offset + bufferB->size);
-        bufferA->setOffsetAligned(offset);
+        for (auto *buffer1 : graph.lookup(buffer0))
+          offset = std::max(offset, buffer1->offset + buffer1->size);
+        buffer0->setOffsetAligned(offset);
       }
       info->allocatedSize =
-          std::max(info->allocatedSize, bufferA->offset + bufferA->size);
+          std::max(info->allocatedSize, buffer0->offset + buffer0->size);
     }
   };
 

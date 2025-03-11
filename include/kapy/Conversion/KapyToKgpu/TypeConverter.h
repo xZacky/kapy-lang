@@ -36,9 +36,9 @@
 namespace mlir {
 namespace kapy {
 
-class KgpuTypeConverter : public TypeConverter {
+class KapyToKgpuTypeConverter : public TypeConverter {
 public:
-  KgpuTypeConverter(MLIRContext *context);
+  KapyToKgpuTypeConverter(MLIRContext *context);
 
 private:
   MLIRContext *context;

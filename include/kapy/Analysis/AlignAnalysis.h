@@ -15,9 +15,7 @@ namespace kapy {
 class AlignInfo {
 public:
   AlignInfo() = default;
-
   AlignInfo(int64_t alignment) : AlignInfo(alignment, std::nullopt) {}
-
   AlignInfo(int64_t alignment, std::optional<int64_t> constant)
       : alignment(alignment), constant(constant) {}
 

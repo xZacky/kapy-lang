@@ -123,11 +123,6 @@ auto delinearize(AffineExpr index, const ArrayT &shape) {
   return delinearize(index, ArrayRef(shape));
 }
 
-template <typename T> T getSizeInBytes(T numElements, T bitWidth) {
-  static_assert(std::is_integral_v<T>);
-  return numElements * bitWidth / 8;
-}
-
 } // namespace kapy
 } // namespace mlir
 

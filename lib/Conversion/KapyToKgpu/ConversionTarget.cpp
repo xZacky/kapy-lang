@@ -1,4 +1,4 @@
-//===- Kgpu.h ---------------------------------------------------*- C++ -*-===//
+//===- ConversionTarget.cpp -------------------------------------*- C++ -*-===//
 //
 // Copyright 2018-2020 Philippe Tillet
 // Copyright 2020-2022 OpenAI
@@ -28,26 +28,29 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef KAPY_DIALECT_KGPU_IR_KGPU_H
-#define KAPY_DIALECT_KGPU_IR_KGPU_H
-
+#include "kapy/Conversion/KapyToKgpu/ConversionTarget.h"
+#include "kapy/Conversion/KapyToKgpu/TypeConverter.h"
 #include "kapy/Dialect/Kapy/IR/Kapy.h"
+#include "kapy/Dialect/Kgpu/IR/Kgpu.h"
 
-#include "kapy/Dialect/Kgpu/IR/Dialect.h.inc"
+using namespace mlir;
+using namespace mlir::kapy;
 
-#define GET_ATTRDEF_CLASSES
-#include "kapy/Dialect/Kgpu/IR/Attrs.h.inc"
+KapyToKgpuConversionTarget::KapyToKgpuConversionTarget(
+    MLIRContext *context, const KapyToKgpuTypeConverter &typeConverter)
+    : ConversionTarget(*context) {
+  addLegalDialect<KgpuDialect>();
 
-#define GET_OP_CLASSES
-#include "kapy/Dialect/Kgpu/IR/Ops.h.inc"
+  addIllegalOp<scf::ExecuteRegionOp, scf::ForallOp, scf::InParallelOp,
+               scf::IndexSwitchOp, scf::ParallelOp, scf::ReduceOp,
+               scf::ReduceReturnOp>();
 
-namespace mlir {
-namespace kapy {
-
-/// Get a string to show how we distribute tensor elements to lanes.
-std::string getLayoutString(RankedTensorType tensorType);
-
-} // namespace kapy
-} // namespace mlir
-
-#endif // KAPY_DIALECT_KGPU_IR_KGPU_H
+  addDynamicallyLegalDialect<KapyDialect, arith::ArithDialect,
+                             math::MathDialect, cf::ControlFlowDialect,
+                             scf::SCFDialect>([&](Operation *op) {
+    bool hasLegalRegions = true;
+    for (auto &region : op->getRegions())
+      hasLegalRegions &= typeConverter.isLegal(op);
+    return hasLegalRegions && typeConverter.isLegal(op);
+  });
+};

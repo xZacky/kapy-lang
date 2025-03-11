@@ -1,7 +1,5 @@
 add_mlir_dialect_library(KgpuTransforms
-  AllocSharedMemory.cpp
-  Coalesce.cpp
-  InsertSyncBarrier.cpp
+  CoalesceAccess.cpp
   OptimizeLayout.cpp
 
   DEPENDS

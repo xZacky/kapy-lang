@@ -1,5 +1,6 @@
 add_mlir_conversion_library(KapyToKgpu
   ConversionPass.cpp
+  ConversionTarget.cpp
   TypeConverter.cpp
 
   DEPENDS

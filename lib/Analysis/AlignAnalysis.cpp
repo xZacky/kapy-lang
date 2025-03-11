@@ -148,6 +148,7 @@ public:
   virtual AlignInfo
   getAlignInfo(OpT op, //
                ArrayRef<const Lattice<AlignInfo> *> operands) override {
+    assert(operands.size() == 1);
     return operands[0]->getValue();
   }
 };
@@ -344,6 +345,7 @@ public:
   virtual AlignInfo
   getAlignInfo(arith::SelectOp op,
                ArrayRef<const Lattice<AlignInfo> *> operands) override {
+    assert(operands.size() == 3);
     auto condition = operands[0]->getValue();
     auto lhs = operands[1]->getValue();
     auto rhs = operands[2]->getValue();
@@ -438,6 +440,7 @@ public:
   virtual AlignInfo
   getAlignInfo(OpT op, //
                ArrayRef<const Lattice<AlignInfo> *> operands) override {
+    assert(operands.size() == 2);
     auto lhs = operands[0]->getValue();
     auto rhs = operands[1]->getValue();
     int64_t alignment = 1;
@@ -464,6 +467,7 @@ public:
   virtual AlignInfo
   getAlignInfo(MkGlobalOp op,
                ArrayRef<const Lattice<AlignInfo> *> operands) override {
+    assert(operands.size() == 5);
     return operands[0]->getValue();
   }
 };
@@ -475,25 +479,26 @@ public:
   virtual AlignInfo
   getAlignInfo(SvGlobalOp op,
                ArrayRef<const Lattice<AlignInfo> *> operands) override {
+    assert(operands.size() == 5);
     auto sourceType = op.getSource().getType();
     auto sourceLayout = getLayout<Strided2dLayoutAttr>(sourceType);
-    auto strideX = sourceLayout.getStrideX();
-    auto strideY = sourceLayout.getStrideY();
-    strideX = ShapedType::isDynamic(strideX) ? 1 : strideX;
-    strideY = ShapedType::isDynamic(strideY) ? 1 : strideY;
-    auto startX = operands[1]->getValue();
-    auto startY = operands[3]->getValue();
-    auto alignmentX = mul(startX.getAlignment(), strideX);
-    auto alignmentY = mul(startY.getAlignment(), strideY);
-    auto endX = operands[2]->getValue();
-    auto endY = operands[4]->getValue();
-    alignmentX = gcd(alignmentX, mul(endX.getAlignment(), strideX));
-    alignmentY = gcd(alignmentY, mul(endY.getAlignment(), strideY));
+    auto stride0 = sourceLayout.getStride0();
+    auto stride1 = sourceLayout.getStride1();
+    stride0 = ShapedType::isDynamic(stride0) ? 1 : stride0;
+    stride1 = ShapedType::isDynamic(stride1) ? 1 : stride1;
+    auto start0 = operands[1]->getValue();
+    auto start1 = operands[3]->getValue();
+    auto alignment0 = mul(start0.getAlignment(), stride0);
+    auto alignment1 = mul(start1.getAlignment(), stride1);
+    auto end0 = operands[2]->getValue();
+    auto end1 = operands[4]->getValue();
+    alignment0 = gcd(alignment0, mul(end0.getAlignment(), stride0));
+    alignment1 = gcd(alignment1, mul(end1.getAlignment(), stride1));
     auto bitWidth = getIntOrFloatBitWidth(sourceType);
-    alignmentX = mul<int64_t>(alignmentX, bitWidth / 8);
-    alignmentY = mul<int64_t>(alignmentY, bitWidth / 8);
+    alignment0 = mul<int64_t>(alignment0, bitWidth / 8);
+    alignment1 = mul<int64_t>(alignment1, bitWidth / 8);
     auto source = operands[0]->getValue();
-    auto alignment = gcd(source.getAlignment(), gcd(alignmentX, alignmentY));
+    auto alignment = gcd(source.getAlignment(), gcd(alignment0, alignment1));
     return AlignInfo(alignment);
   }
 };
@@ -516,23 +521,24 @@ public:
   virtual AlignInfo
   getAlignInfo(SvSharedOp op,
                ArrayRef<const Lattice<AlignInfo> *> operands) override {
+    assert(operands.size() == 5);
     auto sourceType = op.getSource().getType();
     auto sourceLayout = getLayout<SwizzlingLayoutAttr>(sourceType);
-    auto strideX = sourceLayout.getStrideX();
-    auto strideY = sourceLayout.getStrideY();
-    auto startX = operands[1]->getValue();
-    auto startY = operands[3]->getValue();
-    auto alignmentX = mul(startX.getAlignment(), strideX);
-    auto alignmentY = mul(startY.getAlignment(), strideY);
-    auto endX = operands[2]->getValue();
-    auto endY = operands[4]->getValue();
-    alignmentX = gcd(alignmentX, mul(endX.getAlignment(), strideX));
-    alignmentY = gcd(alignmentY, mul(endY.getAlignment(), strideY));
+    auto stride0 = sourceLayout.getStride0();
+    auto stride1 = sourceLayout.getStride1();
+    auto start0 = operands[1]->getValue();
+    auto start1 = operands[3]->getValue();
+    auto alignment0 = mul(start0.getAlignment(), stride0);
+    auto alignment1 = mul(start1.getAlignment(), stride1);
+    auto end0 = operands[2]->getValue();
+    auto end1 = operands[4]->getValue();
+    alignment0 = gcd(alignment0, mul(end0.getAlignment(), stride0));
+    alignment1 = gcd(alignment1, mul(end1.getAlignment(), stride1));
     auto bitWidth = getIntOrFloatBitWidth(sourceType);
-    alignmentX = mul<int64_t>(alignmentX, bitWidth / 8);
-    alignmentY = mul<int64_t>(alignmentY, bitWidth / 8);
+    alignment0 = mul<int64_t>(alignment0, bitWidth / 8);
+    alignment1 = mul<int64_t>(alignment1, bitWidth / 8);
     auto source = operands[0]->getValue();
-    auto alignment = gcd(source.getAlignment(), gcd(alignmentX, alignmentY));
+    auto alignment = gcd(source.getAlignment(), gcd(alignment0, alignment1));
     return AlignInfo(alignment);
   }
 };
@@ -584,7 +590,7 @@ public:
     if (info.isEntryState())
       return setAllToEntryStates(results);
 
-    if (auto attr = op->getAttr(alignmentAttrName))
+    if (auto attr = op->getAttr("kapy.alignment"))
       info.setAlignment(cast<IntegerAttr>(attr).getInt());
 
     for (auto *result : results)
@@ -625,7 +631,7 @@ private:
 
 AlignInfo AlignInfo::getPessimisticState(FunctionOpInterface funcOp,
                                          unsigned argIndex) {
-  auto attr = funcOp.getArgAttr(argIndex, alignmentAttrName);
+  auto attr = funcOp.getArgAttr(argIndex, "kapy.alignment");
   if (auto intAttr = dyn_cast_if_present<IntegerAttr>(attr))
     return AlignInfo(intAttr.getInt());
   return AlignInfo();
@@ -647,7 +653,7 @@ AlignInfo AlignInfo::getPessimisticState(Value value) {
       info.setAlignment(gpd<int64_t>(0));
     // Other operations are conservatively initialized with the lowest possible
     // alignment, unless been specified.
-    else if (auto attr = op->getAttr(alignmentAttrName))
+    else if (auto attr = op->getAttr("kapy.alignment"))
       info.setAlignment(cast<IntegerAttr>(attr).getInt());
   }
   return info;
@@ -703,6 +709,6 @@ void ModuleAlignAnalysis::update(CallOpInterface caller,
       callee.setArgAttr(it.index(), name, newAttr);
     };
     auto info = valueToInfo->lookup(it.value());
-    updateAttr(alignmentAttrName, info.getAlignment());
+    updateAttr("kapy.alignment", info.getAlignment());
   }
 }

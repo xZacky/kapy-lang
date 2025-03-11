@@ -1,10 +1,11 @@
 //===- AnalyzeAlignment.cpp -------------------------------------*- C++ -*-===//
 //
-// This file implements the KapyAnalyzeAlignmentPass.
+// This file implements the KapyAnalyzePass.
 //
 //===----------------------------------------------------------------------===//
 
 #include "kapy/Analysis/AlignAnalysis.h"
+#include "kapy/Analysis/AllocAnalysis.h"
 #include "kapy/Dialect/Kapy/IR/Kapy.h"
 #include "kapy/Dialect/Kapy/Transforms/Passes.h"
 #include "kapy/Dialect/Kapy/Transforms/TransformUtils.h"
@@ -14,39 +15,47 @@ using namespace mlir::kapy;
 
 namespace {
 
-#define GEN_PASS_DEF_KAPYANALYZEALIGNMENT
+#define GEN_PASS_DEF_KAPYANALYZE
 #include "kapy/Dialect/Kapy/Transforms/Passes.h.inc"
 
-class KapyAnalyzeAlignmentPass
-    : public impl::KapyAnalyzeAlignmentBase<KapyAnalyzeAlignmentPass> {
+class KapyAnalyzePass : public impl::KapyAnalyzeBase<KapyAnalyzePass> {
 public:
   virtual void runOnOperation() override {
     setGlobalMemoryLayouts();
-    setSharedMemoryLayouts();
+
     auto module = getOperation();
-    ModuleAlignAnalysis analysis(module);
+    ModuleAlignAnalysis alignAnalysis(module);
     module.walk([&](Operation *op) {
       if (auto effectOp = dyn_cast<MemoryEffectOpInterface>(op))
-        processEffectOp(effectOp, analysis);
+        setAlignment(effectOp, alignAnalysis);
     });
+    ModuleAllocAnalysis allocAnalysis(module);
+    module.walk([&](FunctionOpInterface funcOp) {
+      funcOp.walk([&](Operation *op) {
+        setOffset(op, *allocAnalysis.getData(funcOp));
+      });
+    });
+    auto size = allocAnalysis.getAllocatedSize();
+    auto i64Type = IntegerType::get(&getContext(), 64);
+    module->setAttr("kapy.size", IntegerAttr::get(i64Type, size));
   }
 
 private:
   /// Set global memory layouts with known information.
   void setGlobalMemoryLayouts();
 
-  /// Set shared memory layouts with known information.
-  void setSharedMemoryLayouts();
+  /// Set alignment attribute for operations access global or shared memory.
+  void setAlignment(MemoryEffectOpInterface op, ModuleAlignAnalysis &analysis);
 
-  void processEffectOp(MemoryEffectOpInterface op,
-                       ModuleAlignAnalysis &analysis);
+  /// Set offset attribute of shared memory.
+  void setOffset(Operation *op, const AllocInfo &info);
 };
 
-void KapyAnalyzeAlignmentPass::setGlobalMemoryLayouts() {
+void KapyAnalyzePass::setGlobalMemoryLayouts() {
   auto module = getOperation();
   module.walk([](MkGlobalOp op) {
     SmallVector<int64_t, 2> strides;
-    for (auto stride : {op.getStrideX(), op.getStrideY()}) {
+    for (auto stride : {op.getStride0(), op.getStride1()}) {
       auto constantOp = stride.getDefiningOp<arith::ConstantOp>();
       if (!constantOp) {
         strides.push_back(ShapedType::kDynamic);
@@ -66,22 +75,8 @@ void KapyAnalyzeAlignmentPass::setGlobalMemoryLayouts() {
   });
 }
 
-void KapyAnalyzeAlignmentPass::setSharedMemoryLayouts() {
-  auto module = getOperation();
-  module.walk([](MkSharedOp op) {
-    auto strideX = op.getStrideX();
-    auto strideY = op.getStrideY();
-    auto dynamic = ShapedType::kDynamic;
-    auto *context = op.getContext();
-    auto layout =
-        SwizzlingLayoutAttr::get(context, strideX, strideY, dynamic, dynamic);
-    DenseSet<Value> seen;
-    propagateMemoryLayout(op.getResult(), layout, seen);
-  });
-}
-
-void KapyAnalyzeAlignmentPass::processEffectOp(MemoryEffectOpInterface op,
-                                               ModuleAlignAnalysis &analysis) {
+void KapyAnalyzePass::setAlignment(MemoryEffectOpInterface op,
+                                   ModuleAlignAnalysis &analysis) {
   SmallVector<SideEffects::EffectInstance<MemoryEffects::Effect>> effects;
   op.getEffects(effects);
   int64_t alignment = 0;
@@ -100,12 +95,29 @@ void KapyAnalyzeAlignmentPass::processEffectOp(MemoryEffectOpInterface op,
   }
   if (alignment != 0) {
     auto i64Type = IntegerType::get(&getContext(), 64);
-    op->setAttr(alignmentAttrName, IntegerAttr::get(i64Type, alignment));
+    op->setAttr("kapy.alignment", IntegerAttr::get(i64Type, alignment));
+  }
+}
+
+void KapyAnalyzePass::setOffset(Operation *op, const AllocInfo &info) {
+  auto id = info.getBufferId(op);
+  int64_t offset = -1;
+  if (id != AllocInfo::INVALID_ID) {
+    offset = info.getOffset(id);
+  } else if (op->getNumResults() == 1) {
+    auto result = op->getResult(0);
+    auto id = info.getBufferId(result);
+    if (id != AllocInfo::INVALID_ID)
+      offset = info.getOffset(id);
+  }
+  if (offset != -1) {
+    auto i64Type = IntegerType::get(&getContext(), 64);
+    op->setAttr("kapy.offset", IntegerAttr::get(i64Type, offset));
   }
 }
 
 } // namespace
 
-std::unique_ptr<Pass> kapy::createKapyAnalyzeAlignmentPass() {
-  return std::make_unique<KapyAnalyzeAlignmentPass>();
+std::unique_ptr<Pass> kapy::createKapyAnalyzePass() {
+  return std::make_unique<KapyAnalyzePass>();
 }

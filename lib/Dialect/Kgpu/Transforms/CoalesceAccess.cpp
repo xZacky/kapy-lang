@@ -1,10 +1,9 @@
-//===- Coalesce.cpp ---------------------------------------------*- C++ -*-===//
+//===- CoalesceAccess.cpp ---------------------------------------*- C++ -*-===//
 //
-// This file implements the KgpuCoalescePass.
+// This file implements the KgpuCoalesceAccessPass.
 //
 //===----------------------------------------------------------------------===//
 
-#include "kapy/Analysis/AnalysisUtils.h"
 #include "kapy/Dialect/Kapy/IR/Kapy.h"
 #include "kapy/Dialect/Kapy/Transforms/TransformUtils.h"
 #include "kapy/Dialect/Kgpu/IR/Kgpu.h"
@@ -16,15 +15,15 @@
 using namespace mlir;
 using namespace mlir::kapy;
 
-static int64_t getGlobalVecWidth(OpOperand *global) {
+static int64_t getGlobalSimdSize(OpOperand *global) {
   auto alignment = getAlignment(global->getOwner());
   auto globalType = cast<RankedTensorType>(global->get().getType());
   auto bitWidth = getIntOrFloatBitWidth(globalType);
-  auto vecWidth = std::min<int64_t>(alignment * 8 / bitWidth, 128 / bitWidth);
+  auto simdSize = std::min<int64_t>(alignment * 8 / bitWidth, 128 / bitWidth);
   auto numElems = globalType.getNumElements();
-  vecWidth = std::min<int64_t>(vecWidth, ceilDiv(numElems, warpSize));
-  vecWidth = std::max<int64_t>(vecWidth, 32 / bitWidth);
-  return vecWidth;
+  simdSize = std::min<int64_t>(simdSize, ceilDiv(numElems, warpSize));
+  simdSize = std::max<int64_t>(simdSize, 32 / bitWidth);
+  return simdSize;
 }
 
 static FragmentsLayoutAttr getGlobalAccessLayout(OpOperand *global) {
@@ -32,28 +31,28 @@ static FragmentsLayoutAttr getGlobalAccessLayout(OpOperand *global) {
   auto globalLayout = getLayout<Strided2dLayoutAttr>(globalType);
   // Initialize major axis as 2, that means no contiguous axis.
   unsigned j = 2;
-  if (globalLayout.getStrideX() == 1)
+  if (globalLayout.getStride0() == 1)
     j = 0;
-  if (globalLayout.getStrideY() == 1)
+  if (globalLayout.getStride1() == 1)
     j = 1;
   // Currently we assume that must have a contiguous axis.
   if (j == 2)
     llvm_unreachable("can not find a contiguous axis");
-  auto vecWidth = getGlobalVecWidth(global);
+  auto simdSize = getGlobalSimdSize(global);
   SmallVector<int64_t, 2> laneLoops{1, 1};
-  laneLoops[j] = vecWidth;
+  laneLoops[j] = simdSize;
   return getFragmentsLayout(laneLoops, globalType, j == 1);
 }
 
-static int64_t getSharedVecWidth(OpOperand *shared) {
+static int64_t getSharedSimdSize(OpOperand *shared) {
   auto alignment = getAlignment(shared->getOwner());
   auto sharedType = cast<RankedTensorType>(shared->get().getType());
   auto bitWidth = getIntOrFloatBitWidth(sharedType);
-  auto vecWidth = std::min<int64_t>(alignment * 8 / bitWidth, 128 / bitWidth);
+  auto simdSize = std::min<int64_t>(alignment * 8 / bitWidth, 128 / bitWidth);
   auto numElems = sharedType.getNumElements();
-  vecWidth = std::min<int64_t>(vecWidth, ceilDiv(numElems, warpSize));
-  vecWidth = std::max<int64_t>(vecWidth, 32 / bitWidth);
-  return vecWidth;
+  simdSize = std::min<int64_t>(simdSize, ceilDiv(numElems, warpSize));
+  simdSize = std::max<int64_t>(simdSize, 32 / bitWidth);
+  return simdSize;
 }
 
 static FragmentsLayoutAttr getSharedAccessLayout(OpOperand *shared) {
@@ -61,31 +60,32 @@ static FragmentsLayoutAttr getSharedAccessLayout(OpOperand *shared) {
   auto sharedLayout = getLayout<SwizzlingLayoutAttr>(sharedType);
   // Initialize major axis as 2, that means no contiguous axis.
   unsigned j = 2;
-  if (sharedLayout.getStrideX() == 1)
+  if (sharedLayout.getStride0() == 1)
     j = 0;
-  if (sharedLayout.getStrideY() == 1)
+  if (sharedLayout.getStride1() == 1)
     j = 1;
   // Currently we assume that must have a contiguous axis.
   if (j == 2)
     llvm_unreachable("can not find a contiguous axis");
-  auto vecWidth = getSharedVecWidth(shared);
+  auto simdSize = getSharedSimdSize(shared);
   SmallVector<int64_t, 2> laneLoops{1, 1};
-  laneLoops[j] = vecWidth;
+  laneLoops[j] = simdSize;
   return getFragmentsLayout(laneLoops, sharedType, j == 1);
 }
 
 namespace {
 
-#define GEN_PASS_DEF_KGPUCOALESCE
+#define GEN_PASS_DEF_KGPUCOALESCEACCESS
 #include "kapy/Dialect/Kgpu/Transforms/Passes.h.inc"
 
-class KgpuCoalescePass : public impl::KgpuCoalesceBase<KgpuCoalescePass> {
+class KgpuCoalesceAccessPass
+    : public impl::KgpuCoalesceAccessBase<KgpuCoalesceAccessPass> {
 public:
   virtual void runOnOperation() override {
     processGlobalAccessOps();
     processSharedAccessOps();
 
-    if (failed(checkCpAsyncGlobalToSharedOps()))
+    if (failed(checkMemoryAccessOps()))
       signalPassFailure();
 
     auto *context = &getContext();
@@ -104,15 +104,13 @@ private:
   /// Process shared access operations and update corresponding memory layouts.
   void processSharedAccessOps();
 
-  /// Check if CpAsyncGlobalToSharedOp's source layout and target layout are
-  /// compatible.
-  LogicalResult checkCpAsyncGlobalToSharedOps();
+  LogicalResult checkMemoryAccessOps();
 
   /// Coalesce the given memory access operation.
   void coalesceOp(Operation *op, FragmentsLayoutAttr layout);
 };
 
-void KgpuCoalescePass::processGlobalAccessOps() {
+void KgpuCoalesceAccessPass::processGlobalAccessOps() {
   auto module = getOperation();
   module.walk([&](Operation *op) {
     auto effectOp = dyn_cast<MemoryEffectOpInterface>(op);
@@ -131,7 +129,7 @@ void KgpuCoalescePass::processGlobalAccessOps() {
   });
 }
 
-void KgpuCoalescePass::processSharedAccessOps() {
+void KgpuCoalesceAccessPass::processSharedAccessOps() {
   auto module = getOperation();
   module.walk([](LdMatrixOp op) {
     auto *context = op.getContext();
@@ -169,7 +167,7 @@ void KgpuCoalescePass::processSharedAccessOps() {
   });
 }
 
-static LogicalResult checkImpl(CpAsyncGlobalToSharedOp op) {
+static LogicalResult checkContiguity(CpAsyncGlobalToSharedOp op) {
   auto sourceType = op.getSource().getType();
   auto targetType = op.getTarget().getType();
   auto sourceLayout = getLayout<Strided2dLayoutAttr>(sourceType);
@@ -180,17 +178,32 @@ static LogicalResult checkImpl(CpAsyncGlobalToSharedOp op) {
   return success();
 }
 
-LogicalResult KgpuCoalescePass::checkCpAsyncGlobalToSharedOps() {
+static LogicalResult checkAlignment(Operation *op) {
+  if (getAlignment(op) < 4)
+    return op->emitOpError(
+        "has memory access with alignment < 4, that is not supported");
+  return success();
+}
+
+LogicalResult KgpuCoalesceAccessPass::checkMemoryAccessOps() {
   bool noInvalid = true;
   auto module = getOperation();
-  module.walk([&](CpAsyncGlobalToSharedOp op) {
-    if (failed(checkImpl(op)))
-      noInvalid = false;
+  module.walk([&](Operation *op) {
+    if (auto cpAsyncOp = dyn_cast<CpAsyncGlobalToSharedOp>(op)) {
+      if (failed(checkContiguity(cpAsyncOp)))
+        noInvalid = false;
+    }
+    if (isGlobalMemoryRead(op) || isGlobalMemoryWrite(op) ||
+        isSharedMemoryRead(op) || isSharedMemoryWrite(op)) {
+      if (failed(checkAlignment(op)))
+        noInvalid = false;
+    }
   });
   return success(noInvalid);
 }
 
-void KgpuCoalescePass::coalesceOp(Operation *op, FragmentsLayoutAttr layout) {
+void KgpuCoalesceAccessPass::coalesceOp(Operation *op,
+                                        FragmentsLayoutAttr layout) {
   OpBuilder builder(op);
   auto *context = op->getContext();
   auto loc = op->getLoc();
@@ -230,6 +243,6 @@ void KgpuCoalescePass::coalesceOp(Operation *op, FragmentsLayoutAttr layout) {
 
 } // namespace
 
-std::unique_ptr<Pass> kapy::createKgpuCoalescePass() {
-  return std::make_unique<KgpuCoalescePass>();
+std::unique_ptr<Pass> kapy::createKgpuCoalesceAccessPass() {
+  return std::make_unique<KgpuCoalesceAccessPass>();
 }

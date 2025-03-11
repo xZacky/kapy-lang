@@ -36,13 +36,9 @@
 namespace mlir {
 namespace kapy {
 
-std::unique_ptr<Pass> createKgpuCoalescePass();
+std::unique_ptr<Pass> createKgpuCoalesceAccessPass();
 
 std::unique_ptr<Pass> createKgpuOptimizeLayoutPass();
-
-std::unique_ptr<Pass> createKgpuAllocSharedMemoryPass();
-
-std::unique_ptr<Pass> createKgpuInsertSyncBarrierPass();
 
 #define GEN_PASS_REGISTRATION
 #include "kapy/Dialect/Kgpu/Transforms/Passes.h.inc"

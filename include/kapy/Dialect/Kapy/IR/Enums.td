@@ -41,7 +41,7 @@ class Kapy_EnumAttr<
 
 def Kapy_PaddingOptionAttr : Kapy_EnumAttr<
   "PaddingOption",
-  "padding option for out of bound memory access",
+  "padding option for out of bound memory read",
   [
     I32EnumAttrCase<"PAD_ZERO", 0, "pad_zero">,
     I32EnumAttrCase<"PAD_NAN", 1, "pad_nan">
@@ -77,7 +77,7 @@ def Kapy_EvictPriorityAttr : Kapy_EnumAttr<
 
 def Kapy_AtomicRMWKindAttr : Kapy_EnumAttr<
   "AtomicRMWKind",
-  "kind of AtomicRMWOp",
+  "kind of atomic read-modify-write",
   [
     I32EnumAttrCase<"ADD", 1, "add">,
     I32EnumAttrCase<"MAX", 2, "max">,
@@ -85,32 +85,12 @@ def Kapy_AtomicRMWKindAttr : Kapy_EnumAttr<
   ]
 >;
 
-def Kapy_MemSemanticAttr : Kapy_EnumAttr<
-  "MemSemantic",
-  "memory synchronization semantic",
-  [
-    I32EnumAttrCase<"RELAXED", 1, "relaxed">,
-    I32EnumAttrCase<"ACQUIRE", 2, "acquire">,
-    I32EnumAttrCase<"RELEASE", 3, "release">,
-    I32EnumAttrCase<"ACQ_REL", 4, "acq_rel">
-  ]
->;
-
 def Kapy_RoundingModeAttr : Kapy_EnumAttr<
   "RoundingMode",
   "rounding mode for floating-point cast instructions",
   [
-    I32EnumAttrCase<"RTZ", 0, "rtz">,
-    I32EnumAttrCase<"RTNE", 1, "rtne">
-  ]
->;
-
-def Kapy_PropagateNanAttr : Kapy_EnumAttr<
-  "PropagateNan",
-  "whether propagate NaN for ClampFOp",
-  [
-    I32EnumAttrCase<"NONE", 0, "none">,
-    I32EnumAttrCase<"ALL", 1, "all">
+    I32EnumAttrCase<"RZ", 0, "rz">,
+    I32EnumAttrCase<"RN", 1, "rn">
   ]
 >;
 

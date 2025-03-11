@@ -1,4 +1,4 @@
-//===- Kgpu.h ---------------------------------------------------*- C++ -*-===//
+//===- Passes.td -------------------------------------------*- tablegen -*-===//
 //
 // Copyright 2018-2020 Philippe Tillet
 // Copyright 2020-2022 OpenAI
@@ -22,32 +22,26 @@
 // SOFTWARE.
 //
 //===----------------------------------------------------------------------===//
-//
+// 
 // This file is modified from the triton project.
 // https://github.com/triton-lang/triton
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef KAPY_DIALECT_KGPU_IR_KGPU_H
-#define KAPY_DIALECT_KGPU_IR_KGPU_H
+#ifndef KAPY_CONVERSION_KAPYTOLLVM_PASSES
+#define KAPY_CONVERSION_KAPYTOLLVM_PASSES
 
-#include "kapy/Dialect/Kapy/IR/Kapy.h"
+include "mlir/Pass/PassBase.td"
 
-#include "kapy/Dialect/Kgpu/IR/Dialect.h.inc"
+def ConvertKgpuToLLVM : Pass<"convert-kgpu-to-llvm", "ModuleOp"> {
+  let constructor = "kapy::createConvertKgpuToLLVMPass()";
 
-#define GET_ATTRDEF_CLASSES
-#include "kapy/Dialect/Kgpu/IR/Attrs.h.inc"
+  let dependentDialects = [
+    "kapy::KapyDialect",
+    "kapy::KgpuDialect",
+    "LLVM::LLVMDialect",
+    "NVVM::NVVMDialect"
+  ];
+}
 
-#define GET_OP_CLASSES
-#include "kapy/Dialect/Kgpu/IR/Ops.h.inc"
-
-namespace mlir {
-namespace kapy {
-
-/// Get a string to show how we distribute tensor elements to lanes.
-std::string getLayoutString(RankedTensorType tensorType);
-
-} // namespace kapy
-} // namespace mlir
-
-#endif // KAPY_DIALECT_KGPU_IR_KGPU_H
+#endif // KAPY_CONVERSION_KAPYTOLLVM_PASSES

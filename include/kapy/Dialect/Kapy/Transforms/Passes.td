@@ -39,8 +39,8 @@ def KapyCombine : Pass<"kapy-combine", "ModuleOp"> {
   let dependentDialects = ["kapy::KapyDialect"];
 }
 
-def KapyAnalyzeAlignment : Pass<"kapy-analyze-alignment", "ModuleOp"> {
-  let constructor = "kapy::createKapyAnalyzeAlignmentPass()";
+def KapyAnalyze : Pass<"kapy-analyze", "ModuleOp"> {
+  let constructor = "kapy::createKapyAnalyzePass()";
 
   let dependentDialects = ["kapy::KapyDialect"];
 }

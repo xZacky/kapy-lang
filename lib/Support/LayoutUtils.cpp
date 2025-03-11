@@ -26,8 +26,7 @@ ReduceOpHelper::ReduceOpHelper(RankedTensorType sourceType, unsigned axis) {
 int64_t ReduceOpHelper::getNumShfls() const {
   auto shape = sourceType.getShape();
   auto layout = getLayout<FragmentsLayoutAttr>(sourceType);
-  auto option = FragmentsLayoutAttr::MapOption::FROM_VALUES;
-  auto map = layout.getAffineMap(shape, option);
+  auto map = layout.getAffineMap(shape, 3);
   DenseSet<int64_t> laneIdSet;
   for (int64_t index = 0; index < shape[axis]; ++index) {
     int64_t laneId = 0;
@@ -62,22 +61,12 @@ ChangeOpHelper::ChangeOpHelper(RankedTensorType sourceType,
 int64_t ChangeOpHelper::getNumShfls() const {
   auto layout = getLayout<FragmentsLayoutAttr>(resultType);
   auto loopSize = product(layout.getLoopSpace(resultType.getShape()));
-  auto bitWidth = getIntOrFloatBitWidth(resultType);
   auto map = getShflIdxMap();
-  llvm::MapVector<int64_t, int64_t> laneIdToNumValues;
+  int64_t numShfls = 0;
   for (int64_t loopIv = 0; loopIv < loopSize; ++loopIv) {
     auto laneId = map.compose({0, loopIv})[0];
-    if (laneIdToNumValues.contains(laneId))
-      laneIdToNumValues[laneId] += 1;
-    else
-      laneIdToNumValues[laneId] = 1;
-  }
-  int64_t numShfls = 0;
-  for (auto [laneId, numValues] : laneIdToNumValues) {
-    if (laneId == 0)
-      continue;
-    // We can exchange 32 bits in each shuffle.
-    numShfls += ceilDiv<int64_t>(numValues * bitWidth, 32);
+    if (laneId != 0)
+      numShfls += 1;
   }
   return numShfls;
 }
@@ -86,11 +75,9 @@ AffineMap ChangeOpHelper::getShflIdxMap() const {
   auto shape = resultType.getShape();
   auto sourceLayout = getLayout<FragmentsLayoutAttr>(sourceType);
   auto resultLayout = getLayout<FragmentsLayoutAttr>(resultType);
-  auto sourceOption = FragmentsLayoutAttr::MapOption::FROM_VALUES;
-  auto resultOption = FragmentsLayoutAttr::MapOption::TO_VALUES;
-  auto sourceMap = sourceLayout.getAffineMap(shape, sourceOption);
-  auto resultMap = resultLayout.getAffineMap(shape, resultOption);
-  return sourceMap.compose(resultMap);
+  auto oldMap = sourceLayout.getAffineMap(shape, 3);
+  auto newMap = resultLayout.getAffineMap(shape, 2);
+  return oldMap.compose(newMap);
 }
 
 FragmentsLayoutAttr kapy::getFragmentsLayout(ArrayRef<int64_t> laneLoops,
@@ -114,12 +101,12 @@ FragmentsLayoutAttr kapy::getFragmentsLayout(RankedTensorType tensorType,
 std::array<FragmentsLayoutAttr, 2> kapy::getDefaultLayouts(LdMatrixOp op) {
   auto *context = op.getContext();
   auto bitWidth = getIntOrFloatBitWidth(op.getSource().getType());
-  auto vecWidth = 128 / bitWidth;
-  auto packWidth = 32 / bitWidth;
+  auto simdSize = 128 / bitWidth;
+  auto packSize = 32 / bitWidth;
   auto loaderLayout =
-      FragmentsLayoutAttr::get(context, {16, 2}, {1, vecWidth}, 1, 0);
+      FragmentsLayoutAttr::get(context, {16, 2}, {1, simdSize}, 1, 0);
   auto resultLayout =
-      FragmentsLayoutAttr::get(context, {8, 4}, {1, packWidth}, 0, 1);
+      FragmentsLayoutAttr::get(context, {8, 4}, {1, packSize}, 0, 1);
   return {loaderLayout, resultLayout};
 }
 
@@ -170,19 +157,18 @@ SetVector<FragmentsLayoutAttr> kapy::getCandidateLayouts(Operation *op) {
 static bool isNoBankConflict(RankedTensorType sharedType,
                              RankedTensorType tensorType, int64_t alignment) {
   auto sharedLayout = getLayout<SwizzlingLayoutAttr>(sharedType);
-  auto strideX = sharedLayout.getStrideX();
-  auto strideY = sharedLayout.getStrideY();
+  auto stride0 = sharedLayout.getStride0();
+  auto stride1 = sharedLayout.getStride1();
   auto bankParam = sharedLayout.getBankParam();
   auto lineParam = sharedLayout.getLineParam();
 
   auto shape = tensorType.getShape();
   auto tensorLayout = getLayout<FragmentsLayoutAttr>(tensorType);
-  auto option = FragmentsLayoutAttr::MapOption::TO_TENSOR;
-  auto map = tensorLayout.getAffineMap(shape, option);
+  auto map = tensorLayout.getAffineMap(shape, 1);
 
   auto bitWidth = getIntOrFloatBitWidth(tensorType);
-  auto vecWidth = tensorLayout.getLaneLoops()[strideX == 1 ? 0 : 1];
-  vecWidth = std::min(vecWidth, bankParam * 32 / bitWidth);
+  auto simdSize = tensorLayout.getLaneLoops()[stride0 == 1 ? 0 : 1];
+  simdSize = std::min(simdSize, bankParam * 32 / bitWidth);
 
   int64_t ivStep = 1;
   if (sharedLayout.isRowMajor() && tensorLayout.isColMajor())
@@ -192,13 +178,13 @@ static bool isNoBankConflict(RankedTensorType sharedType,
 
   llvm::MapVector<int64_t, DenseSet<int64_t>> bankIdToLineIds;
   for (int64_t laneId = 0; laneId < warpSize / bankParam; ++laneId) {
-    for (int64_t loopIv = 0; loopIv < vecWidth * ivStep; loopIv += ivStep) {
+    for (int64_t loopIv = 0; loopIv < simdSize * ivStep; loopIv += ivStep) {
       auto bitOffset = alignment % 128 * 8;
       auto indices = map.compose({laneId, loopIv});
       if (sharedLayout.isRowMajor())
-        bitOffset += (indices[0] * strideY + indices[1]) * bitWidth;
+        bitOffset += (indices[0] * stride1 + indices[1]) * bitWidth;
       else
-        bitOffset += (indices[0] + indices[1] * strideX) * bitWidth;
+        bitOffset += (indices[0] + indices[1] * stride0) * bitWidth;
       auto bankId = bitOffset % 1024 / 32;
       auto lineId = bitOffset / 1024;
       bankId = (bankId / bankParam ^ lineId % lineParam) * bankParam +

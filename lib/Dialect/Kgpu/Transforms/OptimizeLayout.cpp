@@ -233,6 +233,14 @@ static bool alwaysLessThan(ArrayRef<int64_t> lhsArray,
   return true;
 }
 
+static bool requiresSameOperandsLayout(Operation *op) {
+  return op->hasTrait<OpTrait::SameOperandsLayout>() ||
+         op->hasTrait<OpTrait::SameOperandsAndResultLayout>() ||
+         op->hasTrait<OpTrait::SameTypeOperands>() ||
+         op->hasTrait<OpTrait::SameOperandsAndResultType>() ||
+         op->hasTrait<OpTrait::Elementwise>();
+}
+
 void LayoutOptimization::resolve() {
   // Now we regard these operations as anchors too:
   // 1. LdMatrixOp, LdSharedOp, ConstantOp, SplatOp, it is start point.
@@ -267,12 +275,14 @@ void LayoutOptimization::resolve() {
         anchorOperands.push_back(&operand);
     }
     // Operands of operation requires multiple same layout operands.
-    if (op->getNumOperands() > 1 &&
-        (op->hasTrait<OpTrait::SameOperandsLayout>() ||
-         op->hasTrait<OpTrait::SameOperandsAndResultLayout>()))
-      for (auto &operand : op->getOpOperands())
-        if (valueToLayouts.contains(operand.get()))
+    if (op->getNumOperands() > 1 && requiresSameOperandsLayout(op)) {
+      for (auto &operand : op->getOpOperands()) {
+        if (valueToLayouts.contains(operand.get())) {
           anchorOperands.push_back(&operand);
+          break;
+        }
+      }
+    }
     // LdMatrixOp, LdSharedOp, ConstantOp and SplatOp.
     if (isa<LdMatrixOp, LdSharedOp, arith::ConstantOp, SplatOp>(op)) {
       auto result = op->getResult(0);
@@ -290,34 +300,34 @@ void LayoutOptimization::resolve() {
       if (isa<LdMatrixOp>(op)) {
         auto result = op->getResult(0);
         auto resultType = cast<RankedTensorType>(result.getType());
-        auto nLayout = getLayout<FragmentsLayoutAttr>(resultType);
-        SmallVector<int64_t> nCosts;
+        auto lhsLayout = getLayout<FragmentsLayoutAttr>(resultType);
+        SmallVector<int64_t> lhsCosts;
         for (auto newLayout : valueToLayouts[result]) {
-          auto oldType = cloneWithLayout(resultType, nLayout);
+          auto oldType = cloneWithLayout(resultType, lhsLayout);
           auto newType = cloneWithLayout(resultType, newLayout);
           ChangeOpHelper helper(oldType, newType);
-          nCosts.push_back(helper.getNumShfls());
+          lhsCosts.push_back(helper.getNumShfls());
         }
-        auto tLayout = nLayout.transpose();
-        SmallVector<int64_t> tCosts;
+        auto rhsLayout = lhsLayout.transpose();
+        SmallVector<int64_t> rhsCosts;
         for (auto newLayout : valueToLayouts[result]) {
-          auto oldType = cloneWithLayout(resultType, tLayout);
+          auto oldType = cloneWithLayout(resultType, rhsLayout);
           auto newType = cloneWithLayout(resultType, newLayout);
           ChangeOpHelper helper(oldType, newType);
-          tCosts.push_back(helper.getNumShfls());
+          rhsCosts.push_back(helper.getNumShfls());
         }
-        if (alwaysLessThan(nCosts, tCosts)) {
-          resultToLayouts[result].insert(nLayout);
+        if (alwaysLessThan(lhsCosts, rhsCosts)) {
+          resultToLayouts[result].insert(lhsLayout);
           combDomain[anchorId] = 1;
           continue;
         }
-        if (alwaysLessThan(tCosts, nCosts)) {
-          resultToLayouts[result].insert(tLayout);
+        if (alwaysLessThan(rhsCosts, lhsCosts)) {
+          resultToLayouts[result].insert(rhsLayout);
           combDomain[anchorId] = 1;
           continue;
         }
-        resultToLayouts[result].insert(nLayout);
-        resultToLayouts[result].insert(tLayout);
+        resultToLayouts[result].insert(lhsLayout);
+        resultToLayouts[result].insert(rhsLayout);
         combDomain[anchorId] = 2;
         continue;
       }
@@ -436,6 +446,14 @@ void LayoutOptimization::resolve() {
           auto elseOp = ifOp.elseYield();
           auto &yielded = elseOp->getOpOperand(index);
           curState.operandToLayout[&yielded] = layout;
+          continue;
+        }
+        if (user->getNumOperands() > 1 && requiresSameOperandsLayout(user)) {
+          for (auto &use : user->getOpOperands()) {
+            if (operand == &use)
+              continue;
+            curState.operandToLayout[&use] = layout;
+          }
           continue;
         }
       }
@@ -678,7 +696,8 @@ intersect(const SetVector<SwizzlingLayoutAttr> &lhsSet,
 
 LogicalResult LayoutOptimization::resolve(ResolveState &curState) {
   funcOp.walk([&](Operation *op) {
-    if (op->getNumOperands() == 1 && op->getNumResults() == 1) {
+    if ((willPassLayout(op) || isa<TransposeOp, ChangeOp>(op))) {
+      assert(op->getNumOperands() >= 1 && op->getNumResults() == 1);
       auto &operand = op->getOpOperand(0);
       auto result = op->getResult(0);
       if (curState.valueToLayout.contains(result))

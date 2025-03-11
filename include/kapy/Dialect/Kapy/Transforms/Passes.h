@@ -38,7 +38,7 @@ namespace kapy {
 
 std::unique_ptr<Pass> createKapyCombinePass();
 
-std::unique_ptr<Pass> createKapyAnalyzeAlignmentPass();
+std::unique_ptr<Pass> createKapyAnalyzePass();
 
 #define GEN_PASS_REGISTRATION
 #include "kapy/Dialect/Kapy/Transforms/Passes.h.inc"

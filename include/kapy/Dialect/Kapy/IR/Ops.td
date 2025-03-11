@@ -76,8 +76,8 @@ def Kapy_ClampFOp : Kapy_Op<
 > {
   let description = [{
     Clamps `$source` within the range `[$low, $high]`.
-    If `$propagate_nan` is set to `all`, then all the NaN in `$source` will
-    propagate to `$result`.
+    If `$propagate_nan` is true, then all the NaN in `$source` will propagate to
+    `$result`.
     If either `$low` or `$high` is NaN, the `$result` is undefined.
   }];
 
@@ -85,7 +85,7 @@ def Kapy_ClampFOp : Kapy_Op<
     Kapy_FloatLike:$source,
     Kapy_FloatLike:$low,
     Kapy_FloatLike:$high,
-    Kapy_PropagateNanAttr:$propagate_nan
+    BoolAttr:$propagate_nan
   );
   let results = (outs Kapy_FloatLike:$result);
 
@@ -94,13 +94,13 @@ def Kapy_ClampFOp : Kapy_Op<
 
 def Kapy_MkGlobalOp : Kapy_Op<"mk_global", [Pure, ResultInGlobalMemory]> {
   let arguments = (ins
-    I64:$address, I32:$size_x, I32:$size_y, I32:$stride_x, I32:$stride_y
+    I64:$address, I32:$size0, I32:$size1, I32:$stride0, I32:$stride1
   );
   let results = (outs Kapy_Tensor:$result);
 
   let assemblyFormat = [{
-    $address `,` `shape` `=` `[` $size_x `,` $size_y `]` `,` `strides` `=` `[`
-    $stride_x `,` $stride_y `]` attr-dict `:` type($result)
+    $address `,` `[` $size0 `,` $size1 `]` `,` `[` $stride0 `,` $stride1 `]`
+    attr-dict `:` type($result)
   }];
 }
 
@@ -113,12 +113,17 @@ def Kapy_SvGlobalOp : Kapy_Op<
   }];
 
   let arguments = (ins
-    Kapy_Tensor:$source, I32:$start_x, I32:$end_x, I32:$start_y, I32:$end_y
+    Kapy_Tensor:$source,
+    I32:$start0,
+    I32:$end0,
+    I32:$start1,
+    I32:$end1,
+    Kapy_DefaultValuedPaddingOptionAttr:$padding_option
   );
   let results = (outs Kapy_Tensor:$result);
 
   let assemblyFormat = [{
-    $source `[` $start_x `:` $end_x `,` $start_y `:` $end_y `]` attr-dict `:`
+    $source `[` $start0 `:` $end0 `,` $start1 `:` $end1 `]` attr-dict `:`
     type($source) `->` type($result)
   }];
 
@@ -134,14 +139,8 @@ def Kapy_LdGlobalOp : Kapy_Op<
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
   ]
 > {
-  let description = [{
-    For each element, loads `$result` from `$source` if it is not out of bound,
-    otherwise pads `$result` by `$padding_option`.
-  }];
-
   let arguments = (ins
     Kapy_Tensor:$source,
-    Kapy_DefaultValuedPaddingOptionAttr:$padding_option,
     Kapy_DefaultValuedCacheModifierAttr:$cache_modifier,
     Kapy_DefaultValuedEvictPriorityAttr:$evict_priority,
     DefaultValuedAttr<BoolAttr, "false">:$if_volatile
@@ -164,11 +163,6 @@ def Kapy_StGlobalOp : Kapy_Op<
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]
 > {
-  let description = [{
-    For each element, stores `$source` to `$target` if it is not out of bound,
-    otherwise do nothing.
-  }];
-
   let arguments = (ins
     Kapy_Tensor:$source,
     Kapy_Tensor:$target,
@@ -181,48 +175,13 @@ def Kapy_StGlobalOp : Kapy_Op<
   }];
 }
 
-def Kapy_AtomicRMWOp : Kapy_Op<
-  "atomic_rmw",
-  [
-    SameOperandsAndResultShape,
-    SameOperandsAndResultElementType,
-    SourceInGlobalMemory,
-    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
-    TypesMatchWith<"from value type infer result type",
-                   "value", "result", "$_self">
-  ]
-> {
-  let description = [{
-    For each element, loads `$result` from `$source`, computes with `$value` and
-    stores the computation result back if it is not out of bound, otherwise pads
-    `$result` with zero.
-  }];
-
-  let arguments = (ins
-    Kapy_AtomicRMWKindAttr:$kind,
-    Kapy_Tensor:$source,
-    Kapy_Tensor:$value,
-    Kapy_MemSemanticAttr:$mem_semantic
-  );
-  let results = (outs Kapy_Tensor:$result);
-
-  let assemblyFormat = [{
-    $kind $source `,` $value attr-dict `:` type($source) `->` type($value)
-  }];
-
-  let hasVerifier = 1;
-}
-
 def Kapy_MkSharedOp : Kapy_Op<
   "mk_shared",
   [ResultInSharedMemory, DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]
 > {
-  let arguments = (ins I32Attr:$stride_x, I32Attr:$stride_y);
   let results = (outs Kapy_Tensor:$result);
 
-  let assemblyFormat = [{
-    `strides` `=` `[` $stride_x `,` $stride_y `]` attr-dict `:` type($result)
-  }];
+  let assemblyFormat = "attr-dict `:` type($result)";
 }
 
 def Kapy_SvSharedOp : Kapy_Op<
@@ -234,12 +193,17 @@ def Kapy_SvSharedOp : Kapy_Op<
   }];
 
   let arguments = (ins
-    Kapy_Tensor:$source, I32:$start_x, I32:$end_x, I32:$start_y, I32:$end_y
+    Kapy_Tensor:$source,
+    I32:$start0,
+    I32:$end0,
+    I32:$start1,
+    I32:$end1,
+    Kapy_DefaultValuedPaddingOptionAttr:$padding_option
   );
   let results = (outs Kapy_Tensor:$result);
 
   let assemblyFormat = [{
-    $source `[` $start_x `:` $end_x `,` $start_y `:` $end_y `]` attr-dict `:`
+    $source `[` $start0 `:` $end0 `,` $start1 `:` $end1 `]` attr-dict `:`
     type($source) `->` type($result)
   }];
 
@@ -255,11 +219,6 @@ def Kapy_LdSharedOp : Kapy_Op<
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]
 > {
-  let description = [{
-    For each element, loads `$result` from `$source` if it is not out of bound,
-    otherwise pads `$result` with zero.
-  }];
-
   let arguments = (ins Kapy_Tensor:$source);
   let results = (outs Kapy_Tensor:$result);
 
@@ -275,11 +234,6 @@ def Kapy_StSharedOp : Kapy_Op<
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]
 > {
-  let description = [{
-    For each element, stores `$source` to `$target` if it is not out of bound,
-    otherwise do nothing.
-  }];
-
   let arguments = (ins Kapy_Tensor:$source, Kapy_Tensor:$target);
   
   let assemblyFormat = [{
@@ -297,9 +251,6 @@ def Kapy_LdMatrixOp : Kapy_Op<
   ]
 > {
   let description = [{
-    For each element, loads `$result` from `$source` if it is not out of bound,
-    otherwise pads `$result` with `$zero`.
-
     The `$loader` is a virtual operand, it is used to indicate the layout of
     pointers when lowering this operation.
   }];
@@ -326,9 +277,6 @@ def Kapy_CpAsyncGlobalToSharedOp : Kapy_Op<
   ]
 > {
   let description = [{
-    For each elements, copies from `$source` to `$result` if it is not out of
-    bound, otherwise pads `$result` with zero.
-
     The `$loader` is a virtual operand, it is used to indicate the layout of
     pointers when lowering this operation.
   }];
@@ -337,18 +285,15 @@ def Kapy_CpAsyncGlobalToSharedOp : Kapy_Op<
     Kapy_Tensor:$source,
     Kapy_Tensor:$target,
     Kapy_Tensor:$loader,
-    Kapy_DefaultValuedCacheModifierAttr:$cache_modifier,
-    Kapy_DefaultValuedEvictPriorityAttr:$evict_priority
+    Kapy_DefaultValuedCacheModifierAttr:$cache_modifier
   );
 
   let assemblyFormat = [{
     $source `,` $target `,` $loader attr-dict `:` type($source) `,`
     type($target) `,` type($loader)
   }];
-}
 
-def Kapy_CpAsyncCommitGroupOp : Kapy_Op<"cp_async_commit_group"> {
-  let assemblyFormat = "attr-dict";
+  let hasVerifier = 1;
 }
 
 def Kapy_CpAsyncWaitGroupOp : Kapy_Op<"cp_async_wait_group"> {
@@ -546,32 +491,36 @@ def Kapy_CallOp : Kapy_Op<
     OpBuilder<
       (ins
         "SymbolRefAttr":$callee,
-        "TypeRange":$types,
+        "TypeRange":$resultTypes,
         CArg<"ValueRange", "{}">:$operands
       ),
       [{
         $_state.addOperands(operands);
         $_state.addAttribute("callee", callee);
-        $_state.addTypes(types);
+        $_state.addTypes(resultTypes);
       }]
     >,
     OpBuilder<
       (ins
         "StringAttr":$callee,
-        "TypeRange":$types,
+        "TypeRange":$resultTypes,
         CArg<"ValueRange", "{}">:$operands
       ),
-      "build($_builder, $_state, SymbolRefAttr::get(callee), types, operands);"
+      [{
+        build($_builder, $_state, SymbolRefAttr::get(callee), resultTypes,
+              operands);
+      }]
     >,
     OpBuilder<
       (ins
         "StringRef":$callee,
-        "TypeRange":$types,
+        "TypeRange":$resultTypes,
         CArg<"ValueRange", "{}">:$operands
       ),
       [{
         build($_builder, $_state,
-              StringAttr::get($_builder.getContext(), callee), types, operands);
+              StringAttr::get($_builder.getContext(), callee), resultTypes,
+              operands);
       }]
     >
   ];
@@ -630,9 +579,9 @@ def Kapy_FuncOp : Kapy_Op<
   let builders = [
     OpBuilder<
       (ins
-        "StringRef":$name,
+        "StringRef":$funcName,
         "FunctionType":$funcType,
-        CArg<"bool", "true">:$inlineable,
+        CArg<"ArrayRef<NamedAttribute>", "{}">:$attrs,
         CArg<"ArrayRef<DictionaryAttr>", "{}">:$argAttrs
       )
     >

@@ -1,6 +1,6 @@
 //===- Kgpu.cpp -------------------------------------------------*- C++ -*-===//
 //
-// This file implements the classes and functions in the KgpuDialect.
+// This file implements the classes and functions in the kgpu dialect.
 //
 //===----------------------------------------------------------------------===//
 
@@ -33,28 +33,28 @@ public:
     auto loaderLayout = getLayout<FragmentsLayoutAttr>(loaderType);
     auto resultLayout = getLayout<FragmentsLayoutAttr>(resultType);
     auto bitWidth = getIntOrFloatBitWidth(resultType);
-    auto vecWidth = 128 / bitWidth;
-    auto packWidth = 32 / bitWidth;
+    auto simdSize = 128 / bitWidth;
+    auto packSize = 32 / bitWidth;
     if (loaderLayout.isColMajor()) {
       if (loaderLayout.getLaneArray() != SmallVector<int64_t, 2>{16, 2})
         return op->emitOpError("loader has incompatible layout");
-      if (loaderLayout.getLaneLoops() != SmallVector<int64_t, 2>{1, vecWidth})
+      if (loaderLayout.getLaneLoops() != SmallVector<int64_t, 2>{1, simdSize})
         return op->emitOpError("loader has incompatible layout");
     } else {
       if (loaderLayout.getLaneArray() != SmallVector<int64_t, 2>{2, 16})
         return op->emitOpError("loader has incompatible layout");
-      if (loaderLayout.getLaneLoops() != SmallVector<int64_t, 2>{vecWidth, 1})
+      if (loaderLayout.getLaneLoops() != SmallVector<int64_t, 2>{simdSize, 1})
         return op->emitOpError("loader has incompatible layout");
     }
     if (resultLayout.isRowMajor()) {
       if (resultLayout.getLaneArray() != SmallVector<int64_t, 2>{8, 4})
         return op->emitOpError("result has incompatible layout");
-      if (resultLayout.getLaneLoops() != SmallVector<int64_t, 2>{1, packWidth})
+      if (resultLayout.getLaneLoops() != SmallVector<int64_t, 2>{1, packSize})
         return op->emitOpError("result has incompatible layout");
     } else {
       if (resultLayout.getLaneArray() != SmallVector<int64_t, 2>{4, 8})
         return op->emitOpError("result has incompatible layout");
-      if (resultLayout.getLaneLoops() != SmallVector<int64_t, 2>{packWidth, 1})
+      if (resultLayout.getLaneLoops() != SmallVector<int64_t, 2>{packSize, 1})
         return op->emitOpError("result has incompatible layout");
     }
     return success();
@@ -184,35 +184,37 @@ FragmentsLayoutAttr::getLoopSpace(ArrayRef<int64_t> shape) const {
 }
 
 AffineMap FragmentsLayoutAttr::getAffineMap(ArrayRef<int64_t> shape,
-                                            MapOption option) const {
+                                            unsigned option) const {
+  assert(option == 1 || option == 2 || option == 3);
+
   auto laneArray = getLaneArray();
   auto laneLoops = getLaneLoops();
   auto loopSpace = getLoopSpace(shape);
   auto thisShape = llvm::to_vector<2>(shape);
 
-  if (option == MapOption::FROM_VALUES) {
-    auto indexX = getAffineDimExpr(0, getContext());
-    auto indexY = getAffineDimExpr(1, getContext());
-    std::array<int64_t, 3> idSplitX{/*any*/ 1, laneArray[0], laneLoops[0]};
-    std::array<int64_t, 3> idSplitY{/*any*/ 1, laneArray[1], laneLoops[1]};
-    auto idCompsX = delinearize(indexX, idSplitX);
-    auto idCompsY = delinearize(indexY, idSplitY);
+  if (option == 3) {
+    auto index0 = getAffineDimExpr(0, getContext());
+    auto index1 = getAffineDimExpr(1, getContext());
+    std::array<int64_t, 3> idSplit0{/*any*/ 1, laneArray[0], laneLoops[0]};
+    std::array<int64_t, 3> idSplit1{/*any*/ 1, laneArray[1], laneLoops[1]};
+    auto idComps0 = delinearize(index0, idSplit0);
+    auto idComps1 = delinearize(index1, idSplit1);
 
-    auto laneIdX = idCompsX[1];
-    auto laneIdY = idCompsY[1];
+    auto laneId0 = idComps0[1];
+    auto laneId1 = idComps1[1];
     AffineExpr laneId;
     if (isRowMajor())
-      laneId = laneIdX * laneArray[1] + laneIdY;
+      laneId = laneId0 * laneArray[1] + laneId1;
     else
-      laneId = laneIdX + laneIdY * laneArray[0];
+      laneId = laneId0 + laneId1 * laneArray[0];
 
-    auto loopIvX = idCompsX[0] * laneLoops[0] + idCompsX[2];
-    auto loopIvY = idCompsY[0] * laneLoops[1] + idCompsY[2];
+    auto loopIv0 = idComps0[0] * laneLoops[0] + idComps0[2];
+    auto loopIv1 = idComps1[0] * laneLoops[1] + idComps1[2];
     AffineExpr loopIv;
     if (isRowMajor())
-      loopIv = loopIvX * loopSpace[1] + loopIvY;
+      loopIv = loopIv0 * loopSpace[1] + loopIv1;
     else
-      loopIv = loopIvX + loopIvY * loopSpace[0];
+      loopIv = loopIv0 + loopIv1 * loopSpace[0];
 
     return AffineMap::get(2, 0, {laneId, loopIv}, getContext());
   }
@@ -227,7 +229,6 @@ AffineMap FragmentsLayoutAttr::getAffineMap(ArrayRef<int64_t> shape,
   auto loopIv = getAffineDimExpr(1, getContext());
   auto laneIds = delinearize(laneId, laneArray);
   auto loopIvs = delinearize(loopIv, loopSpace);
-
   SmallVector<AffineExpr, 2> indices(2);
   for (unsigned i = 0; i < 2; ++i) {
     std::array<int64_t, 2> loopSplit{/*any*/ 1, laneLoops[i]};
@@ -239,7 +240,7 @@ AffineMap FragmentsLayoutAttr::getAffineMap(ArrayRef<int64_t> shape,
 
     indices[i] = ivComps[0] * coeffs[0] + laneIds[i] * coeffs[1] + ivComps[1];
 
-    if (option == MapOption::TO_TENSOR)
+    if (option == 1)
       if (laneArray[i] * laneLoops[i] > thisShape[i])
         indices[i] = indices[i] % thisShape[i];
   }
@@ -289,18 +290,6 @@ LogicalResult ChangeOp::canonicalize(ChangeOp op, PatternRewriter &rewriter) {
   return failure();
 }
 
-int64_t kapy::getSharedMemorySize(ModuleOp module) {
-  if (!module->hasAttr(sizeAttrName))
-    llvm_unreachable("can not get named attribute");
-  return cast<IntegerAttr>(module->getAttr(sizeAttrName)).getInt();
-}
-
-int64_t kapy::getSharedMemoryOffset(MkSharedOp op) {
-  if (!op->hasAttr(offsetAttrName))
-    llvm_unreachable("can not get named attribute");
-  return cast<IntegerAttr>(op->getAttr(offsetAttrName)).getInt();
-}
-
 static unsigned getIdWidth(int64_t id) {
   assert(id < 10000);
   if (id >= 1000)
@@ -336,8 +325,7 @@ std::string kapy::getLayoutString(RankedTensorType tensorType) {
   std::vector<std::vector<std::array<int64_t, 2>>> indexToIdPairs(numElems);
   auto layout = getLayout<FragmentsLayoutAttr>(tensorType);
   auto shape = tensorType.getShape();
-  auto option = FragmentsLayoutAttr::MapOption::TO_TENSOR;
-  auto map = layout.getAffineMap(shape, option);
+  auto map = layout.getAffineMap(shape, 1);
   auto loopSize = product(layout.getLoopSpace(shape));
   for (int64_t laneId = 0; laneId < warpSize; ++laneId) {
     for (int64_t loopIv = 0; loopIv < loopSize; ++loopIv) {
