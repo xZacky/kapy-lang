@@ -35,16 +35,14 @@
 using namespace mlir;
 using namespace mlir::kapy;
 
-PTXBuilder::Operand *
-PTXBuilder::newOperand(Value value, StringRef constraint,
-                       std::function<std::string(unsigned)> formatter) {
+PTXBuilder::Operand *PTXBuilder::newOperand(Value value, StringRef constraint) {
   operands.emplace_back(std::make_unique<Operand>(value, constraint));
   auto *operand = operands.back().get();
-  operand->formatter = formatter;
+  operand->index = numOperands++;
   return operand;
 }
 
-void PTXBuilder::initOperand(Operand *operand) {
+void PTXBuilder::initOperand(Operand *operand, int64_t value) {
   unsigned bitWidth = 0;
   if (operand->constraint[1] == 'c' || operand->constraint[1] == 'h')
     bitWidth = 16;
@@ -54,19 +52,19 @@ void PTXBuilder::initOperand(Operand *operand) {
     bitWidth = 64;
   else
     llvm_unreachable("unsupported constraint");
-  auto *zero = newConstantOperand(0);
-  auto &init = create("mov")->o("u" + std::to_string(bitWidth));
-  init(operand, zero);
+  auto &mov = create("mov")->o("u" + std::to_string(bitWidth));
+  mov(operand, newConstantOperand(value));
 }
 
-PTXBuilder::Operand *PTXBuilder::newOperand(StringRef constraint, bool init) {
+PTXBuilder::Operand *PTXBuilder::newOperand(StringRef constraint,
+                                            std::optional<int64_t> initValue) {
   // Constraint should be something like "=r".
   assert(constraint.size() == 2 && constraint[0] == '=');
   auto *operand = newOperand();
   operand->index = numOperands++;
   operand->constraint = constraint;
-  if (init)
-    initOperand(operand);
+  if (initValue.has_value())
+    initOperand(operand, initValue.value());
   return operand;
 }
 
@@ -113,14 +111,14 @@ std::string PTXBuilder::getConstraints() const {
   return join(constraints, ",");
 }
 
-Value PTXBuilder::launch(RewriterBase &rewriter, Location loc, Type resultType,
+Value PTXBuilder::launch(OpBuilder &rewriter, Location loc, Type resultType,
                          bool hasSideEffect, bool isAlignStack,
                          ArrayRef<Attribute> operandAttrs) const {
   auto *context = rewriter.getContext();
   auto inlineAsmOp = rewriter.create<LLVM::InlineAsmOp>(
-      loc, resultType, getMLIRValues(), dump(), getConstraints(), hasSideEffect,
-      isAlignStack,
-      LLVM::AsmDialectAttr::get(context, LLVM::AsmDialect::AD_ATT),
+      loc, resultType, getMLIRValues(), dump(), getConstraints(),   //
+      hasSideEffect, isAlignStack,                                  //
+      LLVM::AsmDialectAttr::get(context, LLVM::AsmDialect::AD_ATT), //
       ArrayAttr::get(context, operandAttrs));
   return inlineAsmOp.getRes();
 }
@@ -175,7 +173,7 @@ PTXInstructionCommon::operator()(ArrayRef<Operand *> operands,
 }
 
 std::string PTXInstructionExecution::dump() const {
-  auto instruction = join(this->instruction->instructionParts, ".");
+  auto instruction = join(this->instruction->keywords, ".");
   if (onlyAttachMLIRValues)
     return instruction;
 
@@ -183,10 +181,8 @@ std::string PTXInstructionExecution::dump() const {
   llvm::raw_string_ostream os(string);
 
   if (predOperand) {
-    if (!predOperand->formatter)
-      os << "@" << predOperand->dump() << " ";
-    else
-      os << predOperand->formatter(predOperand->index) << " ";
+    assert(predOperand->formatter);
+    os << predOperand->formatter(predOperand->index) << " ";
   }
 
   SmallVector<std::string, 4> operands;
@@ -201,12 +197,11 @@ std::string PTXInstructionExecution::dump() const {
 SmallVector<PTXBuilder::Operand *>
 PTXInstructionExecution::getOperands() const {
   SmallVector<Operand *> operands;
-  for (auto *operand : this->operands) {
+  for (auto *operand : this->operands)
     if (operand->isList())
       operands.append(operand->list.begin(), operand->list.end());
     else
       operands.push_back(operand);
-  }
   return operands;
 }
 
@@ -220,9 +215,9 @@ PTXInstruction &PTXInstruction::shared() {
   return *this;
 }
 
-PTXInstruction &PTXInstruction::v(unsigned vecWidth, bool predicate) {
-  if (vecWidth > 1)
-    o("v" + std::to_string(vecWidth), predicate);
+PTXInstruction &PTXInstruction::v(unsigned vectorSize, bool predicate) {
+  if (vectorSize > 1)
+    o("v" + std::to_string(vectorSize), predicate);
   return *this;
 }
 

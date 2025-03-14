@@ -31,7 +31,7 @@
 #ifndef KAPY_CONVERSION_KGPUTOLLVM_PTXBUILDER_H
 #define KAPY_CONVERSION_KGPUTOLLVM_PTXBUILDER_H
 
-#include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/Builders.h"
 #include "mlir/IR/Value.h"
 
 namespace mlir {
@@ -93,7 +93,7 @@ public:
   struct Operand {
     Value value;
     std::string constraint;
-    unsigned index;
+    unsigned index = 0;
     SmallVector<Operand *> list;
     std::function<std::string(unsigned)> formatter;
 
@@ -126,38 +126,16 @@ public:
   /// Create a list of operands.
   Operand *newListOperand() { return newOperand(); }
 
-  Operand *newListOperand(ArrayRef<std::pair<Value, std::string>> items) {
-    auto *list = newOperand();
-    for (auto &item : items)
-      list->listPushBack(newOperand(item.first, item.second));
-    return list;
-  }
-
-  Operand *newListOperand(unsigned numOperands, Value value,
-                          const std::string &constraint) {
-    auto *list = newOperand();
-    for (unsigned i = 0; i < numOperands; ++i)
-      list->listPushBack(newOperand(value, constraint));
-    return list;
-  }
-
-  Operand *newListOperand(unsigned numOperands, const std::string &constraint) {
-    auto *list = newOperand();
-    for (unsigned i = 0; i < numOperands; ++i)
-      list->listPushBack(newOperand(constraint));
-    return list;
-  }
-
   /// Create a new operand. It will not add to operand list.
-  Operand *newOperand(Value value, StringRef constraint,
-                      std::function<std::string(unsigned)> formatter = nullptr);
+  Operand *newOperand(Value value, StringRef constraint);
 
   /// Create a new operand which is written to, that is, the constraint starts
   /// with "=", e.g. "=r".
   /// If the operand will be used in predicated execution, users may want to
   /// initialize it before use. Otherwise if the register is undefined and ptxas
   /// can perform aggressive optimizations that may lead to incorrect results.
-  Operand *newOperand(StringRef constraint, bool init = false);
+  Operand *newOperand(StringRef constraint,
+                      std::optional<int64_t> initValue = std::nullopt);
 
   /// Create a new operand that is tied to a previous operand. In this case the
   /// asm would be premitted to write an input register. Instead of providing
@@ -180,13 +158,13 @@ public:
 
   std::string dump() const;
 
-  Value launch(RewriterBase &rewriter, Location loc, Type resultType,
+  Value launch(OpBuilder &rewriter, Location loc, Type resultType,
                bool hasSideEffect = true, bool isAlignStack = false,
                ArrayRef<Attribute> operandAttrs = {}) const;
 
 protected:
   SmallVector<std::unique_ptr<Operand>> operands;
-  SmallVector<std::unique_ptr<PTXInstructionCommon>, 2> instructions;
+  SmallVector<std::unique_ptr<PTXInstructionCommon>, 4> instructions;
   SmallVector<std::unique_ptr<PTXInstructionExecution>, 4> executions;
   unsigned numOperands = 0;
 
@@ -196,7 +174,7 @@ private:
     return operands.back().get();
   }
 
-  void initOperand(Operand *operand);
+  void initOperand(Operand *operand, int64_t value);
 
   /// Make the operands follow the provided order.
   void reorderOperands(ArrayRef<Operand *> order) {
@@ -263,8 +241,8 @@ public:
                                       bool onlyAttachMLIRValues = false);
 
 protected:
-  PTXBuilder *builder;
-  SmallVector<std::string, 4> instructionParts;
+  PTXBuilder *builder = nullptr;
+  SmallVector<std::string, 4> keywords;
 
   // Call the instruction with operands, `onlyAttachMLIRValues` indicate that it
   // simply attach the MLIR values to the PTX without generating the operand ids
@@ -295,7 +273,7 @@ public:
   /// will get "add.s32" if isS32 is true.
   ConcreteT &o(const std::string &suffix, bool predicate = true) {
     if (predicate)
-      instructionParts.push_back(suffix);
+      keywords.push_back(suffix);
     return *static_cast<ConcreteT *>(this);
   }
 };
@@ -311,7 +289,7 @@ public:
   PTXInstruction &shared();
 
   /// Append a ".v[0-9]+" to the instruction.
-  PTXInstruction &v(unsigned vecWidth, bool predicate = true);
+  PTXInstruction &v(unsigned vectorSize, bool predicate = true);
 
   /// Append a ".b[0-9]+" to the instruction.
   PTXInstruction &b(unsigned bitWidth);
@@ -330,8 +308,11 @@ public:
         onlyAttachMLIRValues(onlyAttachMLIRValues) {}
 
   /// Prefix a predicate to the instruction.
-  PTXInstructionExecution &predicate(Value value, StringRef constraint = "b") {
+  PTXInstructionExecution &predicate(Value value, StringRef constraint) {
     predOperand = instruction->builder->newOperand(value, constraint);
+    predOperand->formatter = [](unsigned index) {
+      return "@$" + std::to_string(index);
+    };
     return *this;
   }
 
@@ -350,23 +331,10 @@ public:
 
 private:
   SmallVector<Operand *> operands;
-  PTXInstructionCommon *instruction;
-  Operand *predOperand;
+  PTXInstructionCommon *instruction = nullptr;
+  Operand *predOperand = nullptr;
   bool onlyAttachMLIRValues = true;
 };
-
-/*
-class PTXCpAsyncInstruction : public PTXInstructionBase<PTXCpAsyncInstruction> {
-public:
-  explicit PTXCpAsyncInstruction(PTXBuilder *builder,
-                                 CacheModifier cacheModifier)
-      : PTXInstructionBase(builder, "cp.async") {
-    o(stringifyCacheModifier(cacheModifier).str());
-    o("shared");
-    o("global");
-  }
-};
-*/
 
 } // namespace kapy
 } // namespace mlir

@@ -17,33 +17,45 @@ namespace {
 
 class MkGlobalOpConversion : public ConvertOpToLLVMPattern<MkGlobalOp> {
 public:
-  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  using ConvertOpToLLVMPattern<MkGlobalOp>::ConvertOpToLLVMPattern;
 
   virtual LogicalResult
   matchAndRewrite(MkGlobalOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    assert(op->getNumOperands() == 5 && op->getNumResults() == 1);
+    assert(op->getNumOperands() == 6 && op->getNumResults() == 1);
     auto loc = op.getLoc();
-    auto structType = typeConverter->convertType(op.getType());
+    auto structType = getResultStructType(op);
     auto pointerType = LLVMPointerType::get(getContext(), 1);
+    auto elementType = getResultElementType(op);
     Value llvmStruct = llvm_undef(structType);
-    auto pointer = llvm_inttoptr(pointerType, adaptor.getAddress());
+    Value pointer = llvm_getelementptr(pointerType, elementType,   //
+                                       adaptor.getGlobalAddress(), //
+                                       adaptor.getDynamicOffset());
     llvmStruct = llvm_insertvalue(structType, llvmStruct, pointer, 0);
-    auto zero = arith_constant_i32(0);
+    Value zero = arith_constant_i32(0);
     SmallVector<Value> i32Values;
-    i32Values.push_back(adaptor.getStride0());
-    i32Values.push_back(adaptor.getStride1());
     i32Values.push_back(zero);
     i32Values.push_back(zero);
     i32Values.push_back(adaptor.getSize0());
     i32Values.push_back(adaptor.getSize1());
-    for (auto it : llvm::enumerate(i32Values)) {
-      auto value = it.value();
-      auto index = it.index() + 1;
-      llvmStruct = llvm_insertvalue(structType, llvmStruct, value, index);
-    }
+    i32Values.push_back(adaptor.getStride0());
+    i32Values.push_back(adaptor.getStride1());
+    for (auto it : llvm::enumerate(i32Values))
+      llvmStruct =
+          llvm_insertvalue(structType, llvmStruct, it.value(), it.index() + 1);
     rewriter.replaceOp(op, llvmStruct);
     return success();
+  }
+
+private:
+  LLVMStructType getResultStructType(MkGlobalOp op) const {
+    auto resultType = typeConverter->convertType(op.getType());
+    return cast<LLVMStructType>(resultType);
+  }
+
+  Type getResultElementType(MkGlobalOp op) const {
+    auto elementType = op.getType().getElementType();
+    return typeConverter->convertType(elementType);
   }
 };
 

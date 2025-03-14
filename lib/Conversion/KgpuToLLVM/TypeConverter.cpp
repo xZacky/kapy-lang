@@ -42,6 +42,9 @@ KgpuToLLVMTypeConverter::KgpuToLLVMTypeConverter(
     MLIRContext *context, LowerToLLVMOptions &options,
     const DataLayoutAnalysis *analysis)
     : LLVMTypeConverter(context, options, analysis) {
+  addConversion([&](KapyPointerType pointerType) -> std::optional<Type> {
+    return convertType(pointerType);
+  });
   addConversion([&](RankedTensorType tensorType) -> std::optional<Type> {
     return convertType(tensorType);
   });
@@ -51,6 +54,11 @@ KgpuToLLVMTypeConverter::KgpuToLLVMTypeConverter(
   addConversion([&](Float8E5M2Type f8E5M2Type) -> std::optional<Type> {
     return IntegerType::get(f8E5M2Type.getContext(), 8);
   });
+}
+
+Type KgpuToLLVMTypeConverter::convertType(KapyPointerType pointerType) {
+  return LLVMPointerType::get(pointerType.getContext(),
+                              pointerType.getAddressSpace());
 }
 
 Type KgpuToLLVMTypeConverter::convertType(RankedTensorType tensorType) {
@@ -68,7 +76,7 @@ Type KgpuToLLVMTypeConverter::convertType(RankedTensorType tensorType) {
     auto *context = tensorType.getContext();
     auto pointerType = LLVMPointerType::get(context, 3);
     bodyTypes.push_back(pointerType);
-    for (unsigned i = 0; i < 6; ++i)
+    for (unsigned i = 0; i < 4; ++i)
       bodyTypes.push_back(IntegerType::get(context, 32));
     return LLVMStructType::getLiteral(context, bodyTypes);
   }

@@ -36,7 +36,7 @@
 using namespace mlir;
 using namespace mlir::kapy;
 
-static Value getAddressOfSharedArray(RewriterBase &rewriter,
+static Value getAddressOfSharedArray(OpBuilder &rewriter,
                                      FunctionOpInterface funcOp) {
   LLVM::GlobalOp sharedArray;
   auto module = funcOp->getParentOfType<ModuleOp>();
@@ -51,7 +51,7 @@ static Value getAddressOfSharedArray(RewriterBase &rewriter,
   return funcOp.getArgument(funcOp.getNumArguments() - 1);
 }
 
-static Value getPointerToSharedArray(RewriterBase &rewriter, Operation *op) {
+static Value getPointerToSharedArray(OpBuilder &rewriter, Operation *op) {
   auto pointerType = LLVM::LLVMPointerType::get(rewriter.getContext(), 3);
   auto funcOp = op->getParentOfType<FunctionOpInterface>();
   auto loc = op->getLoc();
@@ -87,11 +87,9 @@ public:
         auto structType =
             getTypeConverter()->packFunctionResults(funcOp.getResultTypes());
         Value llvmStruct = llvm_undef(structType);
-        for (auto it : llvm::enumerate(adaptor.getOperands())) {
-          auto value = it.value();
-          auto index = it.index();
-          llvmStruct = llvm_insertvalue(structType, llvmStruct, value, index);
-        }
+        for (auto it : llvm::enumerate(adaptor.getOperands()))
+          llvmStruct =
+              llvm_insertvalue(structType, llvmStruct, it.value(), it.index());
         newOp = rewriter.create<LLVM::ReturnOp>(loc, llvmStruct);
       }
       newOp->setAttrs(op->getAttrs());
@@ -167,6 +165,6 @@ private:
 
 void kapy::populateCallReturnOpToLLVMConversionPatterns(
     const LLVMTypeConverter &typeConverter, RewritePatternSet &patterns) {
-  patterns.add<ReturnOpConversion>();
-  patterns.add<CallOpConversion>();
+  patterns.add<ReturnOpConversion>(typeConverter);
+  patterns.add<CallOpConversion>(typeConverter);
 }

@@ -69,13 +69,13 @@ void populateMatmulOpToLLVMConversionPattern(
 void populateReduceOpToLLVMConversionPattern(
     const LLVMTypeConverter &typeConverter, RewritePatternSet &patterns);
 
+void populateChangeOpToLLVMConversionPatterns(
+    const LLVMTypeConverter &typeConverter, RewritePatternSet &patterns);
+
 void populateFuncOpToLLVMConversionPattern(
     const LLVMTypeConverter &typeConverter, RewritePatternSet &patterns);
 
 void populateCallReturnOpToLLVMConversionPatterns(
-    const LLVMTypeConverter &typeConverter, RewritePatternSet &patterns);
-
-void populateChangeOpToLLVMConversionPatterns(
     const LLVMTypeConverter &typeConverter, RewritePatternSet &patterns);
 
 } // namespace kapy

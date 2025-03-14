@@ -769,7 +769,8 @@ LayoutOptimization::collectValuesNeedChange(ResolveState &curState) {
 
 void LayoutOptimization::computeCost(ResolveState &curState) {
   auto valuesNeedChange = collectValuesNeedChange(curState);
-  for (auto value : llvm::make_first_range(valuesNeedChange)) {
+  for (const auto &it : valuesNeedChange) {
+    auto value = it.first;
     auto sourceType = cast<RankedTensorType>(value.getType());
     if (curState.valueToLayout.contains(value)) {
       auto layout = curState.valueToLayout[value];
@@ -779,7 +780,7 @@ void LayoutOptimization::computeCost(ResolveState &curState) {
       if (isa<arith::ConstantOp, SplatOp>(defOp))
         continue;
       auto *block = defOp->getBlock();
-      for (auto layout : valuesNeedChange[value]) {
+      for (auto layout : it.second) {
         auto resultType = cloneWithLayout(sourceType, layout);
         ChangeOpHelper helper(sourceType, resultType);
         curState.cost.blockToNumShfls[block] += helper.getNumShfls();
@@ -814,10 +815,11 @@ void LayoutOptimization::insertChangeOps() {
   OpBuilder builder(funcOp);
   auto valuesNeedChange = collectValuesNeedChange(minState);
   DenseMap<std::pair<Value, FragmentsLayoutAttr>, Value> valueMapping;
-  for (auto value : llvm::make_first_range(valuesNeedChange)) {
+  for (const auto &it : valuesNeedChange) {
+    auto value = it.first;
     builder.setInsertionPointAfterValue(value);
     auto tensorType = cast<RankedTensorType>(value.getType());
-    for (auto layout : valuesNeedChange[value]) {
+    for (auto layout : it.second) {
       tensorType = cloneWithLayout(tensorType, layout);
       valueMapping[{value, layout}] =
           builder.create<ChangeOp>(value.getLoc(), tensorType, value);

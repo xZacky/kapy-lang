@@ -23,7 +23,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file is copied and modified from the triton project.
+// This file is modified from the triton project.
 // https://github.com/triton-lang/triton
 //
 //===----------------------------------------------------------------------===//
@@ -46,7 +46,7 @@ static Value createOp(OpT op, ConversionPatternRewriter &rewriter,
 }
 
 static LLVM::LLVMFuncOp
-getOrCreateExternFuncOp(OpBuilder &builder, Operation *op, StringRef funcName,
+getOrCreateExternFuncOp(OpBuilder &rewriter, Operation *op, StringRef funcName,
                         Type funcType, StringRef libName, StringRef libPath) {
   auto symbolAttr = StringAttr::get(op->getContext(), funcName);
   auto *symbolOp = SymbolTable::lookupNearestSymbolFrom(op, symbolAttr);
@@ -56,9 +56,9 @@ getOrCreateExternFuncOp(OpBuilder &builder, Operation *op, StringRef funcName,
   auto *ip = op;
   if (!isa<LLVM::LLVMFuncOp>(ip))
     ip = ip->getParentOfType<LLVM::LLVMFuncOp>();
-  builder.setInsertionPoint(ip);
+  rewriter.setInsertionPoint(ip);
   auto loc = op->getLoc();
-  auto funcOp = builder.create<LLVM::LLVMFuncOp>(loc, funcName, funcType);
+  auto funcOp = rewriter.create<LLVM::LLVMFuncOp>(loc, funcName, funcType);
   funcOp->setAttr("libname", StringAttr::get(op->getContext(), libName));
   funcOp->setAttr("libpath", StringAttr::get(op->getContext(), libPath));
   return funcOp;
@@ -75,8 +75,8 @@ template <typename OpT> static bool isBF16Operands(OpT op) {
 
 struct ConversionDesc {
   std::string ptx;
-  unsigned oldPackedBits;
-  unsigned newPackedBits;
+  unsigned oldWordNumBits;
+  unsigned newWordNumBits;
   unsigned numElements;
 };
 
@@ -293,8 +293,8 @@ using ConversionFunc = std::function<SmallVector<Value>(
 
 static ConversionFunc makeConversionFuncFromPTX(const std::string &ptx,
                                                 Type oldType, Type newType,
-                                                unsigned oldPackedBits = 32,
-                                                unsigned newPackedBits = 32) {
+                                                unsigned oldWordNumBits = 32,
+                                                unsigned newWordNumBits = 32) {
   ConversionFunc convFunc = [&](ConversionPatternRewriter &rewriter,
                                 Location loc, ValueRange oldElems) {
     auto *context = rewriter.getContext();
@@ -305,7 +305,7 @@ static ConversionFunc makeConversionFuncFromPTX(const std::string &ptx,
     auto newBitWidth = newType.getIntOrFloatBitWidth();
 
     // First, we pack `oldElems` into 32-bit integers.
-    auto oldVecWidth = oldPackedBits / oldBitWidth;
+    auto oldVecWidth = oldWordNumBits / oldBitWidth;
     auto oldVectorType = VectorType::get(oldVecWidth, oldType);
     auto oldNumVectors = numElems / oldVecWidth;
     SmallVector<Value> oldVectors(oldNumVectors, llvm_undef(oldVectorType));
@@ -314,16 +314,16 @@ static ConversionFunc makeConversionFuncFromPTX(const std::string &ptx,
       oldVector = llvm_insertelement(oldVectorType, oldVector, oldElems[i],
                                      arith_constant_i32(i % oldVecWidth));
     }
-    auto oldPackType = rewriter.getIntegerType(oldPackedBits);
+    auto oldWordType = rewriter.getIntegerType(oldWordNumBits);
     for (unsigned i = 0; i < oldNumVectors; ++i)
-      oldVectors[i] = llvm_bitcast(oldPackType, oldVectors[i]);
+      oldVectors[i] = llvm_bitcast(oldWordType, oldVectors[i]);
 
     // Then, we run the provided inline PTX.
     PTXBuilder builder;
     SmallVector<PTXBuilder::Operand *> ptxOperands;
-    auto dstConstraint = newPackedBits == 16 ? "=h" : "=r";
-    auto srcConstraint = oldPackedBits == 16 ? "h" : "r";
-    auto newVecWidth = newPackedBits / newBitWidth;
+    auto dstConstraint = newWordNumBits == 16 ? "=h" : "=r";
+    auto srcConstraint = oldWordNumBits == 16 ? "h" : "r";
+    auto newVecWidth = newWordNumBits / newBitWidth;
     auto newNumVectors = numElems / newVecWidth;
     for (unsigned i = 0; i < newNumVectors; ++i)
       ptxOperands.push_back(builder.newOperand(dstConstraint));
@@ -332,16 +332,20 @@ static ConversionFunc makeConversionFuncFromPTX(const std::string &ptx,
     auto &inst = *builder.create(ptx);
     inst(ptxOperands, true);
 
+    auto newWordType = rewriter.getIntegerType(newWordNumBits);
     auto newVectorType = VectorType::get(newVecWidth, newType);
     SmallVector<Value> newVectors;
     if (newNumVectors == 1) {
-      newVectors.push_back(builder.launch(rewriter, loc, newVectorType, false));
+      auto newVector = builder.launch(rewriter, loc, newWordType, false);
+      newVectors.push_back(llvm_bitcast(newVectorType, newVector));
     } else {
       auto newStructType = LLVM::LLVMStructType::getLiteral(
-          context, SmallVector<Type>(newNumVectors, newVectorType));
+          context, SmallVector<Type>(newNumVectors, newWordType));
       auto newStruct = builder.launch(rewriter, loc, newStructType, false);
-      for (unsigned i = 0; i < newNumVectors; ++i)
-        newVectors.push_back(llvm_extractvalue(newVectorType, newStruct, i));
+      for (unsigned i = 0; i < newNumVectors; ++i) {
+        auto newVector = llvm_extractvalue(newWordType, newStruct, i);
+        newVectors.push_back(llvm_bitcast(newVectorType, newVector));
+      }
     }
 
     SmallVector<Value> newElems;
@@ -356,7 +360,7 @@ static ConversionFunc makeConversionFuncFromPTX(const std::string &ptx,
   return convFunc;
 }
 
-static Value cvtF16ToF32(RewriterBase &rewriter, Location loc, Value value) {
+static Value cvtF16ToF32(OpBuilder &rewriter, Location loc, Value value) {
   PTXBuilder builder;
   auto &cvt = *builder.create("cvt.f32.f16");
   auto *dstOperand = builder.newOperand("=r");
@@ -365,7 +369,7 @@ static Value cvtF16ToF32(RewriterBase &rewriter, Location loc, Value value) {
   return builder.launch(rewriter, loc, rewriter.getF32Type(), false);
 }
 
-static Value cvtBF16ToF32(RewriterBase &rewriter, Location loc, Value value) {
+static Value cvtBF16ToF32(OpBuilder &rewriter, Location loc, Value value) {
   PTXBuilder builder;
   auto &cvt = *builder.create("cvt.f32.bf16");
   auto *dstOperand = builder.newOperand("=r");
@@ -374,7 +378,7 @@ static Value cvtBF16ToF32(RewriterBase &rewriter, Location loc, Value value) {
   return builder.launch(rewriter, loc, rewriter.getF32Type(), false);
 }
 
-static Value cvtF32ToF16(RewriterBase &rewriter, Location loc, Value value,
+static Value cvtF32ToF16(OpBuilder &rewriter, Location loc, Value value,
                          RoundingMode roundingMode) {
   PTXBuilder builder;
   StringRef ptx;
@@ -393,7 +397,7 @@ static Value cvtF32ToF16(RewriterBase &rewriter, Location loc, Value value,
   return builder.launch(rewriter, loc, rewriter.getF16Type(), false);
 }
 
-static Value cvtF32ToBF16(RewriterBase &rewriter, Location loc, Value value,
+static Value cvtF32ToBF16(OpBuilder &rewriter, Location loc, Value value,
                           RoundingMode roundingMode) {
   PTXBuilder builder;
   StringRef ptx;
@@ -488,6 +492,7 @@ class UnaryOpConversion
 public:
   using Base = ElementwiseOpConversion<OpT, UnaryOpConversion<OpT>>;
   using Base::Base;
+  using Base::getResultElementType;
   using OpAdaptor = typename Base::OpAdaptor;
 
   SmallVector<Value> doConversion(OpT op, OpAdaptor adaptor,
@@ -509,8 +514,9 @@ template <typename OpT>
 class BinaryOpConversion
     : public ElementwiseOpConversion<OpT, BinaryOpConversion<OpT>> {
 public:
-  using Base = ElementwiseOpConversion<OpT, UnaryOpConversion<OpT>>;
+  using Base = ElementwiseOpConversion<OpT, BinaryOpConversion<OpT>>;
   using Base::Base;
+  using Base::getResultElementType;
   using OpAdaptor = typename Base::OpAdaptor;
 
   SmallVector<Value> doConversion(OpT op, OpAdaptor adaptor,
@@ -534,6 +540,7 @@ class FPToFPOpConversion
 public:
   using Base = ElementwiseOpConversion<FPToFPOp, FPToFPOpConversion>;
   using Base::Base;
+  using Base::getResultElementType;
 
   SmallVector<Value> doConversion(FPToFPOp op, OpAdaptor adaptor,
                                   ConversionPatternRewriter &rewriter,
@@ -572,10 +579,11 @@ public:
     bool isToF8 = newType.isFloat8E4M3() || newType.isFloat8E5M2();
     bool isF32ToF8 = oldType.isF32() && isToF8;
     bool isRZ = roundingMode.value() == RoundingMode::RZ;
-    bool isF16Intermediate = isF32ToF8 && (nvidiaCC < 90 || isRZ);
+    bool isF32ToF16ToF8 = isF32ToF8 && (nvidiaCC < 90 || isRZ);
+    bool isF8ToF16ToF32 = newType.isF32();
 
-    oldType = isF16Intermediate ? rewriter.getF16Type() : oldType;
-    newType = newType.isF32() ? rewriter.getF16Type() : newType;
+    oldType = isF32ToF16ToF8 ? rewriter.getF16Type() : oldType;
+    newType = isF8ToF16ToF32 ? rewriter.getF16Type() : newType;
 
     auto [convFunc, numElems] =
         getConversionFunc(oldType, newType, nvidiaCC, roundingMode);
@@ -583,10 +591,9 @@ public:
     SmallVector<Value> sourceValues;
     for (unsigned i = 0; i < operandsValues[0].size(); ++i)
       sourceValues.push_back(operandsValues[0][i]);
-    if (isF16Intermediate)
+    if (isF32ToF16ToF8)
       for (auto &value : sourceValues)
         value = cvtF32ToF16(rewriter, loc, value, RoundingMode::RZ);
-
     SmallVector<Value> resultValues;
     for (unsigned i = 0; i < sourceValues.size(); i += numElems) {
       SmallVector<Value> elements;
@@ -595,7 +602,7 @@ public:
       elements = convFunc(rewriter, loc, elements);
       resultValues.append(elements.begin(), elements.end());
     }
-    if (newType.isF32())
+    if (isF8ToF16ToF32)
       for (auto &value : resultValues)
         value = cvtF16ToF32(rewriter, loc, value);
     return resultValues;
@@ -649,8 +656,8 @@ private:
     newType = typeConverter->convertType(newType);
     auto convDesc = convDescs.lookup(convKind);
     auto convFunc = makeConversionFuncFromPTX(convDesc.ptx, oldType, newType,
-                                              convDesc.oldPackedBits,
-                                              convDesc.newPackedBits);
+                                              convDesc.oldWordNumBits,
+                                              convDesc.newWordNumBits);
     return {convFunc, convDesc.numElements};
   }
 };
@@ -660,6 +667,7 @@ class AbsFOpConversion
 public:
   using Base = ElementwiseOpConversion<math::AbsFOp, AbsFOpConversion>;
   using Base::Base;
+  using Base::getResultElementType;
 
   SmallVector<Value> doConversion(math::AbsFOp op, OpAdaptor adaptor,
                                   ConversionPatternRewriter &rewriter,
@@ -673,10 +681,10 @@ public:
       auto bitWidth = getIntOrFloatBitWidth(op.getType());
       auto mask = (1 << (bitWidth - 1)) - 1;
       auto maskAttr = rewriter.getIntegerAttr(resultType, mask);
-      auto maskOp = arith_constant(loc, maskAttr);
+      auto maskOp = arith_constant(maskAttr);
       for (unsigned i = 0; i < operandsValues[0].size(); ++i) {
         auto value = operandsValues[0][i];
-        value = arith_andi(loc, value, maskOp);
+        value = arith_andi(value, maskOp);
         resultValues.push_back(value);
       }
     } else {
@@ -695,6 +703,7 @@ class ClampFOpConversion
 public:
   using Base = ElementwiseOpConversion<ClampFOp, ClampFOpConversion>;
   using Base::Base;
+  using Base::getResultElementType;
 
   SmallVector<Value> doConversion(ClampFOp op, OpAdaptor adaptor,
                                   ConversionPatternRewriter &rewriter,
@@ -725,6 +734,7 @@ class DivFOpConversion
 public:
   using Base = ElementwiseOpConversion<arith::DivFOp, DivFOpConversion>;
   using Base::Base;
+  using Base::getResultElementType;
 
   SmallVector<Value> doConversion(arith::DivFOp op, OpAdaptor adaptor,
                                   ConversionPatternRewriter &rewriter,
@@ -765,6 +775,7 @@ class MulFOpConversion
 public:
   using Base = ElementwiseOpConversion<arith::MulFOp, MulFOpConversion>;
   using Base::Base;
+  using Base::getResultElementType;
 
   SmallVector<Value> doConversion(arith::MulFOp op, OpAdaptor adaptor,
                                   ConversionPatternRewriter &rewriter,
@@ -805,6 +816,7 @@ class AddFOpConversion
 public:
   using Base = ElementwiseOpConversion<arith::AddFOp, AddFOpConversion>;
   using Base::Base;
+  using Base::getResultElementType;
 
   SmallVector<Value> doConversion(arith::AddFOp op, OpAdaptor adaptor,
                                   ConversionPatternRewriter &rewriter,
@@ -845,6 +857,7 @@ class SubFOpConversion
 public:
   using Base = ElementwiseOpConversion<arith::SubFOp, SubFOpConversion>;
   using Base::Base;
+  using Base::getResultElementType;
 
   SmallVector<Value> doConversion(arith::SubFOp op, OpAdaptor adaptor,
                                   ConversionPatternRewriter &rewriter,
@@ -885,6 +898,7 @@ class SIToFPOpConversion
 public:
   using Base = ElementwiseOpConversion<arith::SIToFPOp, SIToFPOpConversion>;
   using Base::Base;
+  using Base::getResultElementType;
 
   SmallVector<Value> doConversion(arith::SIToFPOp op, OpAdaptor adaptor,
                                   ConversionPatternRewriter &rewriter,
@@ -929,6 +943,7 @@ class FPToSIOpConversion
 public:
   using Base = ElementwiseOpConversion<arith::FPToSIOp, FPToSIOpConversion>;
   using Base::Base;
+  using Base::getResultElementType;
 
   SmallVector<Value> doConversion(arith::FPToSIOp op, OpAdaptor adaptor,
                                   ConversionPatternRewriter &rewriter,
@@ -962,6 +977,7 @@ class ExtFOpConversion
 public:
   using Base = ElementwiseOpConversion<arith::ExtFOp, ExtFOpConversion>;
   using Base::Base;
+  using Base::getResultElementType;
 
   SmallVector<Value> doConversion(arith::ExtFOp op, OpAdaptor adaptor,
                                   ConversionPatternRewriter &rewriter,
@@ -994,6 +1010,7 @@ class TruncFOpConversion
 public:
   using Base = ElementwiseOpConversion<arith::TruncFOp, TruncFOpConversion>;
   using Base::Base;
+  using Base::getResultElementType;
 
   SmallVector<Value> doConversion(arith::TruncFOp op, OpAdaptor adaptor,
                                   ConversionPatternRewriter &rewriter,
@@ -1026,6 +1043,7 @@ class ExpApproxOpConversion
 public:
   using Base = ElementwiseOpConversion<math::ExpOp, ExpApproxOpConversion>;
   using Base::Base;
+  using Base::getResultElementType;
 
   SmallVector<Value> doConversion(math::ExpOp op, OpAdaptor adaptor,
                                   ConversionPatternRewriter &rewriter,
@@ -1061,6 +1079,7 @@ class FmaOpConversion
 public:
   using Base = ElementwiseOpConversion<math::FmaOp, FmaOpConversion>;
   using Base::Base;
+  using Base::getResultElementType;
 
   SmallVector<Value> doConversion(math::FmaOp op, OpAdaptor adaptor,
                                   ConversionPatternRewriter &rewriter,
@@ -1087,6 +1106,7 @@ public:
   using Base = ElementwiseOpConversion<ElementwiseExternLibOp,
                                        ElementwiseExternLibOpConversion>;
   using Base::Base;
+  using Base::getResultElementType;
 
   SmallVector<Value> doConversion(ElementwiseExternLibOp op, OpAdaptor adaptor,
                                   ConversionPatternRewriter &rewriter,
@@ -1123,6 +1143,7 @@ public:
   using Base = ElementwiseOpConversion<ElementwiseInlineAsmOp,
                                        ElementwiseInlineAsmOpConversion>;
   using Base::Base;
+  using Base::getResultElementType;
 
   SmallVector<Value> doConversion(ElementwiseInlineAsmOp op, OpAdaptor adaptor,
                                   ConversionPatternRewriter &rewriter,
@@ -1137,7 +1158,9 @@ public:
         inputs.push_back(operandsValues[j][i]);
       auto inlineAsmOp = rewriter.create<LLVM::InlineAsmOp>(
           loc, resultType, inputs, op.getAsmString(), op.getConstraints(),
-          !op.isPure(), false);
+          !op.isPure(), false,
+          LLVM::AsmDialectAttr::get(op.getContext(), LLVM::AsmDialect::AD_ATT),
+          ArrayAttr());
       resultValues.push_back(inlineAsmOp.getResult(0));
     }
     return resultValues;
@@ -1168,6 +1191,7 @@ void kapy::populateElementwiseOpToLLVMConversionPatterns(
                BinaryOpConversion<arith::CeilDivSIOp>>(typeConverter);
   patterns.add<BinaryOpConversion<arith::RemUIOp>,
                BinaryOpConversion<arith::RemSIOp>>(typeConverter);
+  // TODO: Special way for bf16 type.
   patterns.add<BinaryOpConversion<arith::RemFOp>>(typeConverter);
   patterns.add<BinaryOpConversion<arith::AndIOp>, //
                BinaryOpConversion<arith::OrIOp>,  //

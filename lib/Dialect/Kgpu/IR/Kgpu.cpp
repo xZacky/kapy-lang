@@ -34,7 +34,7 @@ public:
     auto resultLayout = getLayout<FragmentsLayoutAttr>(resultType);
     auto bitWidth = getIntOrFloatBitWidth(resultType);
     auto simdSize = 128 / bitWidth;
-    auto packSize = 32 / bitWidth;
+    auto wordSize = 32 / bitWidth;
     if (loaderLayout.isColMajor()) {
       if (loaderLayout.getLaneArray() != SmallVector<int64_t, 2>{16, 2})
         return op->emitOpError("loader has incompatible layout");
@@ -49,12 +49,12 @@ public:
     if (resultLayout.isRowMajor()) {
       if (resultLayout.getLaneArray() != SmallVector<int64_t, 2>{8, 4})
         return op->emitOpError("result has incompatible layout");
-      if (resultLayout.getLaneLoops() != SmallVector<int64_t, 2>{1, packSize})
+      if (resultLayout.getLaneLoops() != SmallVector<int64_t, 2>{1, wordSize})
         return op->emitOpError("result has incompatible layout");
     } else {
       if (resultLayout.getLaneArray() != SmallVector<int64_t, 2>{4, 8})
         return op->emitOpError("result has incompatible layout");
-      if (resultLayout.getLaneLoops() != SmallVector<int64_t, 2>{packSize, 1})
+      if (resultLayout.getLaneLoops() != SmallVector<int64_t, 2>{wordSize, 1})
         return op->emitOpError("result has incompatible layout");
     }
     return success();

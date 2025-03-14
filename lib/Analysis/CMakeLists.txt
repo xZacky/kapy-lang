@@ -3,7 +3,6 @@ add_mlir_library(KapyAnalysis
   AlignAnalysis.cpp
   AllocAnalysis.cpp
   AnalysisUtils.cpp
-  BlockAnalysis.cpp
 
   DEPENDS
   KapyIRIncGen

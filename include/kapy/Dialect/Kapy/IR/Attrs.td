@@ -36,6 +36,8 @@ def Strided2dLayoutAttr : Kapy_AttrDef<"Strided2dLayout", "strided2d"> {
   let extraClassDeclaration = [{
     inline bool isRowMajor() const { return getStride1() == 1; }
     inline bool isColMajor() const { return getStride0() == 1; }
+
+    bool isStaticStrides() const;
   }];
 }
 

@@ -74,7 +74,7 @@ template <typename T> Interval(T, T) -> Interval<T>;
 
 class AllocInfo {
 public:
-  using BufferId = int;
+  using BufferId = int64_t;
   static constexpr BufferId INVALID_ID = -1;
 
   AllocInfo() = default;
@@ -130,7 +130,6 @@ private:
     uint64_t offset;
 
     Buffer() : Buffer(BufferKind::EXPLICIT, 0) {}
-
     Buffer(BufferKind kind, uint64_t size)
         : kind(kind), id(nextId++), size(size), alignment(128), offset(0) {}
 

@@ -299,56 +299,6 @@ public:
   }
 };
 
-class ConditionOpConversion : public OpConversionPattern<scf::ConditionOp> {
-public:
-  using OpConversionPattern::OpConversionPattern;
-
-  virtual LogicalResult
-  matchAndRewrite(scf::ConditionOp op, OpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    auto operands = adaptor.getOperands();
-    rewriter.modifyOpInPlace(op, [&]() { op->setOperands(operands); });
-    return success();
-  }
-};
-
-class BranchOpConversion : public OpConversionPattern<cf::BranchOp> {
-public:
-  using OpConversionPattern::OpConversionPattern;
-
-  virtual LogicalResult
-  matchAndRewrite(cf::BranchOp op, OpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    auto newOp = rewriter.replaceOpWithNewOp<cf::BranchOp>(
-        op, op.getSuccessor(), adaptor.getOperands());
-    addNamedAttributes(newOp, adaptor.getAttributes());
-    return rewriter.convertRegionTypes(newOp.getSuccessor()->getParent(),
-                                       *typeConverter);
-  }
-};
-
-class CondBranchOpConversion : public OpConversionPattern<cf::CondBranchOp> {
-public:
-  using OpConversionPattern::OpConversionPattern;
-
-  virtual LogicalResult
-  matchAndRewrite(cf::CondBranchOp op, OpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    auto newOp = rewriter.replaceOpWithNewOp<cf::CondBranchOp>(
-        op, adaptor.getCondition(), op.getTrueDest(),
-        adaptor.getTrueDestOperands(), op.getFalseDest(),
-        adaptor.getFalseDestOperands());
-    addNamedAttributes(newOp, adaptor.getAttributes());
-    if (failed(rewriter.convertRegionTypes(newOp.getTrueDest()->getParent(),
-                                           *typeConverter)))
-      return failure();
-    if (failed(rewriter.convertRegionTypes(newOp.getFalseDest()->getParent(),
-                                           *typeConverter)))
-      return failure();
-    return success();
-  }
-};
-
 } // namespace
 
 static void populateArithConversionPatterns(const TypeConverter &typeConverter,
@@ -450,15 +400,8 @@ static void populateSCFConversionPatterns(const TypeConverter &typeConverter,
   patterns.add<ForOpConversion>(typeConverter, context);
   patterns.add<IfOpConversion>(typeConverter, context);
   patterns.add<WhileOpConversion>(typeConverter, context);
-  patterns.add<ConditionOpConversion>(typeConverter, context);
+  patterns.add<GenericOpConversion<scf::ConditionOp>>(typeConverter, context);
   patterns.add<GenericOpConversion<scf::YieldOp>>(typeConverter, context);
-}
-
-static void populateCFConversionPatterns(const TypeConverter &typeConverter,
-                                         RewritePatternSet &patterns) {
-  auto *context = patterns.getContext();
-  patterns.add<BranchOpConversion>(typeConverter, context);
-  patterns.add<CondBranchOpConversion>(typeConverter, context);
 }
 
 namespace {
@@ -478,7 +421,6 @@ public:
     populateMathConversionPatterns(typeConverter, patterns);
     populateKapyConversionPatterns(typeConverter, patterns);
     populateSCFConversionPatterns(typeConverter, patterns);
-    populateCFConversionPatterns(typeConverter, patterns);
 
     auto module = getOperation();
     if (failed(applyPartialConversion(module, convTarget, std::move(patterns))))

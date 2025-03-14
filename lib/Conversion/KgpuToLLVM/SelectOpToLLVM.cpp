@@ -16,7 +16,7 @@ namespace {
 
 class SelectOpConversion : public ConvertOpToLLVMPattern<arith::SelectOp> {
 public:
-  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  using ConvertOpToLLVMPattern<arith::SelectOp>::ConvertOpToLLVMPattern;
 
   virtual LogicalResult
   matchAndRewrite(arith::SelectOp op, OpAdaptor adaptor,

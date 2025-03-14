@@ -1,4 +1,4 @@
-//===- AnalyzeAlignment.cpp -------------------------------------*- C++ -*-===//
+//===- Analyze.cpp ----------------------------------------------*- C++ -*-===//
 //
 // This file implements the KapyAnalyzePass.
 //
@@ -22,6 +22,7 @@ class KapyAnalyzePass : public impl::KapyAnalyzeBase<KapyAnalyzePass> {
 public:
   virtual void runOnOperation() override {
     setGlobalMemoryLayouts();
+    setSharedMemoryLayouts();
 
     auto module = getOperation();
     ModuleAlignAnalysis alignAnalysis(module);
@@ -43,6 +44,9 @@ public:
 private:
   /// Set global memory layouts with known information.
   void setGlobalMemoryLayouts();
+
+  /// Set shared memory layouts with known information.
+  void setSharedMemoryLayouts();
 
   /// Set alignment attribute for operations access global or shared memory.
   void setAlignment(MemoryEffectOpInterface op, ModuleAlignAnalysis &analysis);
@@ -70,6 +74,21 @@ void KapyAnalyzePass::setGlobalMemoryLayouts() {
     }
     auto *context = op.getContext();
     auto layout = Strided2dLayoutAttr::get(context, strides[0], strides[1]);
+    DenseSet<Value> seen;
+    propagateMemoryLayout(op.getResult(), layout, seen);
+  });
+}
+
+void KapyAnalyzePass::setSharedMemoryLayouts() {
+  auto module = getOperation();
+  module.walk([](MkSharedOp op) {
+    assert(op->hasAttr("kapy.row_major"));
+    bool rowMajor = cast<BoolAttr>(op->getAttr("kapy.row_major")).getValue();
+    op->removeAttr("kapy.row_major");
+    auto shape = op.getType().getShape();
+    auto stride0 = rowMajor ? shape[1] : 1;
+    auto stride1 = rowMajor ? 1 : shape[0];
+    auto layout = SwizzlingLayoutAttr::get(op.getContext(), stride0, stride1);
     DenseSet<Value> seen;
     propagateMemoryLayout(op.getResult(), layout, seen);
   });

@@ -467,8 +467,12 @@ public:
   virtual AlignInfo
   getAlignInfo(MkGlobalOp op,
                ArrayRef<const Lattice<AlignInfo> *> operands) override {
-    assert(operands.size() == 5);
-    return operands[0]->getValue();
+    assert(operands.size() == 6);
+    auto bitWidth = getIntOrFloatBitWidth(op.getType());
+    auto globalAddress = operands[0]->getValue();
+    auto dynamicOffset = operands[1]->getValue();
+    auto alignment = mul<int64_t>(dynamicOffset.getAlignment(), bitWidth / 8);
+    return AlignInfo(gcd(globalAddress.getAlignment(), alignment));
   }
 };
 
@@ -490,10 +494,15 @@ public:
     auto start1 = operands[3]->getValue();
     auto alignment0 = mul(start0.getAlignment(), stride0);
     auto alignment1 = mul(start1.getAlignment(), stride1);
-    auto end0 = operands[2]->getValue();
-    auto end1 = operands[4]->getValue();
-    alignment0 = gcd(alignment0, mul(end0.getAlignment(), stride0));
-    alignment1 = gcd(alignment1, mul(end1.getAlignment(), stride1));
+    auto resultType = op.getType();
+    if (resultType.getShape()[0] != 1) {
+      auto end0 = operands[2]->getValue();
+      alignment0 = gcd(alignment0, mul(end0.getAlignment(), stride0));
+    }
+    if (resultType.getShape()[1] != 1) {
+      auto end1 = operands[4]->getValue();
+      alignment1 = gcd(alignment1, mul(end1.getAlignment(), stride1));
+    }
     auto bitWidth = getIntOrFloatBitWidth(sourceType);
     alignment0 = mul<int64_t>(alignment0, bitWidth / 8);
     alignment1 = mul<int64_t>(alignment1, bitWidth / 8);
@@ -530,10 +539,15 @@ public:
     auto start1 = operands[3]->getValue();
     auto alignment0 = mul(start0.getAlignment(), stride0);
     auto alignment1 = mul(start1.getAlignment(), stride1);
-    auto end0 = operands[2]->getValue();
-    auto end1 = operands[4]->getValue();
-    alignment0 = gcd(alignment0, mul(end0.getAlignment(), stride0));
-    alignment1 = gcd(alignment1, mul(end1.getAlignment(), stride1));
+    auto resultType = op.getType();
+    if (resultType.getShape()[0] != 1) {
+      auto end0 = operands[2]->getValue();
+      alignment0 = gcd(alignment0, mul(end0.getAlignment(), stride0));
+    }
+    if (resultType.getShape()[1] != 1) {
+      auto end1 = operands[4]->getValue();
+      alignment1 = gcd(alignment1, mul(end1.getAlignment(), stride1));
+    }
     auto bitWidth = getIntOrFloatBitWidth(sourceType);
     alignment0 = mul<int64_t>(alignment0, bitWidth / 8);
     alignment1 = mul<int64_t>(alignment1, bitWidth / 8);

@@ -36,12 +36,16 @@
 namespace mlir {
 namespace kapy {
 
+class KapyPointerType;
+
 class KgpuToLLVMTypeConverter : public LLVMTypeConverter {
 public:
   KgpuToLLVMTypeConverter(MLIRContext *context, LowerToLLVMOptions &options,
                           const DataLayoutAnalysis *analysis = nullptr);
 
   using TypeConverter::convertType;
+
+  Type convertType(KapyPointerType pointerType);
 
   Type convertType(RankedTensorType tensorType);
 };

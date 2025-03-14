@@ -50,10 +50,10 @@ public:
 
 private:
   using Buffer = AllocInfo::Buffer;
-  using OpId = int;
+  using OpId = int64_t;
 
   FunctionOpInterface funcOp;
-  AllocInfo *info;
+  AllocInfo *info = nullptr;
   llvm::MapVector<Buffer *, Interval<OpId>> bufferToLiveness;
 
   void addBuffers(DenseMap<FunctionOpInterface, AllocInfo> &funcToInfo);
@@ -226,7 +226,8 @@ void AllocAnalysis::computeAndAlloc() {
     DenseMap<Buffer *, int> bufferToColor;
     for (auto *buffer : buffers)
       bufferToColor[buffer] = -1; // color < 0 means uncolored
-    bufferToColor[buffers[0]] = 0;
+    if (buffers.size() > 0)
+      bufferToColor[buffers[0]] = 0;
     SmallVector<bool> available(buffers.size());
     for (auto *buffer0 : buffers) {
       std::fill(available.begin(), available.end(), true);

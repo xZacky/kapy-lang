@@ -54,16 +54,20 @@ namespace {
 
 class FuncOpConversion : public ConvertOpToLLVMPattern<FuncOp> {
 public:
-  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  using ConvertOpToLLVMPattern<FuncOp>::ConvertOpToLLVMPattern;
 
   virtual LogicalResult
   matchAndRewrite(FuncOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
+    // Prevent LLVM's inliner to inline this function
+    auto oldOp = op;
     if (!isKernel(op))
-      op = amendFuncOp(op, rewriter);
-    auto newOp = *convertFuncOpToLLVMFuncOp(op, rewriter, *getTypeConverter());
-    if (!newOp)
+      oldOp = amendFuncOp(op, rewriter);
+    auto convResult =
+        convertFuncOpToLLVMFuncOp(oldOp, rewriter, *getTypeConverter());
+    if (failed(convResult))
       return failure();
+    auto newOp = convResult.value();
     auto *context = op.getContext();
     if (isKernel(op)) {
       auto u1Type = IntegerType::get(context, 1, IntegerType::Unsigned);
@@ -74,7 +78,8 @@ public:
       // inlining.
       auto noinlineAttr = rewriter.getStringAttr("noinline");
       newOp.setPassthroughAttr(ArrayAttr::get(context, noinlineAttr));
-      newOp.setLinkage(Linkage::External);
+      newOp.setLinkage(Linkage::Internal);
+      rewriter.eraseOp(oldOp);
     }
     // Set an attribute for reqntid, it could be used in latter LLVM codegen for
     // nvvm.annotation metadata.
@@ -93,7 +98,7 @@ private:
     for (auto attr : op->getAttrs()) {
       if (attr.getName() == SymbolTable::getSymbolAttrName() ||
           attr.getName() == op.getFunctionTypeAttrName() ||
-          attr.getName() == "std.varargs" ||
+          attr.getName() == "func.varargs" ||
           (filterArgAttrs && attr.getName() == op.getArgAttrsAttrName()))
         continue;
       attrs.push_back(attr);
@@ -101,7 +106,6 @@ private:
   }
 
   FuncOp amendFuncOp(FuncOp op, ConversionPatternRewriter &rewriter) const {
-    auto *context = op.getContext();
     // Push back a variable that indicates the current stack pointer of shared
     // memory to the function arguments.
     auto pointerType = LLVMPointerType::get(rewriter.getContext(), 3);
@@ -109,20 +113,21 @@ private:
     auto funcType = op.getFunctionType();
     auto inputs = llvm::to_vector(funcType.getInputs());
     inputs.push_back(pointerType);
-    funcType = FunctionType::get(context, inputs, funcType.getResults());
+    auto results = funcType.getResults();
+    funcType = FunctionType::get(funcType.getContext(), inputs, results);
     // 2. Modify the argument attributes to add the new argument.
     SmallVector<NamedAttribute> attrs;
     filterFuncAttributes(op, true, attrs);
     auto argAttrs = llvm::to_vector(op.getAllArgAttrs());
-    argAttrs.emplace_back(DictionaryAttr::get(context));
+    argAttrs.emplace_back(DictionaryAttr::get(op.getContext()));
     auto arrayAttr = rewriter.getArrayAttr(argAttrs);
     attrs.push_back(rewriter.getNamedAttr(op.getArgAttrsAttrName(), arrayAttr));
     // 3. Add a new argument to the region.
     auto loc = op.getLoc();
     auto newOp = rewriter.create<FuncOp>(loc, op.getName(), funcType, attrs);
     auto &region = op.getBody();
-    rewriter.inlineRegionBefore(region, newOp.getBody(), newOp.getBody().end());
-    rewriter.eraseOp(op);
+    region.addArgument(pointerType, loc);
+    rewriter.inlineRegionBefore(region, newOp.getBody(), newOp.end());
     return newOp;
   }
 };

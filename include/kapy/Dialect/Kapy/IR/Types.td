@@ -45,4 +45,29 @@ def Kapy_NumberLike : AnyTypeOf<[Kapy_Number, RankedTensorOf<[Kapy_Number]>]>;
 
 def Kapy_Tensor : RankedTensorOf<[Kapy_Number]>;
 
+class Kapy_TypeDef<string name, string keyword, list<Trait> traits = []>
+    : TypeDef<Kapy_Dialect, name, traits> {
+  let mnemonic = keyword;
+}
+
+def KapyPointerType : Kapy_TypeDef<"KapyPointer", "ptr"> {
+  let summary = "kapy pointer type";
+
+  let parameters = (ins "unsigned":$addressSpace);
+
+  let skipDefaultBuilders = 1;
+  let builders = [
+    TypeBuilder<(ins "unsigned":$space), "return $_get($_ctxt, space);">
+  ];
+
+  let assemblyFormat = "`<` $addressSpace `>`";
+}
+
+def Kapy_Pointer : DialectType<
+  Kapy_Dialect,
+  CPred<"isa<KapyPointerType>($_self)">,
+  "kapy pointer",
+  "KapyPointerType"
+>;
+
 #endif // KAPY_DIALECT_KAPY_IR_TYPES

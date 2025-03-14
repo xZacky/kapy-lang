@@ -39,12 +39,24 @@ class Kapy_EnumAttr<
   let cppNamespace = "mlir::kapy";
 }
 
+def Kapy_MemorySpaceAttr : Kapy_EnumAttr<
+  "MemorySpace",
+  "memory space where the tensor is stored",
+  [
+    I32EnumAttrCase<"GLOBAL_MEMORY", 0, "global_memory">,
+    I32EnumAttrCase<"SHARED_MEMORY", 1, "shared_memory">,
+    I32EnumAttrCase<"REGISTER_FILE", 2, "register_file">
+  ]
+>;
+
 def Kapy_PaddingOptionAttr : Kapy_EnumAttr<
   "PaddingOption",
   "padding option for out of bound memory read",
   [
-    I32EnumAttrCase<"PAD_ZERO", 0, "pad_zero">,
-    I32EnumAttrCase<"PAD_NAN", 1, "pad_nan">
+    I32EnumAttrCase<"ZERO", 0, "zero">,
+    I32EnumAttrCase<"QNAN", 1, "qnan">,
+    I32EnumAttrCase<"PINF", 2, "pinf">,
+    I32EnumAttrCase<"NINF", 3, "ninf">
   ]
 >;
 
@@ -75,16 +87,6 @@ def Kapy_EvictPriorityAttr : Kapy_EnumAttr<
   ]
 >;
 
-def Kapy_AtomicRMWKindAttr : Kapy_EnumAttr<
-  "AtomicRMWKind",
-  "kind of atomic read-modify-write",
-  [
-    I32EnumAttrCase<"ADD", 1, "add">,
-    I32EnumAttrCase<"MAX", 2, "max">,
-    I32EnumAttrCase<"MIN", 3, "min">
-  ]
->;
-
 def Kapy_RoundingModeAttr : Kapy_EnumAttr<
   "RoundingMode",
   "rounding mode for floating-point cast instructions",
@@ -106,18 +108,8 @@ def Kapy_MatmulImplWayAttr : Kapy_EnumAttr<
   ]
 >;
 
-def Kapy_MemorySpaceAttr : Kapy_EnumAttr<
-  "MemorySpace",
-  "memory space",
-  [
-    I32EnumAttrCase<"GLOBAL_MEMORY", 0, "global_memory">,
-    I32EnumAttrCase<"SHARED_MEMORY", 1, "shared_memory">,
-    I32EnumAttrCase<"REGISTER_FILE", 2, "register_file">
-  ]
->;
-
 def Kapy_DefaultValuedPaddingOptionAttr
-    : DefaultValuedAttr<Kapy_PaddingOptionAttr, "PaddingOption::PAD_ZERO">;
+    : DefaultValuedAttr<Kapy_PaddingOptionAttr, "PaddingOption::ZERO">;
 
 def Kapy_DefaultValuedCacheModifierAttr
     : DefaultValuedAttr<Kapy_CacheModifierAttr, "CacheModifier::NONE">;

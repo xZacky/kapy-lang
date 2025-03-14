@@ -30,6 +30,8 @@
 
 #include "kapy/Dialect/Kapy/IR/Kapy.h"
 #include "kapy/Support/CommonUtils.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR//DialectImplementation.h"
 #include "mlir/Interfaces/FunctionImplementation.h"
 #include "mlir/Transforms/InliningUtils.h"
@@ -44,6 +46,9 @@ using namespace mlir::kapy;
 #define GET_ATTRDEF_CLASSES
 #include "kapy/Dialect/Kapy/IR/Attrs.cpp.inc"
 
+#define GET_TYPEDEF_CLASSES
+#include "kapy/Dialect/Kapy/IR/Types.cpp.inc"
+
 #define GET_OP_CLASSES
 #include "kapy/Dialect/Kapy/IR/Ops.cpp.inc"
 
@@ -57,13 +62,13 @@ public:
                                llvm::raw_ostream &os) const override {
     if (auto encoding = dyn_cast<EncodingAttr>(attr)) {
       switch (encoding.getMemory()) {
-      case (MemorySpace::GLOBAL_MEMORY):
+      case MemorySpace::GLOBAL_MEMORY:
         os << "global";
         break;
-      case (MemorySpace::SHARED_MEMORY):
+      case MemorySpace::SHARED_MEMORY:
         os << "shared";
         break;
-      case (MemorySpace::REGISTER_FILE):
+      case MemorySpace::REGISTER_FILE:
         os << "values";
         break;
       }
@@ -124,6 +129,10 @@ void KapyDialect::initialize() {
 #define GET_ATTRDEF_LIST
 #include "kapy/Dialect/Kapy/IR/Attrs.cpp.inc"
       >();
+  addTypes<
+#define GET_TYPEDEF_LIST
+#include "kapy/Dialect/Kapy/IR/Types.cpp.inc"
+      >();
   addOperations<
 #define GET_OP_LIST
 #include "kapy/Dialect/Kapy/IR/Ops.cpp.inc"
@@ -178,6 +187,12 @@ void Strided2dLayoutAttr::print(AsmPrinter &printer) const {
   printer << ", ";
   printQuestionOrInt(getStride1());
   printer << "]>";
+}
+
+bool Strided2dLayoutAttr::isStaticStrides() const {
+  auto stride0 = getStride0();
+  auto stride1 = getStride1();
+  return !ShapedType::isDynamic(stride0) && !ShapedType::isDynamic(stride1);
 }
 
 Attribute SwizzlingLayoutAttr::parse(AsmParser &parser, Type type) {
@@ -261,12 +276,15 @@ LogicalResult FPToFPOp::verify() {
     return emitOpError("rounding mode is required for down cast");
   auto oldType = getElementTypeOrSelf(getSource().getType());
   auto newType = getElementTypeOrSelf(getType());
-  if (oldType.isBF16() && (newType.isFloat8E4M3() || newType.isFloat8E5M2()) &&
+  bool oldTypeIsF8 = oldType.isFloat8E4M3() || oldType.isFloat8E5M2();
+  bool newTypeIsF8 = newType.isFloat8E4M3() || newType.isFloat8E5M2();
+  if (oldType.isBF16() && newTypeIsF8 &&
       getRoundingMode().value() == RoundingMode::RZ)
-    return emitOpError("unsupported conversion kind");
-  if ((oldType.isFloat8E4M3() || oldType.isFloat8E5M2()) &&
-      (newType.isFloat8E4M3() || newType.isFloat8E5M2()))
-    return emitOpError("unsupported conversion kind");
+    return emitOpError("unsupported rounding mode when convert bf16 to f8");
+  if (oldTypeIsF8 && newTypeIsF8)
+    return emitOpError("convert f8 to f8 is not supported");
+  if (!isa<RankedTensorType>(getType()) && (oldTypeIsF8 || newTypeIsF8))
+    return emitOpError("convert with f8 scalar is not supported");
   return success();
 }
 
@@ -386,11 +404,26 @@ LogicalResult CpAsyncGlobalToSharedOp::verify() {
   return success();
 }
 
+LogicalResult CpAsyncWaitGroupOp::verify() {
+  auto nvidiaCC = getNvidiaCC((*this)->getParentOfType<ModuleOp>());
+  if (nvidiaCC < 80)
+    return emitOpError("is not supported with nvidia compute capability < 80");
+  return success();
+}
+
 void WarpIdOp::inferResultRanges(ArrayRef<ConstantIntRanges> argRanges,
                                  SetIntRangeFn setResultRange) {
   auto numWarps = getNumWarps((*this)->getParentOfType<ModuleOp>());
   auto minAPInt = APInt(32, 0);
   auto maxAPInt = APInt(32, numWarps - 1);
+  auto intRange = ConstantIntRanges::range(minAPInt, maxAPInt, false);
+  setResultRange(getResult(), intRange);
+}
+
+void LaneIdOp::inferResultRanges(ArrayRef<ConstantIntRanges> argRanges,
+                                 SetIntRangeFn setResultRange) {
+  auto minAPInt = APInt(32, 0);
+  auto maxAPInt = APInt(32, warpSize - 1);
   auto intRange = ConstantIntRanges::range(minAPInt, maxAPInt, false);
   setResultRange(getResult(), intRange);
 }
@@ -458,7 +491,7 @@ LogicalResult MatmulOp::verify() {
   auto nvidiaCC = getNvidiaCC((*this)->getParentOfType<ModuleOp>());
 
   switch (getMatmulImplWay()) {
-  case (MatmulImplWay::MMA_M16N8K8_F16): {
+  case MatmulImplWay::MMA_M16N8K8_F16: {
     if (nvidiaCC < 80 && lhsElementType.isBF16() && rhsElementType.isBF16())
       return emitOpError("operands with bf16 element type requires nvidia "
                          "compute capability >= 80");
@@ -477,7 +510,7 @@ LogicalResult MatmulOp::verify() {
     break;
   }
 
-  case (MatmulImplWay::MMA_M16N8K16_F16): {
+  case MatmulImplWay::MMA_M16N8K16_F16: {
     if (nvidiaCC < 80)
       return emitOpError(
           "mma_m16n8k16_f16 requires nvidia compute capability >= 80");
@@ -496,7 +529,7 @@ LogicalResult MatmulOp::verify() {
     break;
   }
 
-  case (MatmulImplWay::MMA_M16N8K8_TF32): {
+  case MatmulImplWay::MMA_M16N8K8_TF32: {
     if (nvidiaCC < 80)
       return emitOpError(
           "mma_m16n8k8_tf32 requires nvidia compute capability >= 80");
@@ -513,7 +546,7 @@ LogicalResult MatmulOp::verify() {
     break;
   }
 
-  case (MatmulImplWay::MMA_M16N8K16_F8): {
+  case MatmulImplWay::MMA_M16N8K16_F8: {
     if (nvidiaCC < 89)
       return emitOpError(
           "mma_m16n8k16_f8 requires nvidia compute capability >= 89");
@@ -836,7 +869,8 @@ int64_t kapy::getNumWarps(ModuleOp module) {
 
 int64_t kapy::getAlignment(Operation *op) {
   if (!op->hasAttr("kapy.alignment")) {
-    emitError(op->getLoc(), "can not get a named attribute");
+    auto loc = op->getLoc();
+    emitWarning(loc, "can not get a named attribute, using default");
     return 128;
   }
   return cast<IntegerAttr>(op->getAttr("kapy.alignment")).getInt();
@@ -844,7 +878,8 @@ int64_t kapy::getAlignment(Operation *op) {
 
 int64_t kapy::getSize(ModuleOp module) {
   if (!module->hasAttr("kapy.size")) {
-    emitError(module.getLoc(), "can not get a named attribute");
+    auto loc = module->getLoc();
+    emitWarning(loc, "can not get a named attribute, using default");
     return 0;
   }
   return cast<IntegerAttr>(module->getAttr("kapy.size")).getInt();

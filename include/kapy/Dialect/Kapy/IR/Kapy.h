@@ -33,8 +33,6 @@
 
 #include "kapy/Dialect/Kapy/IR/OpTraits.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
-#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
@@ -44,6 +42,9 @@
 
 #define GET_ATTRDEF_CLASSES
 #include "kapy/Dialect/Kapy/IR/Attrs.h.inc"
+
+#define GET_TYPEDEF_CLASSES
+#include "kapy/Dialect/Kapy/IR/Types.h.inc"
 
 #define GET_OP_CLASSES
 #include "kapy/Dialect/Kapy/IR/Ops.h.inc"

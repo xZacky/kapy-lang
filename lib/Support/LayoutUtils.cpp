@@ -87,7 +87,8 @@ FragmentsLayoutAttr kapy::getFragmentsLayout(ArrayRef<int64_t> laneLoops,
   unsigned j = rowMajor ? 1 : 0;
   auto shape = tensorType.getShape();
   SmallVector<int64_t, 2> laneArray(2);
-  laneArray[j] = std::clamp<int64_t>(warpSize, 1, shape[j] / laneLoops[j]);
+  auto maxLanes = std::max<int64_t>(shape[j] / laneLoops[j], 1);
+  laneArray[j] = std::clamp<int64_t>(warpSize, 1, maxLanes);
   laneArray[i] = warpSize / laneArray[j];
   auto *context = tensorType.getContext();
   return FragmentsLayoutAttr::get(context, laneArray, laneLoops, i, j);
@@ -102,33 +103,33 @@ std::array<FragmentsLayoutAttr, 2> kapy::getDefaultLayouts(LdMatrixOp op) {
   auto *context = op.getContext();
   auto bitWidth = getIntOrFloatBitWidth(op.getSource().getType());
   auto simdSize = 128 / bitWidth;
-  auto packSize = 32 / bitWidth;
+  auto wordSize = 32 / bitWidth;
   auto loaderLayout =
       FragmentsLayoutAttr::get(context, {16, 2}, {1, simdSize}, 1, 0);
   auto resultLayout =
-      FragmentsLayoutAttr::get(context, {8, 4}, {1, packSize}, 0, 1);
+      FragmentsLayoutAttr::get(context, {8, 4}, {1, wordSize}, 0, 1);
   return {loaderLayout, resultLayout};
 }
 
 std::array<FragmentsLayoutAttr, 3> kapy::getDefaultLayouts(MatmulOp op) {
   auto *context = op.getContext();
   switch (op.getMatmulImplWay()) {
-  case (MatmulImplWay::MMA_M16N8K8_F16):
-  case (MatmulImplWay::MMA_M16N8K16_F16): {
+  case MatmulImplWay::MMA_M16N8K8_F16:
+  case MatmulImplWay::MMA_M16N8K16_F16: {
     auto lhsLayout = FragmentsLayoutAttr::get(context, {8, 4}, {1, 2}, 0, 1);
     auto rhsLayout = FragmentsLayoutAttr::get(context, {4, 8}, {2, 1}, 1, 0);
     auto accLayout = FragmentsLayoutAttr::get(context, {8, 4}, {1, 2}, 0, 1);
     return {lhsLayout, rhsLayout, accLayout};
   }
 
-  case (MatmulImplWay::MMA_M16N8K8_TF32): {
+  case MatmulImplWay::MMA_M16N8K8_TF32: {
     auto lhsLayout = FragmentsLayoutAttr::get(context, {8, 4}, {1, 1}, 0, 1);
     auto rhsLayout = FragmentsLayoutAttr::get(context, {4, 8}, {1, 1}, 1, 0);
     auto accLayout = FragmentsLayoutAttr::get(context, {8, 4}, {1, 2}, 0, 1);
     return {lhsLayout, rhsLayout, accLayout};
   }
 
-  case (MatmulImplWay::MMA_M16N8K16_F8): {
+  case MatmulImplWay::MMA_M16N8K16_F8: {
     auto lhsLayout = FragmentsLayoutAttr::get(context, {8, 4}, {1, 4}, 0, 1);
     auto rhsLayout = FragmentsLayoutAttr::get(context, {4, 8}, {4, 1}, 1, 0);
     auto accLayout = FragmentsLayoutAttr::get(context, {8, 4}, {1, 2}, 0, 1);

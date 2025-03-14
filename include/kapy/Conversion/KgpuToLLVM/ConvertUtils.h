@@ -23,7 +23,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file is copied and modified from the triton project.
+// This file is modified from the triton project.
 // https://github.com/triton-lang/triton
 //
 //===----------------------------------------------------------------------===//
@@ -33,12 +33,13 @@
 
 #include "mlir/Conversion/LLVMCommon/TypeConverter.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/IR/AffineExpr.h"
 
 // Shortcuts for some commonly used LLVM operations.
 #define llvm_inttoptr(...) rewriter.create<LLVM::IntToPtrOp>(loc, __VA_ARGS__)
 #define llvm_ptrtoint(...) rewriter.create<LLVM::PtrToIntOp>(loc, __VA_ARGS__)
 #define llvm_bitcast(...) rewriter.create<LLVM::BitcastOp>(loc, __VA_ARGS__)
-#define llvm_getelementptr(...) rewriter.create<LLVM::GEPOp>(loc, __VA_ARGS__)
+#define llvm_getelementptr(...) LLVM::createGEPOp(rewriter, loc, __VA_ARGS__)
 #define llvm_insertvalue(...)                                                  \
   rewriter.create<LLVM::InsertValueOp>(loc, __VA_ARGS__)
 #define llvm_extractvalue(...)                                                 \
@@ -52,7 +53,7 @@
 #define llvm_null(...) rewriter.create<LLVM::NullOp>(loc, __VA_ARGS__)
 
 // Shortcuts for some commonly used arith operations.
-#define arith_constant(...) rewriter.create<arith::ConstantOp>(loc, __VA_ARGS__)
+#define arith_constant(...) arith::createConstant(rewriter, loc, __VA_ARGS__)
 #define arith_constant_f16(...)                                                \
   arith::createConstantF16(rewriter, loc, __VA_ARGS__)
 #define arith_constant_f32(...)                                                \
@@ -111,21 +112,24 @@
 namespace mlir {
 namespace arith {
 
-Value createConstantF16(RewriterBase &rewriter, Location loc, float value);
-Value createConstantF32(RewriterBase &rewriter, Location loc, float value);
-Value createConstantF64(RewriterBase &rewriter, Location loc, double value);
+Value createConstant(OpBuilder &rewriter, Location loc, TypedAttr value);
 
-Value createConstantI1(RewriterBase &rewriter, Location loc, bool value);
-Value createConstantI32(RewriterBase &rewriter, Location loc, int32_t value);
-Value createConstantI64(RewriterBase &rewriter, Location loc, int64_t value);
+Value createConstantF16(OpBuilder &rewriter, Location loc, float value);
+Value createConstantF32(OpBuilder &rewriter, Location loc, float value);
+Value createConstantF64(OpBuilder &rewriter, Location loc, double value);
+
+Value createConstantI1(OpBuilder &rewriter, Location loc, bool value);
+Value createConstantI32(OpBuilder &rewriter, Location loc, int32_t value);
+Value createConstantI64(OpBuilder &rewriter, Location loc, int64_t value);
 
 } // namespace arith
 
-namespace NVVM {
+namespace LLVM {
 
-Value createLaneIdOp(RewriterBase &rewriter, Location loc);
+GEPOp createGEPOp(OpBuilder &rewriter, Location loc, Type pointerType,
+                  Type elementType, Value pointer, Value offset);
 
-} // namespace NVVM
+} // namespace LLVM
 
 namespace kapy {
 
@@ -145,17 +149,17 @@ public:
   ContainerT::size_type size() const { return end() - begin(); }
 };
 
-SmallVector<Value> unpackLLVMStruct(RewriterBase &rewriter, Location loc,
+SmallVector<Value> unpackLLVMStruct(OpBuilder &rewriter, Location loc,
                                     Value llvmStruct);
 
-Value packToLLVMStruct(RewriterBase &rewriter, Location loc,
+Value packToLLVMStruct(OpBuilder &rewriter, Location loc,
                        LLVM::LLVMStructType structType, ValueRange values);
 
-SmallVector<Value> unpackI32Value(RewriterBase &rewriter, Location loc,
-                                  Type elementType, Value i32Value);
+Value expandAffineExpr(OpBuilder &rewriter, Location loc, AffineExpr expr,
+                       ValueRange inputs);
 
-Value packToI32Value(RewriterBase &rewriter, Location loc, Type elementType,
-                     ValueRange elements);
+enum class PaddingOption : uint32_t;
+int64_t generateInitConstant(Type elementType, PaddingOption paddingOption);
 
 } // namespace kapy
 } // namespace mlir

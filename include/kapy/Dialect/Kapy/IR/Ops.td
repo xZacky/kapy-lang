@@ -85,7 +85,7 @@ def Kapy_ClampFOp : Kapy_Op<
     Kapy_FloatLike:$source,
     Kapy_FloatLike:$low,
     Kapy_FloatLike:$high,
-    BoolAttr:$propagate_nan
+    DefaultValuedAttr<BoolAttr, "false">:$propagate_nan
   );
   let results = (outs Kapy_FloatLike:$result);
 
@@ -94,31 +94,36 @@ def Kapy_ClampFOp : Kapy_Op<
 
 def Kapy_MkGlobalOp : Kapy_Op<"mk_global", [Pure, ResultInGlobalMemory]> {
   let arguments = (ins
-    I64:$address, I32:$size0, I32:$size1, I32:$stride0, I32:$stride1
+    Kapy_Pointer:$global_address,
+    I32:$dynamic_offset,
+    I32:$size0,
+    I32:$size1,
+    I32:$stride0,
+    I32:$stride1
   );
   let results = (outs Kapy_Tensor:$result);
 
   let assemblyFormat = [{
-    $address `,` `[` $size0 `,` $size1 `]` `,` `[` $stride0 `,` $stride1 `]`
-    attr-dict `:` type($result)
+    $global_address `[` $dynamic_offset `]` `[` $size0 `,` $size1 `]`
+    `[` $stride0 `,` $stride1 `]` attr-dict `:`
+    qualified(type($global_address)) `->` type($result)
   }];
 }
 
 def Kapy_SvGlobalOp : Kapy_Op<
-  "sv_global", [Pure, SourceInGlobalMemory, ResultInGlobalMemory]
+  "sv_global", [
+    Pure,
+    SourceInGlobalMemory,
+    ResultInGlobalMemory
+  ]
 > {
   let description = [{
-    Takes a subview of tensor in global memory.
+    Takes a subview of a tensor in global memory.
     Result will be padded to power of 2 size, padded element is out of bound.
   }];
 
   let arguments = (ins
-    Kapy_Tensor:$source,
-    I32:$start0,
-    I32:$end0,
-    I32:$start1,
-    I32:$end1,
-    Kapy_DefaultValuedPaddingOptionAttr:$padding_option
+    Kapy_Tensor:$source, I32:$start0, I32:$end0, I32:$start1, I32:$end1
   );
   let results = (outs Kapy_Tensor:$result);
 
@@ -141,6 +146,7 @@ def Kapy_LdGlobalOp : Kapy_Op<
 > {
   let arguments = (ins
     Kapy_Tensor:$source,
+    Kapy_DefaultValuedPaddingOptionAttr:$padding_option,
     Kapy_DefaultValuedCacheModifierAttr:$cache_modifier,
     Kapy_DefaultValuedEvictPriorityAttr:$evict_priority,
     DefaultValuedAttr<BoolAttr, "false">:$if_volatile
@@ -185,20 +191,19 @@ def Kapy_MkSharedOp : Kapy_Op<
 }
 
 def Kapy_SvSharedOp : Kapy_Op<
-  "sv_shared", [Pure, SourceInSharedMemory, ResultInSharedMemory]
+  "sv_shared", [
+    Pure,
+    SourceInSharedMemory,
+    ResultInSharedMemory
+  ]
 > {
   let description = [{
-    Takes a subview of tensor in shared memory.
+    Takes a subview of a tensor in shared memory.
     Result will be padded to power of 2 size, padded element is out of bound.
   }];
 
   let arguments = (ins
-    Kapy_Tensor:$source,
-    I32:$start0,
-    I32:$end0,
-    I32:$start1,
-    I32:$end1,
-    Kapy_DefaultValuedPaddingOptionAttr:$padding_option
+    Kapy_Tensor:$source, I32:$start0, I32:$end0, I32:$start1, I32:$end1
   );
   let results = (outs Kapy_Tensor:$result);
 
@@ -219,7 +224,9 @@ def Kapy_LdSharedOp : Kapy_Op<
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]
 > {
-  let arguments = (ins Kapy_Tensor:$source);
+  let arguments = (ins
+    Kapy_Tensor:$source, Kapy_DefaultValuedPaddingOptionAttr:$padding_option
+  );
   let results = (outs Kapy_Tensor:$result);
 
   let assemblyFormat = "$source attr-dict `:` type($source) `->` type($result)";
@@ -255,7 +262,11 @@ def Kapy_LdMatrixOp : Kapy_Op<
     pointers when lowering this operation.
   }];
 
-  let arguments = (ins Kapy_Tensor:$source, Kapy_Tensor:$loader);
+  let arguments = (ins
+    Kapy_Tensor:$source,
+    Kapy_Tensor:$loader,
+    Kapy_DefaultValuedPaddingOptionAttr:$padding_option
+  );
   let results = (outs Kapy_Tensor:$result);
 
   let assemblyFormat = [{
@@ -300,6 +311,8 @@ def Kapy_CpAsyncWaitGroupOp : Kapy_Op<"cp_async_wait_group"> {
   let arguments = (ins I32Attr:$num_pending);
 
   let assemblyFormat = "attr-dict";
+
+  let hasVerifier = 1;
 }
 
 def Kapy_SplatOp : Kapy_Op<"splat", [Pure, SameOperandsAndResultElementType]> {
@@ -353,6 +366,18 @@ def Kapy_ProgramIdOp : Kapy_Op<"program_id", [Pure]> {
 
 def Kapy_WarpIdOp : Kapy_Op<
   "warp_id",
+  [
+    Pure,
+    DeclareOpInterfaceMethods<InferIntRangeInterface, ["inferResultRanges"]>
+  ]
+> {
+  let results = (outs I32:$result);
+
+  let assemblyFormat = "attr-dict `:` type($result)";
+}
+
+def Kapy_LaneIdOp : Kapy_Op<
+  "lane_id",
   [
     Pure,
     DeclareOpInterfaceMethods<InferIntRangeInterface, ["inferResultRanges"]>

@@ -41,12 +41,9 @@ KapyToKgpuConversionTarget::KapyToKgpuConversionTarget(
     : ConversionTarget(*context) {
   addLegalDialect<KgpuDialect>();
 
-  addIllegalOp<scf::ExecuteRegionOp, scf::ForallOp, scf::InParallelOp,
-               scf::IndexSwitchOp, scf::ParallelOp, scf::ReduceOp,
-               scf::ReduceReturnOp>();
-
-  addDynamicallyLegalDialect<KapyDialect, arith::ArithDialect,
-                             math::MathDialect, cf::ControlFlowDialect,
+  addDynamicallyLegalDialect<KapyDialect,         //
+                             arith::ArithDialect, //
+                             math::MathDialect,   //
                              scf::SCFDialect>([&](Operation *op) {
     bool hasLegalRegions = true;
     for (auto &region : op->getRegions())

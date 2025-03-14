@@ -36,7 +36,7 @@ public:
 
 private:
   RankedTensorType sourceType;
-  unsigned axis;
+  unsigned axis = 0;
 };
 
 class ChangeOpHelper {
