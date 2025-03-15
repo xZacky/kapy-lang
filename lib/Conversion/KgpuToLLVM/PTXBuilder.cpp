@@ -57,14 +57,14 @@ void PTXBuilder::initOperand(Operand *operand, int64_t value) {
 }
 
 PTXBuilder::Operand *PTXBuilder::newOperand(StringRef constraint,
-                                            std::optional<int64_t> initValue) {
+                                            std::optional<int64_t> initConst) {
   // Constraint should be something like "=r".
   assert(constraint.size() == 2 && constraint[0] == '=');
   auto *operand = newOperand();
   operand->index = numOperands++;
   operand->constraint = constraint;
-  if (initValue.has_value())
-    initOperand(operand, initValue.value());
+  if (initConst.has_value())
+    initOperand(operand, initConst.value());
   return operand;
 }
 

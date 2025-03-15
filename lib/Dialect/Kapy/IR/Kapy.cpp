@@ -843,12 +843,9 @@ LogicalResult ReturnOp::verify() {
 }
 
 unsigned kapy::getIntOrFloatBitWidth(Type type) {
-  unsigned bitWidth;
   if (auto shapedType = dyn_cast<ShapedType>(type))
-    bitWidth = shapedType.getElementTypeBitWidth();
-  else
-    bitWidth = type.getIntOrFloatBitWidth();
-  return std::max<unsigned>(bitWidth, 8);
+    return shapedType.getElementTypeBitWidth();
+  return type.getIntOrFloatBitWidth();
 }
 
 int64_t kapy::getNvidiaCC(ModuleOp module) {

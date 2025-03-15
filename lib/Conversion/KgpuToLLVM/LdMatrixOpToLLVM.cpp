@@ -1,6 +1,6 @@
-//===- LdGlobalOpToLLVM.cpp -------------------------------------*- C++ -*-===//
+//===- LdMatrixOpToLLVM.cpp -------------------------------------*- C++ -*-===//
 //
-// This file implements class to make LdGlobalOp to LLVM compatible.
+// This file implements class to make LdMatrixOp to LLVM compatible.
 //
 //===----------------------------------------------------------------------===//
 
@@ -17,36 +17,50 @@ using namespace mlir::LLVM;
 
 namespace {
 
-class LdGlobalOpConversion : public ConvertOpToLLVMPattern<LdGlobalOp> {
+class LdMatrixOpConversion : public ConvertOpToLLVMPattern<LdMatrixOp> {
 public:
-  using ConvertOpToLLVMPattern<LdGlobalOp>::ConvertOpToLLVMPattern;
+  using ConvertOpToLLVMPattern<LdMatrixOp>::ConvertOpToLLVMPattern;
 
   virtual LogicalResult
-  matchAndRewrite(LdGlobalOp op, OpAdaptor adaptor,
+  matchAndRewrite(LdMatrixOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    assert(op->getNumOperands() == 1 && op->getNumResults() == 1);
+    assert(op->getNumOperands() == 2 && op->getNumResults() == 1);
     auto loc = op.getLoc();
 
     auto sourceType = op.getSource().getType();
-    auto globalLayout = getLayout<Strided2dLayoutAttr>(sourceType);
+    auto sharedLayout = getLayout<SwizzlingLayoutAttr>(sourceType);
+    auto bankParam = sharedLayout.getBankParam();
+    auto lineParam = sharedLayout.getLineParam();
+    assert(bankParam == 4 && lineParam == 8);
+
+    auto loaderType = op.getLoader().getType();
+    auto loaderLayout = getLayout<FragmentsLayoutAttr>(loaderType);
+    assert(sharedLayout.isRowMajor() == loaderLayout.isColMajor());
+    auto map = loaderLayout.getAffineMap(sourceType.getShape(), 1);
 
     auto tensorLayout = getLayout<FragmentsLayoutAttr>(op.getType());
-    auto laneLoops = tensorLayout.getLaneLoops();
     auto loopSpace = tensorLayout.getLoopSpace(sourceType.getShape());
-    auto map = tensorLayout.getAffineMap(sourceType.getShape(), 1);
 
     auto bitWidth = getIntOrFloatBitWidth(sourceType);
-    auto simdSize = laneLoops[globalLayout.isColMajor() ? 0 : 1];
-    auto numWords = simdSize * bitWidth / 32;
+    auto simdSize = 128 / bitWidth;
 
+    DenseMap<int64_t, int64_t> instIdToLoadIv;
     DenseMap<int64_t, SmallVector<int64_t, 8>> instIdToLoopIvs;
     for (int64_t loopIv0 = 0; loopIv0 < loopSpace[0]; ++loopIv0) {
       for (int64_t loopIv1 = 0; loopIv1 < loopSpace[1]; ++loopIv1) {
         int64_t instId;
-        if (globalLayout.isRowMajor())
+        if (sharedLayout.isRowMajor())
           instId = (loopIv0 * loopSpace[1] + loopIv1) / simdSize;
         else
           instId = (loopIv0 + loopIv1 * loopSpace[0]) / simdSize;
+        if (!instIdToLoadIv.contains(instId)) {
+          int64_t loadIv;
+          if (loaderLayout.isRowMajor())
+            loadIv = loopIv0 * loopSpace[1] + loopIv1;
+          else
+            loadIv = loopIv0 + loopIv1 * loopSpace[0];
+          instIdToLoadIv[instId] = loadIv;
+        }
         int64_t loopIv;
         if (tensorLayout.isRowMajor())
           loopIv = loopIv0 * loopSpace[1] + loopIv1;
@@ -57,12 +71,9 @@ public:
     }
     auto numInsts = instIdToLoopIvs.size();
 
-    auto pointerType = LLVMPointerType::get(getContext(), 1);
+    auto pointerType = LLVMPointerType::get(getContext(), 3);
     auto elementType = getSourceElementType(op);
     auto i32Type = rewriter.getIntegerType(32);
-    auto lessThan = arith::CmpIPredicate::ult;
-    auto initConst = generateInitConstant(sourceType.getElementType(),
-                                          op.getPaddingOption());
 
     Value sourceStruct = adaptor.getSource();
     Value pointer = llvm_extractvalue(pointerType, sourceStruct, 0);
@@ -70,64 +81,64 @@ public:
     Value start1 = llvm_extractvalue(i32Type, sourceStruct, 2);
     Value end0 = llvm_extractvalue(i32Type, sourceStruct, 3);
     Value end1 = llvm_extractvalue(i32Type, sourceStruct, 4);
-    Value one = arith_constant_i32(1);
-    Value stride0 = globalLayout.isRowMajor()
-                        ? llvm_extractvalue(i32Type, sourceStruct, 5)
-                        : one;
-    Value stride1 = globalLayout.isColMajor()
-                        ? llvm_extractvalue(i32Type, sourceStruct, 6)
-                        : one;
+    Value stride0 = arith_constant_i32(sharedLayout.getStride0());
+    Value stride1 = arith_constant_i32(sharedLayout.getStride1());
+    Value bankValue = arith_constant_i32(bankParam);
+    Value lineValue = arith_constant_i32(lineParam);
+    Value byteWidth = arith_constant_i32(bitWidth / 8);
+    Value const128 = arith_constant_i32(128);
+    Value four = arith_constant_i32(4);
+    Value bankSize = arith_constant_i32(32 / bitWidth);
+    Value lineSize = arith_constant_i32(1024 / bitWidth);
     Value laneId = rewriter.create<LaneIdOp>(loc);
 
     SmallVector<Value> pointers;
-    SmallVector<Value> predicates;
     for (int64_t instId = 0; instId < numInsts; ++instId) {
-      Value loopIv = arith_constant_i32(instIdToLoopIvs[instId][0]);
+      Value loadIv = arith_constant_i32(instIdToLoadIv[instId]);
       Value index0 =
-          expandAffineExpr(rewriter, loc, map.getResult(0), {laneId, loopIv});
+          expandAffineExpr(rewriter, loc, map.getResult(0), {laneId, loadIv});
       Value index1 =
-          expandAffineExpr(rewriter, loc, map.getResult(1), {laneId, loopIv});
+          expandAffineExpr(rewriter, loc, map.getResult(1), {laneId, loadIv});
       index0 = arith_addi(start0, index0);
       index1 = arith_addi(start1, index1);
+
+      // before swizzling
+      Value elemOffset = arith_addi(arith_muli(index0, stride0), //
+                                    arith_muli(index1, stride1));
+      Value byteOffset = arith_muli(elemOffset, byteWidth);
+      Value bankId = arith_divui(arith_remui(byteOffset, const128), four);
+      Value lineId = arith_divui(byteOffset, const128);
+      // apply swizzling
+      Value xorResult = arith_xori(arith_divui(bankId, bankValue),
+                                   arith_remui(lineId, lineValue));
+      Value newBankId = arith_addi(arith_muli(xorResult, bankValue),
+                                   arith_remui(bankId, bankValue));
+      Value bankOffset = arith_muli(newBankId, bankSize);
+      Value lineOffset = arith_muli(lineId, lineSize);
       pointers.push_back(
           llvm_getelementptr(pointerType, elementType, pointer,
-                             arith_addi(arith_muli(index0, stride0),
-                                        arith_muli(index1, stride1))));
-      predicates.push_back(arith_andi(arith_cmpi(lessThan, index0, end0),
-                                      arith_cmpi(lessThan, index1, end1)));
+                             arith_addi(bankOffset, lineOffset)));
     }
 
     SmallVector<Value> resultValues(loopSpace[0] * loopSpace[1]);
     for (int64_t instId = 0; instId < numInsts; ++instId) {
       PTXBuilder builder;
-      auto &ld = builder.create("ld")->o("volatile", op.isVolatile()).global();
-      if (!op.isVolatile()) {
-        if (op.getCacheModifier() != CacheModifier::NONE)
-          ld.o(stringifyCacheModifier(op.getCacheModifier()).str());
-        else
-          ld.o("L1::" + stringifyEvictPriority(op.getEvictPriority()).str());
-      }
-      ld.v(numWords, numWords > 1).b(32);
+      auto &ldmatrix = *builder.create("ldmatrix.sync.aligned.m8n8.x4");
+      ldmatrix.o("trans",
+                 loaderLayout.isColMajor() != tensorLayout.isRowMajor());
+      ldmatrix.shared().b(16);
 
       auto *dstOperand = builder.newListOperand();
-      for (unsigned i = 0; i < numWords; ++i)
-        dstOperand->listPushBack(builder.newOperand("=r", initConst));
+      for (unsigned i = 0; i < 4; ++i)
+        dstOperand->listPushBack(builder.newOperand("=r"));
       auto *srcOperand = builder.newAddressOperand(pointers[instId], "l");
-      ld(dstOperand, srcOperand).predicate(predicates[instId], "b");
+      ldmatrix(dstOperand, srcOperand);
 
-      SmallVector<Type> wordTypes(numWords, i32Type);
-      Type wordsType;
-      if (numWords > 1)
-        wordsType = LLVMStructType::getLiteral(getContext(), wordTypes);
-      else
-        wordsType = wordTypes[0];
+      SmallVector<Type> wordTypes(4, i32Type);
+      auto wordsType = LLVMStructType::getLiteral(getContext(), wordTypes);
       auto words = builder.launch(rewriter, loc, wordsType);
-      for (unsigned i = 0; i < numWords; ++i) {
-        Value word;
-        if (numWords > 1)
-          word = llvm_extractvalue(i32Type, words, i);
-        else
-          word = words;
+      for (unsigned i = 0; i < 4; ++i) {
+        Value word = llvm_extractvalue(i32Type, words, i);
         if (bitWidth < 32) {
           auto vectorSize = 32 / bitWidth;
           auto vectorType = VectorType::get(vectorSize, elementType);
@@ -152,12 +163,12 @@ public:
   }
 
 private:
-  Type getSourceElementType(LdGlobalOp op) const {
+  Type getSourceElementType(LdMatrixOp op) const {
     auto elementType = op.getSource().getType().getElementType();
     return typeConverter->convertType(elementType);
   }
 
-  LLVMStructType getResultStructType(LdGlobalOp op) const {
+  LLVMStructType getResultStructType(LdMatrixOp op) const {
     auto resultType = typeConverter->convertType(op.getType());
     return cast<LLVMStructType>(resultType);
   }
@@ -165,7 +176,7 @@ private:
 
 } // namespace
 
-void kapy::populateLdGlobalOpToLLVMConversionPattern(
+void kapy::populateLdMatrixOpToLLVMConversionPattern(
     const LLVMTypeConverter &typeConverter, RewritePatternSet &patterns) {
-  patterns.add<LdGlobalOpConversion>(typeConverter);
+  patterns.add<LdMatrixOpConversion>(typeConverter);
 }

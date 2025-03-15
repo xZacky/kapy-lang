@@ -179,9 +179,13 @@ static LogicalResult checkContiguity(CpAsyncGlobalToSharedOp op) {
 }
 
 static LogicalResult checkAlignment(Operation *op) {
-  if (getAlignment(op) < 4)
+  auto alignment = getAlignment(op);
+  if (alignment < 4)
     return op->emitOpError(
         "has memory access with alignment < 4, that is not supported");
+  if (isa<LdMatrixOp>(op) && alignment < 16)
+    return op->emitOpError(
+        "has memory access with alignment < 16, that is not supported");
   return success();
 }
 

@@ -1,6 +1,6 @@
-//===- StGlobalOpToLLVM.cpp -------------------------------------*- C++ -*-===//
+//===- StSharedOpToLLVM.cpp -------------------------------------*- C++ -*-===//
 //
-// This file implements class to make StGlobalOp to LLVM compatible.
+// This file implements class to make StSharedOp to LLVM compatible.
 //
 //===----------------------------------------------------------------------===//
 
@@ -17,18 +17,20 @@ using namespace mlir::LLVM;
 
 namespace {
 
-class StGlobalOpConversion : public ConvertOpToLLVMPattern<StGlobalOp> {
+class StSharedOpConversion : public ConvertOpToLLVMPattern<StSharedOp> {
 public:
-  using ConvertOpToLLVMPattern<StGlobalOp>::ConvertOpToLLVMPattern;
+  using ConvertOpToLLVMPattern<StSharedOp>::ConvertOpToLLVMPattern;
 
   virtual LogicalResult
-  matchAndRewrite(StGlobalOp op, OpAdaptor adaptor,
+  matchAndRewrite(StSharedOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     assert(op->getNumOperands() == 2 && op->getNumResults() == 0);
     auto loc = op.getLoc();
 
     auto targetType = op.getTarget().getType();
-    auto globalLayout = getLayout<Strided2dLayoutAttr>(targetType);
+    auto sharedLayout = getLayout<SwizzlingLayoutAttr>(targetType);
+    auto bankParam = sharedLayout.getBankParam();
+    auto lineParam = sharedLayout.getLineParam();
 
     auto sourceType = op.getSource().getType();
     auto tensorLayout = getLayout<FragmentsLayoutAttr>(sourceType);
@@ -37,14 +39,15 @@ public:
     auto map = tensorLayout.getAffineMap(sourceType.getShape(), 2);
 
     auto bitWidth = getIntOrFloatBitWidth(sourceType);
-    auto simdSize = laneLoops[globalLayout.isColMajor() ? 0 : 1];
+    auto simdSize = laneLoops[sharedLayout.isColMajor() ? 0 : 1];
+    simdSize = std::min(simdSize, bankParam * 32 / bitWidth);
     auto numWords = simdSize * bitWidth / 32;
 
     DenseMap<int64_t, SmallVector<int64_t, 8>> instIdToLoopIvs;
     for (int64_t loopIv0 = 0; loopIv0 < loopSpace[0]; ++loopIv0) {
       for (int64_t loopIv1 = 0; loopIv1 < loopSpace[1]; ++loopIv1) {
         int64_t instId;
-        if (globalLayout.isRowMajor())
+        if (sharedLayout.isRowMajor())
           instId = (loopIv0 * loopSpace[1] + loopIv1) / simdSize;
         else
           instId = (loopIv0 + loopIv1 * loopSpace[0]) / simdSize;
@@ -58,7 +61,7 @@ public:
     }
     auto numInsts = instIdToLoopIvs.size();
 
-    auto pointerType = LLVMPointerType::get(getContext(), 1);
+    auto pointerType = LLVMPointerType::get(getContext(), 3);
     auto elementType = getSourceElementType(op);
     auto i32Type = rewriter.getIntegerType(32);
     auto voidType = LLVMVoidType::get(getContext());
@@ -71,13 +74,15 @@ public:
     Value start1 = llvm_extractvalue(i32Type, targetStruct, 2);
     Value end0 = llvm_extractvalue(i32Type, targetStruct, 3);
     Value end1 = llvm_extractvalue(i32Type, targetStruct, 4);
-    Value one = arith_constant_i32(1);
-    Value stride0 = globalLayout.isRowMajor()
-                        ? llvm_extractvalue(i32Type, targetStruct, 5)
-                        : one;
-    Value stride1 = globalLayout.isColMajor()
-                        ? llvm_extractvalue(i32Type, targetStruct, 6)
-                        : one;
+    Value stride0 = arith_constant_i32(sharedLayout.getStride0());
+    Value stride1 = arith_constant_i32(sharedLayout.getStride1());
+    Value bankValue = arith_constant_i32(bankParam);
+    Value lineValue = arith_constant_i32(lineParam);
+    Value byteWidth = arith_constant_i32(bitWidth / 8);
+    Value const128 = arith_constant_i32(128);
+    Value four = arith_constant_i32(4);
+    Value bankSize = arith_constant_i32(32 / bitWidth);
+    Value lineSize = arith_constant_i32(1024 / bitWidth);
     Value laneId = rewriter.create<LaneIdOp>(loc);
 
     SmallVector<Value> pointers;
@@ -90,23 +95,29 @@ public:
           expandAffineExpr(rewriter, loc, map.getResult(1), {laneId, loopIv});
       index0 = arith_addi(start0, index0);
       index1 = arith_addi(start1, index1);
+      // before swizzling
+      Value elemOffset = arith_addi(arith_muli(index0, stride0), //
+                                    arith_muli(index1, stride1));
+      Value byteOffset = arith_muli(elemOffset, byteWidth);
+      Value bankId = arith_divui(arith_remui(byteOffset, const128), four);
+      Value lineId = arith_divui(byteOffset, const128);
+      // apply swizzling
+      Value xorResult = arith_xori(arith_divui(bankId, bankValue),
+                                   arith_remui(lineId, lineValue));
+      Value newBankId = arith_addi(arith_muli(xorResult, bankValue),
+                                   arith_remui(bankId, bankValue));
+      Value bankOffset = arith_muli(newBankId, bankSize);
+      Value lineOffset = arith_muli(lineId, lineSize);
       pointers.push_back(
           llvm_getelementptr(pointerType, elementType, pointer,
-                             arith_addi(arith_muli(index0, stride0),
-                                        arith_muli(index1, stride1))));
+                             arith_addi(bankOffset, lineOffset)));
       predicates.push_back(arith_andi(arith_cmpi(lessThan, index0, end0),
                                       arith_cmpi(lessThan, index1, end1)));
     }
 
     for (int64_t instId = 0; instId < numInsts; ++instId) {
       PTXBuilder builder;
-      auto &st = builder.create("st")->o("volatile", op.isVolatile()).global();
-      if (!op.isVolatile()) {
-        if (op.getCacheModifier() != CacheModifier::NONE)
-          st.o(stringifyCacheModifier(op.getCacheModifier()).str());
-        else
-          st.o("L1::" + stringifyEvictPriority(op.getEvictPriority()).str());
-      }
+      auto &st = builder.create("st")->o("volatile", op.isVolatile()).shared();
       st.v(numWords, numWords > 1).b(32);
 
       auto *dstOperand = builder.newAddressOperand(pointers[instId], "l");
@@ -144,7 +155,7 @@ public:
   }
 
 private:
-  Type getSourceElementType(StGlobalOp op) const {
+  Type getSourceElementType(StSharedOp op) const {
     auto elementType = getElementTypeOrSelf(op.getSource().getType());
     return typeConverter->convertType(elementType);
   }
@@ -152,7 +163,7 @@ private:
 
 } // namespace
 
-void kapy::populateStGlobalOpToLLVMConversionPattern(
+void kapy::populateStSharedOpToLLVMConversionPattern(
     const LLVMTypeConverter &typeConverter, RewritePatternSet &patterns) {
-  patterns.add<StGlobalOpConversion>(typeConverter);
+  patterns.add<StSharedOpConversion>(typeConverter);
 }

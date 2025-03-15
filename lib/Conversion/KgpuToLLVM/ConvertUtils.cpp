@@ -258,6 +258,10 @@ Value kapy::expandAffineExpr(OpBuilder &rewriter, Location loc, AffineExpr expr,
 
 int64_t kapy::generateInitConstant(Type elementType,
                                    PaddingOption paddingOption) {
+  if (elementType.isInteger()) {
+    assert(paddingOption == PaddingOption::ZERO);
+    return 0;
+  }
   if (elementType.isF32()) {
     switch (paddingOption) {
     case PaddingOption::ZERO:

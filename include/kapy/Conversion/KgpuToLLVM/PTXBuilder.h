@@ -135,7 +135,7 @@ public:
   /// initialize it before use. Otherwise if the register is undefined and ptxas
   /// can perform aggressive optimizations that may lead to incorrect results.
   Operand *newOperand(StringRef constraint,
-                      std::optional<int64_t> initValue = std::nullopt);
+                      std::optional<int64_t> initConst = std::nullopt);
 
   /// Create a new operand that is tied to a previous operand. In this case the
   /// asm would be premitted to write an input register. Instead of providing

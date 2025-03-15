@@ -99,6 +99,14 @@ private:
     populateSvGlobalOpToLLVMConversionPattern(typeConverter, patterns);
     populateLdGlobalOpToLLVMConversionPattern(typeConverter, patterns);
     populateStGlobalOpToLLVMConversionPattern(typeConverter, patterns);
+    populateMkSharedOpToLLVMConversionPattern(typeConverter, patterns);
+    populateSvSharedOpToLLVMConversionPattern(typeConverter, patterns);
+    populateLdSharedOpToLLVMConversionPattern(typeConverter, patterns);
+    populateStSharedOpToLLVMConversionPattern(typeConverter, patterns);
+    populateLdMatrixOpToLLVMConversionPattern(typeConverter, patterns);
+    populateCpAsyncOpToLLVMConversionPatterns(typeConverter, patterns);
+    populateBroadcastOpToLLVMConversionPattern(typeConverter, patterns);
+    populateSplatLikeOpToLLVMConversionPatterns(typeConverter, patterns);
     populateCallReturnOpToLLVMConversionPatterns(typeConverter, patterns);
 
     auto module = getOperation();

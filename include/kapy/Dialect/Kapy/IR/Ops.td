@@ -173,11 +173,16 @@ def Kapy_StGlobalOp : Kapy_Op<
     Kapy_Tensor:$source,
     Kapy_Tensor:$target,
     Kapy_DefaultValuedCacheModifierAttr:$cache_modifier,
-    Kapy_DefaultValuedEvictPriorityAttr:$evict_priority
+    Kapy_DefaultValuedEvictPriorityAttr:$evict_priority,
+    DefaultValuedAttr<BoolAttr, "false">:$if_volatile
   );
 
   let assemblyFormat = [{
     $source `,` $target attr-dict `:` type($source) `,` type($target)
+  }];
+
+  let extraClassDeclaration = [{
+    inline bool isVolatile() { return getIfVolatile(); }
   }];
 }
 
@@ -225,11 +230,17 @@ def Kapy_LdSharedOp : Kapy_Op<
   ]
 > {
   let arguments = (ins
-    Kapy_Tensor:$source, Kapy_DefaultValuedPaddingOptionAttr:$padding_option
+    Kapy_Tensor:$source,
+    Kapy_DefaultValuedPaddingOptionAttr:$padding_option,
+    DefaultValuedAttr<BoolAttr, "false">:$if_volatile
   );
   let results = (outs Kapy_Tensor:$result);
 
   let assemblyFormat = "$source attr-dict `:` type($source) `->` type($result)";
+
+  let extraClassDeclaration = [{
+    inline bool isVolatile() { return getIfVolatile(); }
+  }];
 }
 
 def Kapy_StSharedOp : Kapy_Op<
@@ -241,10 +252,18 @@ def Kapy_StSharedOp : Kapy_Op<
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]
 > {
-  let arguments = (ins Kapy_Tensor:$source, Kapy_Tensor:$target);
+  let arguments = (ins
+    Kapy_Tensor:$source,
+    Kapy_Tensor:$target,
+    DefaultValuedAttr<BoolAttr, "false">:$if_volatile
+  );
   
   let assemblyFormat = [{
     $source `,` $target attr-dict `:` type($source) `,` type($target)
+  }];
+
+  let extraClassDeclaration = [{
+    inline bool isVolatile() { return getIfVolatile(); }
   }];
 }
 
@@ -262,11 +281,7 @@ def Kapy_LdMatrixOp : Kapy_Op<
     pointers when lowering this operation.
   }];
 
-  let arguments = (ins
-    Kapy_Tensor:$source,
-    Kapy_Tensor:$loader,
-    Kapy_DefaultValuedPaddingOptionAttr:$padding_option
-  );
+  let arguments = (ins Kapy_Tensor:$source, Kapy_Tensor:$loader);
   let results = (outs Kapy_Tensor:$result);
 
   let assemblyFormat = [{
