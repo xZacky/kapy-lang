@@ -9,6 +9,7 @@
 #include "kapy/Conversion/KgpuToLLVM/Patterns.h"
 #include "kapy/Dialect/Kapy/IR/Kapy.h"
 #include "kapy/Dialect/Kgpu/IR/Kgpu.h"
+#include "kapy/Support/CommonUtils.h"
 #include "mlir/Conversion/LLVMCommon/Pattern.h"
 
 using namespace mlir;
@@ -84,8 +85,7 @@ public:
     Value lineSize = arith_constant_i32(1024 / bitWidth);
     Value laneId = rewriter.create<LaneIdOp>(loc);
 
-    SmallVector<Value> pointers;
-    SmallVector<Value> predicates;
+    SmallVector<Value> pointers, predicates;
     for (int64_t instId = 0; instId < numInsts; ++instId) {
       Value loopIv = arith_constant_i32(instIdToLoopIvs[instId][0]);
       Value index0 =
@@ -114,7 +114,7 @@ public:
                                       arith_cmpi(lessThan, index1, end1)));
     }
 
-    SmallVector<Value> resultValues(loopSpace[0] * loopSpace[1]);
+    SmallVector<Value> resultValues(product(loopSpace));
     for (int64_t instId = 0; instId < numInsts; ++instId) {
       PTXBuilder builder;
       auto &ld = builder.create("ld")->o("volatile", op.isVolatile()).shared();
@@ -156,9 +156,7 @@ public:
     }
 
     auto resultType = getResultStructType(op);
-    auto resultStruct =
-        packToLLVMStruct(rewriter, loc, resultType, resultValues);
-    rewriter.replaceOp(op, resultStruct);
+    packAndReplace(rewriter, op, resultType, resultValues);
     return success();
   }
 

@@ -155,6 +155,9 @@ SmallVector<Value> unpackLLVMStruct(OpBuilder &rewriter, Location loc,
 Value packToLLVMStruct(OpBuilder &rewriter, Location loc,
                        LLVM::LLVMStructType structType, ValueRange values);
 
+void packAndReplace(RewriterBase &rewriter, Operation *op,
+                    LLVM::LLVMStructType structType, ValueRange values);
+
 Value expandAffineExpr(OpBuilder &rewriter, Location loc, AffineExpr expr,
                        ValueRange inputs);
 

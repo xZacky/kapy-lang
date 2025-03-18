@@ -29,7 +29,7 @@ int64_t ReduceOpHelper::getNumShfls() const {
   auto map = layout.getAffineMap(shape, 3);
   DenseSet<int64_t> laneIdSet;
   for (int64_t index = 0; index < shape[axis]; ++index) {
-    int64_t laneId = 0;
+    int64_t laneId;
     if (axis == 0)
       laneId = map.compose({index, 0})[0];
     else

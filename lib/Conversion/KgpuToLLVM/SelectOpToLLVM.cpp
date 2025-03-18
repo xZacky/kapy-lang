@@ -36,9 +36,7 @@ public:
 
       auto resultValues = doConversion(op, adaptor, rewriter,
                                        MultipleValuesRange(operandsValues));
-      auto resultStruct =
-          packToLLVMStruct(rewriter, loc, resultType, resultValues);
-      rewriter.replaceOp(op, resultStruct);
+      packAndReplace(rewriter, op, resultType, resultValues);
       return success();
     } else {
       condition = adaptor.getCondition();
@@ -52,9 +50,7 @@ public:
 
         auto resultValues = doConversion(op, adaptor, rewriter,
                                          MultipleValuesRange(operandsValues));
-        auto resultStruct =
-            packToLLVMStruct(rewriter, loc, resultType, resultValues);
-        rewriter.replaceOp(op, resultStruct);
+        packAndReplace(rewriter, op, resultType, resultValues);
         return success();
       } else {
         auto newOp = arith_select(resultType, condition, trueValue, falseValue);

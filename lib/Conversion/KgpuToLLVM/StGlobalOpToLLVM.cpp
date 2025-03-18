@@ -80,8 +80,7 @@ public:
                         : one;
     Value laneId = rewriter.create<LaneIdOp>(loc);
 
-    SmallVector<Value> pointers;
-    SmallVector<Value> predicates;
+    SmallVector<Value> pointers, predicates;
     for (int64_t instId = 0; instId < numInsts; ++instId) {
       Value loopIv = arith_constant_i32(instIdToLoopIvs[instId][0]);
       Value index0 =

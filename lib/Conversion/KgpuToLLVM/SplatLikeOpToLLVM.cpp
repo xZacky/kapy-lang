@@ -51,8 +51,7 @@ public:
     auto resultType = getResultStructType(op);
     auto value = adaptor.getSource();
     SmallVector<Value> values(resultType.getBody().size(), value);
-    auto resultStruct = packToLLVMStruct(rewriter, loc, resultType, values);
-    rewriter.replaceOp(op, resultStruct);
+    packAndReplace(rewriter, op, resultType, values);
     return success();
   }
 
@@ -80,8 +79,7 @@ public:
     auto valueAttr = splatAttr.getSplatValue<TypedAttr>();
     auto value = arith_constant(valueAttr);
     SmallVector<Value> values(resultType.getBody().size(), value);
-    auto resultStruct = packToLLVMStruct(rewriter, loc, resultType, values);
-    rewriter.replaceOp(op, resultStruct);
+    packAndReplace(rewriter, op, resultType, values);
     return success();
   }
 

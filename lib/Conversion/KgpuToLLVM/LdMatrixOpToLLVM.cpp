@@ -9,6 +9,7 @@
 #include "kapy/Conversion/KgpuToLLVM/Patterns.h"
 #include "kapy/Dialect/Kapy/IR/Kapy.h"
 #include "kapy/Dialect/Kgpu/IR/Kgpu.h"
+#include "kapy/Support/CommonUtils.h"
 #include "mlir/Conversion/LLVMCommon/Pattern.h"
 
 using namespace mlir;
@@ -120,7 +121,7 @@ public:
                              arith_addi(bankOffset, lineOffset)));
     }
 
-    SmallVector<Value> resultValues(loopSpace[0] * loopSpace[1]);
+    SmallVector<Value> resultValues(product(loopSpace));
     for (int64_t instId = 0; instId < numInsts; ++instId) {
       PTXBuilder builder;
       auto &ldmatrix = *builder.create("ldmatrix.sync.aligned.m8n8.x4");
@@ -156,9 +157,7 @@ public:
     }
 
     auto resultType = getResultStructType(op);
-    auto resultStruct =
-        packToLLVMStruct(rewriter, loc, resultType, resultValues);
-    rewriter.replaceOp(op, resultStruct);
+    packAndReplace(rewriter, op, resultType, resultValues);
     return success();
   }
 

@@ -305,14 +305,14 @@ static ConversionFunc makeConversionFuncFromPTX(const std::string &ptx,
     auto newBitWidth = newType.getIntOrFloatBitWidth();
 
     // First, we pack `oldElems` into 32-bit integers.
-    auto oldVecWidth = oldWordNumBits / oldBitWidth;
-    auto oldVectorType = VectorType::get(oldVecWidth, oldType);
-    auto oldNumVectors = numElems / oldVecWidth;
+    auto oldVectorSize = oldWordNumBits / oldBitWidth;
+    auto oldVectorType = VectorType::get(oldVectorSize, oldType);
+    auto oldNumVectors = numElems / oldVectorSize;
     SmallVector<Value> oldVectors(oldNumVectors, llvm_undef(oldVectorType));
     for (unsigned i = 0; i < numElems; ++i) {
-      auto &oldVector = oldVectors[i / oldVecWidth];
+      auto &oldVector = oldVectors[i / oldVectorSize];
       oldVector = llvm_insertelement(oldVectorType, oldVector, oldElems[i],
-                                     arith_constant_i32(i % oldVecWidth));
+                                     arith_constant_i32(i % oldVectorSize));
     }
     auto oldWordType = rewriter.getIntegerType(oldWordNumBits);
     for (unsigned i = 0; i < oldNumVectors; ++i)
@@ -323,8 +323,8 @@ static ConversionFunc makeConversionFuncFromPTX(const std::string &ptx,
     SmallVector<PTXBuilder::Operand *> ptxOperands;
     auto dstConstraint = newWordNumBits == 16 ? "=h" : "=r";
     auto srcConstraint = oldWordNumBits == 16 ? "h" : "r";
-    auto newVecWidth = newWordNumBits / newBitWidth;
-    auto newNumVectors = numElems / newVecWidth;
+    auto newVectorSize = newWordNumBits / newBitWidth;
+    auto newNumVectors = numElems / newVectorSize;
     for (unsigned i = 0; i < newNumVectors; ++i)
       ptxOperands.push_back(builder.newOperand(dstConstraint));
     for (auto oldVector : oldVectors)
@@ -333,7 +333,7 @@ static ConversionFunc makeConversionFuncFromPTX(const std::string &ptx,
     inst(ptxOperands, true);
 
     auto newWordType = rewriter.getIntegerType(newWordNumBits);
-    auto newVectorType = VectorType::get(newVecWidth, newType);
+    auto newVectorType = VectorType::get(newVectorSize, newType);
     SmallVector<Value> newVectors;
     if (newNumVectors == 1) {
       auto newVector = builder.launch(rewriter, loc, newWordType, false);
@@ -350,9 +350,9 @@ static ConversionFunc makeConversionFuncFromPTX(const std::string &ptx,
 
     SmallVector<Value> newElems;
     for (unsigned i = 0; i < numElems; ++i) {
-      auto newVector = newVectors[i / newVecWidth];
+      auto newVector = newVectors[i / newVectorSize];
       newElems.push_back(llvm_extractelement(
-          newType, newVector, arith_constant_i32(i % newVecWidth)));
+          newType, newVector, arith_constant_i32(i % newVectorSize)));
     }
     return newElems;
   };
@@ -463,9 +463,7 @@ private:
       return failure();
 
     auto resultType = getResultStructType(op);
-    auto resultStruct =
-        packToLLVMStruct(rewriter, loc, resultType, resultValues);
-    rewriter.replaceOp(op, resultStruct);
+    packAndReplace(rewriter, op, resultType, resultValues);
     return success();
   }
 

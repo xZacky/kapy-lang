@@ -44,12 +44,11 @@ KgpuToLLVMConversionTarget::KgpuToLLVMConversionTarget(
   addLegalDialect<LLVM::LLVMDialect, NVVM::NVVMDialect>();
   addLegalOp<UnrealizedConversionCastOp>();
 
-  addIllegalDialect<KapyDialect, KgpuDialect>();
+  addIllegalDialect<KapyDialect, KgpuDialect, cf::ControlFlowDialect>();
   addLegalOp<ProgramIdOp, WarpIdOp, LaneIdOp>();
 
   addDynamicallyLegalDialect<arith::ArithDialect, //
-                             math::MathDialect,   //
-                             scf::SCFDialect>([&](Operation *op) {
+                             math::MathDialect>([&](Operation *op) {
     bool hasLegalRegions = true;
     for (auto &region : op->getRegions())
       hasLegalRegions &= typeConverter.isLegal(op);

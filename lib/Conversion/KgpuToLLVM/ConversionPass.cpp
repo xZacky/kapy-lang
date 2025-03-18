@@ -28,6 +28,8 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "kapy/Analysis/AllocAnalysis.h"
+#include "kapy/Analysis/BlockAnalysis.h"
 #include "kapy/Conversion/KgpuToLLVM/ConversionTarget.h"
 #include "kapy/Conversion/KgpuToLLVM/Passes.h"
 #include "kapy/Conversion/KgpuToLLVM/Patterns.h"
@@ -39,8 +41,12 @@
 #include "mlir/Conversion/LLVMCommon/ConversionTarget.h"
 #include "mlir/Conversion/MathToLLVM/MathToLLVM.h"
 #include "mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h"
+#include "mlir/Dialect/Arith/Transforms/Passes.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/NVVMDialect.h"
+#include "mlir/Dialect/Math/Transforms/Passes.h"
+#include "mlir/Pass/PassManager.h"
+#include "mlir/Transforms/Passes.h"
 
 using namespace mlir;
 using namespace mlir::kapy;
@@ -55,8 +61,11 @@ class ConvertKgpuToLLVMPass
 public:
   virtual void runOnOperation() override {
     allocSharedArray();
+    insertBarriers();
     lowerFuncOps();
     lowerKgpuOps();
+    runPasses();
+    lowerMathOps();
   }
 
 private:
@@ -71,7 +80,30 @@ private:
     builder.create<LLVM::GlobalOp>(
         loc, LLVM::LLVMArrayType::get(builder.getIntegerType(8), 0), false,
         LLVM::Linkage::External, "shared_array", Attribute(), 128,
-        static_cast<int>(NVVM::NVVMMemorySpace::kSharedMemorySpace));
+        static_cast<unsigned>(NVVM::NVVMMemorySpace::kSharedMemorySpace));
+  }
+
+  void insertBarriers() {
+    auto module = getOperation();
+    ModuleAllocAnalysis allocAnalysis(module);
+    ModuleBlockAnalysis blockAnalysis(&allocAnalysis);
+    blockAnalysis.run();
+  }
+
+  void runPasses() {
+    auto *context = &getContext();
+    PassManager pm(context);
+    pm.addPass(arith::createArithUnsignedWhenEquivalentPass());
+    pm.addPass(arith::createIntRangeOptimizationsPass());
+    pm.addPass(math::createMathUpliftToFMA());
+    pm.addPass(createSCCPPass());
+    pm.addPass(createCanonicalizerPass());
+    pm.addPass(createCSEPass());
+    pm.addPass(createSymbolDCEPass());
+
+    auto module = getOperation();
+    if (failed(pm.run(module)))
+      signalPassFailure();
   }
 
   void lowerFuncOps() {
@@ -105,9 +137,29 @@ private:
     populateStSharedOpToLLVMConversionPattern(typeConverter, patterns);
     populateLdMatrixOpToLLVMConversionPattern(typeConverter, patterns);
     populateCpAsyncOpToLLVMConversionPatterns(typeConverter, patterns);
-    populateBroadcastOpToLLVMConversionPattern(typeConverter, patterns);
     populateSplatLikeOpToLLVMConversionPatterns(typeConverter, patterns);
+    populateBroadcastOpToLLVMConversionPattern(typeConverter, patterns);
+    populateTransposeOpToLLVMConversionPattern(typeConverter, patterns);
+    populateArangeOpToLLVMConversionPattern(typeConverter, patterns);
+    populateMatmulOpToLLVMConversionPattern(typeConverter, patterns);
+    populateReduceOpToLLVMConversionPattern(typeConverter, patterns);
+    populateChangeOpToLLVMConversionPattern(typeConverter, patterns);
     populateCallReturnOpToLLVMConversionPatterns(typeConverter, patterns);
+    cf::populateControlFlowToLLVMConversionPatterns(typeConverter, patterns);
+
+    auto module = getOperation();
+    if (failed(applyPartialConversion(module, convTarget, std::move(patterns))))
+      return signalPassFailure();
+  }
+
+  void lowerMathOps() {
+    auto *context = &getContext();
+    LowerToLLVMOptions options(context);
+    LLVMTypeConverter typeConverter(context, options);
+    LLVMConversionTarget convTarget(*context);
+    RewritePatternSet patterns(context);
+    arith::populateArithToLLVMConversionPatterns(typeConverter, patterns);
+    populateMathToLLVMConversionPatterns(typeConverter, patterns);
 
     auto module = getOperation();
     if (failed(applyPartialConversion(module, convTarget, std::move(patterns))))

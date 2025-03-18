@@ -99,13 +99,21 @@ Value kapy::packToLLVMStruct(OpBuilder &rewriter, Location loc,
                              LLVMStructType structType, ValueRange values) {
   auto bodyTypes = structType.getBody();
   assert(bodyTypes.size() == values.size());
-  Value llvmStruct = rewriter.create<UndefOp>(loc, structType);
+  Value llvmStruct = llvm_undef(structType);
   for (auto it : llvm::enumerate(values)) {
     assert(it.value() && it.value().getType() == bodyTypes[it.index()]);
     llvmStruct =
         llvm_insertvalue(structType, llvmStruct, it.value(), it.index());
   }
   return llvmStruct;
+}
+
+void kapy::packAndReplace(RewriterBase &rewriter, Operation *op,
+                          LLVMStructType structType, ValueRange values) {
+  assert(op->getNumResults() == 1);
+  auto loc = op->getLoc();
+  auto llvmStruct = packToLLVMStruct(rewriter, loc, structType, values);
+  rewriter.replaceOp(op, llvmStruct);
 }
 
 namespace {

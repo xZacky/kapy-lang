@@ -30,8 +30,6 @@
 
 #include "kapy/Dialect/Kapy/IR/Kapy.h"
 #include "kapy/Support/CommonUtils.h"
-#include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
-#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR//DialectImplementation.h"
 #include "mlir/Interfaces/FunctionImplementation.h"
 #include "mlir/Transforms/InliningUtils.h"
@@ -478,10 +476,10 @@ LogicalResult MatmulOp::verify() {
   if (!accElementType.isF16() && !accElementType.isF32())
     return emitOpError("result must have f16 or f32 element type");
 
-  if (!lhsElementType.isF16() && !rhsElementType.isF16() &&
+  if (lhsElementType.isBF16() && rhsElementType.isBF16() &&
       accElementType.isF16())
     return emitOpError("result must have f32 element type when operands are "
-                       "not f16 element type");
+                       "bf16 element type");
 
   if (!lhsElementType.isFloat8E4M3() && !lhsElementType.isFloat8E5M2())
     if (lhsElementType != rhsElementType)

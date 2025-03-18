@@ -47,7 +47,7 @@ public:
     auto bitWidth = getIntOrFloatBitWidth(sourceType);
     auto simdSize = laneLoops[globalLayout.isColMajor() ? 0 : 1];
     simdSize = std::min(simdSize, bankParam * 32 / bitWidth);
-    auto cpSize = std::to_string(simdSize * bitWidth / 8);
+    auto copySize = std::to_string(simdSize * bitWidth / 8);
 
     DenseMap<int64_t, SmallVector<int64_t, 8>> instIdToLoopIvs;
     for (int64_t loopIv0 = 0; loopIv0 < loopSpace[0]; ++loopIv0) {
@@ -104,9 +104,7 @@ public:
     Value lineSize = arith_constant_i32(1024 / bitWidth);
     Value laneId = rewriter.create<LaneIdOp>(loc);
 
-    SmallVector<Value> ldPointers;
-    SmallVector<Value> stPointers;
-    SmallVector<Value> predicates;
+    SmallVector<Value> ldPointers, stPointers, predicates;
     for (int64_t instId = 0; instId < numInsts; ++instId) {
       Value loopIv = arith_constant_i32(instIdToLoopIvs[instId][0]);
       Value index0 =
@@ -121,8 +119,8 @@ public:
                              arith_addi(arith_muli(ldIndex0, ldStride0),
                                         arith_muli(ldIndex1, ldStride1))));
 
-      Value stIndex0 = arith_addi(stStart0, stIndex0);
-      Value stIndex1 = arith_addi(stStart1, stIndex1);
+      Value stIndex0 = arith_addi(stStart0, index0);
+      Value stIndex1 = arith_addi(stStart1, index1);
       // before swizzling
       Value elemOffset = arith_addi(arith_muli(stIndex0, stStride0),
                                     arith_muli(stIndex1, stStride1));
@@ -155,7 +153,7 @@ public:
 
       auto *dstOperand = builder.newAddressOperand(stPointers[instId], "r");
       auto *srcOperand = builder.newAddressOperand(ldPointers[instId], "l");
-      auto *sizeConst = builder.newConstantOperand(cpSize);
+      auto *sizeConst = builder.newConstantOperand(copySize);
       cp(dstOperand, srcOperand, sizeConst).predicate(predicates[instId], "b");
       builder.launch(rewriter, loc, voidType);
     }

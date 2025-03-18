@@ -11,7 +11,6 @@
 
 using namespace mlir;
 using namespace mlir::kapy;
-using namespace mlir::LLVM;
 
 namespace {
 

@@ -1,30 +1,6 @@
 //===- BroadcastOpToLLVM.cpp ------------------------------------*- C++ -*-===//
 //
-// Copyright 2018-2020 Philippe Tillet
-// Copyright 2020-2022 OpenAI
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in
-// all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
-//
-//===----------------------------------------------------------------------===//
-//
-// This file is modified from the triton project.
-// https://github.com/triton-lang/triton
+// This file implements class to make BroadcastOp to LLVM compatible.
 //
 //===----------------------------------------------------------------------===//
 
@@ -58,7 +34,7 @@ public:
     auto oldMap = sourceLayout.getAffineMap(sourceType.getShape(), 3);
     auto newMap = resultLayout.getAffineMap(resultType.getShape(), 2);
 
-    auto sourceStruct = adaptor.getSource();
+    auto sourceValues = unpackLLVMStruct(rewriter, loc, adaptor.getSource());
     auto axis = getBroadcastAxis(op);
     auto elementType = getSourceElementType(op);
     auto loopSize = product(resultLayout.getLoopSpace(resultType.getShape()));
@@ -68,14 +44,11 @@ public:
       auto indices = newMap.compose({0, loopIv});
       indices[axis] = 0;
       auto inputId = oldMap.compose(indices)[0];
-      resultValues.push_back(
-          llvm_extractvalue(elementType, sourceStruct, inputId));
+      resultValues.push_back(sourceValues[inputId]);
     }
 
     auto structType = getResultStructType(op);
-    auto resultStruct =
-        packToLLVMStruct(rewriter, loc, structType, resultValues);
-    rewriter.replaceOp(op, resultStruct);
+    packAndReplace(rewriter, op, structType, resultValues);
     return success();
   }
 
