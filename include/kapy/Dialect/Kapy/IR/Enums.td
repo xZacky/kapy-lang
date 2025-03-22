@@ -87,15 +87,6 @@ def Kapy_EvictPriorityAttr : Kapy_EnumAttr<
   ]
 >;
 
-def Kapy_RoundingModeAttr : Kapy_EnumAttr<
-  "RoundingMode",
-  "rounding mode for floating-point cast instructions",
-  [
-    I32EnumAttrCase<"RZ", 0, "rz">,
-    I32EnumAttrCase<"RN", 1, "rn">
-  ]
->;
-
 def Kapy_MatmulImplWayAttr : Kapy_EnumAttr<
   "MatmulImplWay",
   "how to implement matmul",
@@ -105,6 +96,15 @@ def Kapy_MatmulImplWayAttr : Kapy_EnumAttr<
     I32EnumAttrCase<"MMA_M16N8K8_TF32", 3, "mma_m16n8k8_tf32">,
     I32EnumAttrCase<"MMA_M16N8K16_F8", 4, "mma_m16n8k16_f8">
     // TODO: Support more.
+  ]
+>;
+
+def Kapy_RoundingModeAttr : Kapy_EnumAttr<
+  "RoundingMode",
+  "rounding mode for floating-point cast instructions",
+  [
+    I32EnumAttrCase<"RZ", 0, "rz">,
+    I32EnumAttrCase<"RN", 1, "rn">
   ]
 >;
 

@@ -22,6 +22,12 @@ def EncodingAttr : Kapy_AttrDef<"Encoding", "encoding"> {
     "MemorySpace":$memory, OptionalParameter<"Attribute">:$layout
   );
 
+  let builders = [
+    AttrBuilder<
+      (ins "MemorySpace":$memory), "return get(context, memory, Attribute());"
+    >
+  ];
+
   let assemblyFormat = "`<` $memory (`,` $layout^)? `>`";
 }
 

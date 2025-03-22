@@ -34,15 +34,15 @@ public:
     auto start = arith_constant_i32(op.getStart());
     auto laneId = rewriter.create<LaneIdOp>(loc);
     SmallVector<Value> resultValues;
-    for (int64_t i = 0; i < loopSize; ++i) {
-      Value loopIv = arith_constant_i32(i);
+    for (int64_t loopIv = 0; loopIv < loopSize; ++loopIv) {
+      Value thisIv = arith_constant_i32(loopIv);
       if (axis == 0) {
         Value index =
-            expandAffineExpr(rewriter, loc, map.getResult(0), {laneId, loopIv});
+            expandAffineExpr(rewriter, loc, map.getResult(0), {laneId, thisIv});
         resultValues.push_back(arith_addi(start, index));
       } else {
         Value index =
-            expandAffineExpr(rewriter, loc, map.getResult(1), {laneId, loopIv});
+            expandAffineExpr(rewriter, loc, map.getResult(1), {laneId, thisIv});
         resultValues.push_back(arith_addi(start, index));
       }
     }

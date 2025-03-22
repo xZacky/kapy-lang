@@ -36,17 +36,11 @@
 #include "kapy/Conversion/KgpuToLLVM/TypeConverter.h"
 #include "kapy/Dialect/Kapy/IR/Kapy.h"
 #include "kapy/Dialect/Kgpu/IR/Kgpu.h"
-#include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
 #include "mlir/Conversion/ControlFlowToLLVM/ControlFlowToLLVM.h"
 #include "mlir/Conversion/LLVMCommon/ConversionTarget.h"
-#include "mlir/Conversion/MathToLLVM/MathToLLVM.h"
-#include "mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h"
-#include "mlir/Dialect/Arith/Transforms/Passes.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/NVVMDialect.h"
-#include "mlir/Dialect/Math/Transforms/Passes.h"
 #include "mlir/Pass/PassManager.h"
-#include "mlir/Transforms/Passes.h"
 
 using namespace mlir;
 using namespace mlir::kapy;
@@ -64,8 +58,6 @@ public:
     insertBarriers();
     lowerFuncOps();
     lowerKgpuOps();
-    runPasses();
-    lowerMathOps();
   }
 
 private:
@@ -88,22 +80,6 @@ private:
     ModuleAllocAnalysis allocAnalysis(module);
     ModuleBlockAnalysis blockAnalysis(&allocAnalysis);
     blockAnalysis.run();
-  }
-
-  void runPasses() {
-    auto *context = &getContext();
-    PassManager pm(context);
-    pm.addPass(arith::createArithUnsignedWhenEquivalentPass());
-    pm.addPass(arith::createIntRangeOptimizationsPass());
-    pm.addPass(math::createMathUpliftToFMA());
-    pm.addPass(createSCCPPass());
-    pm.addPass(createCanonicalizerPass());
-    pm.addPass(createCSEPass());
-    pm.addPass(createSymbolDCEPass());
-
-    auto module = getOperation();
-    if (failed(pm.run(module)))
-      signalPassFailure();
   }
 
   void lowerFuncOps() {
@@ -146,20 +122,6 @@ private:
     populateChangeOpToLLVMConversionPattern(typeConverter, patterns);
     populateCallReturnOpToLLVMConversionPatterns(typeConverter, patterns);
     cf::populateControlFlowToLLVMConversionPatterns(typeConverter, patterns);
-
-    auto module = getOperation();
-    if (failed(applyPartialConversion(module, convTarget, std::move(patterns))))
-      return signalPassFailure();
-  }
-
-  void lowerMathOps() {
-    auto *context = &getContext();
-    LowerToLLVMOptions options(context);
-    LLVMTypeConverter typeConverter(context, options);
-    LLVMConversionTarget convTarget(*context);
-    RewritePatternSet patterns(context);
-    arith::populateArithToLLVMConversionPatterns(typeConverter, patterns);
-    populateMathToLLVMConversionPatterns(typeConverter, patterns);
 
     auto module = getOperation();
     if (failed(applyPartialConversion(module, convTarget, std::move(patterns))))

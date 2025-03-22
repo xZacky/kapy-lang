@@ -27,44 +27,53 @@ public:
                   ConversionPatternRewriter &rewriter) const override {
     assert(op->getNumOperands() == 1 && op->getNumResults() == 1);
     auto loc = op.getLoc();
-    auto sourceStruct = adaptor.getSource();
-    auto sourceValues = unpackLLVMStruct(rewriter, loc, sourceStruct);
-    auto sourceType = cast<LLVMStructType>(sourceStruct.getType());
-    auto fromSize = sourceType.getBody().size();
-    auto elementType = sourceType.getBody()[0];
-    auto vectorType = VectorType::get(fromSize, elementType);
-    Value sourceVector = llvm_undef(vectorType);
-    for (int64_t loopIv = 0; loopIv < fromSize; ++loopIv) {
-      sourceVector = llvm_insertelement(vectorType, sourceVector, //
-                                        sourceValues[loopIv],     //
-                                        arith_constant_i32(loopIv));
-    }
+    auto sourceValues = unpackLLVMStruct(rewriter, loc, adaptor.getSource());
     ChangeOpHelper helper(op);
     auto map = helper.getShflIdxMap();
-    auto shflKind = NVVM::ShflKind::idx;
+    auto ivsNeedShfl = helper.getIvsNeedShfl();
+    auto elementType = getSourceElementType(op);
     auto resultType = getResultStructType(op);
-    auto thisSize = resultType.getBody().size();
-    Value thisId = rewriter.create<LaneIdOp>(loc);
+    auto loopSize = resultType.getBody().size();
+    auto shflKind = NVVM::ShflKind::idx;
+    auto equal = arith::CmpIPredicate::eq;
+    Value laneId = rewriter.create<LaneIdOp>(loc);
     Value memberMask = arith_constant_i32(0xFFFFFFFF);
-    Value groupClamp = arith_constant_i32(0x00200020);
+    Value groupClamp = arith_constant_i32(0x00001F1F);
     SmallVector<Value> resultValues;
-    for (int64_t loopIv = 0; loopIv < thisSize; ++loopIv) {
-      auto mapped = map.compose({0, loopIv});
-      if (mapped[0] == 0) {
-        Value fromIv = arith_constant_i32(mapped[1]);
-        Value toMove = llvm_extractelement(elementType, sourceVector, fromIv);
-        resultValues.push_back(toMove);
+    for (int64_t loopIv = 0; loopIv < loopSize; ++loopIv) {
+      Value thisIv = arith_constant_i32(loopIv);
+      Value fromId =
+          expandAffineExpr(rewriter, loc, map.getResult(0), {laneId, thisIv});
+      Value fromIv =
+          expandAffineExpr(rewriter, loc, map.getResult(1), {laneId, thisIv});
+      if (ivsNeedShfl.empty()) {
+        Value result = sourceValues[0];
+        for (auto it : llvm::enumerate(sourceValues)) {
+          if (it.index() == 0)
+            continue;
+          result = arith_select(                                         //
+              arith_cmpi(equal, arith_constant_i32(it.index()), fromIv), //
+              it.value(), result);
+        }
+        resultValues.push_back(result);
       } else {
-        Value thisIv = arith_constant_i32(loopIv);
-        Value fromId =
-            expandAffineExpr(rewriter, loc, map.getResult(0), {thisId, thisIv});
-        Value fromIv =
-            expandAffineExpr(rewriter, loc, map.getResult(1), {thisId, thisIv});
-        Value toShfl = llvm_extractelement(elementType, sourceVector, fromIv);
-        Value shfled = rewriter.create<NVVM::ShflOp>(
-            loc, elementType, memberMask, toShfl, fromId, groupClamp, shflKind,
-            UnitAttr());
-        resultValues.push_back(shfled);
+        SmallVector<std::pair<int64_t, Value>> sendIvToShfled;
+        for (int64_t sendIv : ivsNeedShfl) {
+          Value toShfl = sourceValues[sendIv];
+          Value shfled = rewriter.create<NVVM::ShflOp>(
+              loc, elementType, memberMask, toShfl, fromId, groupClamp,
+              shflKind, UnitAttr());
+          sendIvToShfled.push_back({sendIv, shfled});
+        }
+        Value result = sendIvToShfled[0].second;
+        for (auto [sendIv, shfled] : sendIvToShfled) {
+          if (sendIv == sendIvToShfled[0].first)
+            continue;
+          result = arith_select(                                     //
+              arith_cmpi(equal, arith_constant_i32(sendIv), fromIv), //
+              shfled, result);
+        }
+        resultValues.push_back(result);
       }
     }
     packAndReplace(rewriter, op, resultType, resultValues);
@@ -72,6 +81,11 @@ public:
   }
 
 private:
+  Type getSourceElementType(ChangeOp op) const {
+    auto elementType = op.getSource().getType().getElementType();
+    return typeConverter->convertType(elementType);
+  }
+
   LLVMStructType getResultStructType(ChangeOp op) const {
     auto resultType = typeConverter->convertType(op.getType());
     return cast<LLVMStructType>(resultType);

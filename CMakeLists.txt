@@ -11,7 +11,7 @@ if(POLICY CMP0116)
   cmake_policy(SET CMP0116 OLD)
 endif()
 
-option(KAPY_BUILD_PYTHON_MODULE "Build Kapy Python bindings" OFF)
+option(KAPY_BUILD_PYTHON_MODULE "Build Kapy Python bindings" ON)
 
 if(NOT CMAKE_BUILD_TYPE)
   message(STATUS "Default build type: Debug")
@@ -48,7 +48,11 @@ get_property(conversion_libs GLOBAL PROPERTY MLIR_CONVERSION_LIBS)
 if (KAPY_BUILD_PYTHON_MODULE)
   message(STATUS "Adding Python module")
   set(PYTHON_SRC_PATH ${CMAKE_CURRENT_SOURCE_DIR}/python/src)
-  set(PYTHON_SRC_FILES ${PYTHON_SRC_PATH}/main.cc ${PYTHON_SRC_PATH}/ir.cc)
+  set(PYTHON_SRC_FILES
+    ${PYTHON_SRC_PATH}/main.cc
+    ${PYTHON_SRC_PATH}/ir.cc
+    ${PYTHON_SRC_PATH}/passes.cc
+  )
 
   include_directories(${PYBIND11_INCLUDE_DIR})
   include_directories(${PYTHON_SRC_PATH})

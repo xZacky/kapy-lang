@@ -78,6 +78,18 @@ private:
       }
       return lessThan;
     }
+
+    /*
+    bool operator==(const CostInfo &other) const {
+      for (auto [block, numShfls] : blockToNumShfls) {
+        if (!other.blockToNumShfls.contains(block) && numShfls != 0)
+          return false;
+        if (numShfls != other.blockToNumShfls.lookup(block))
+          return false;
+      }
+      return true;
+    }
+    */
   };
 
   struct ResolveState {

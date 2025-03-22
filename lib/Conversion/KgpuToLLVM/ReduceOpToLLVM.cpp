@@ -106,7 +106,7 @@ public:
     auto shflKind = NVVM::ShflKind::bfly;
     auto elementType = getSourceElementType(op);
     Value memberMask = arith_constant_i32(0xFFFFFFFF);
-    Value groupClamp = arith_constant_i32(0x00200020);
+    Value groupClamp = arith_constant_i32(0x00001F1F);
     for (unsigned i = 0; i < numShfls; ++i) {
       Value offset = arith_constant_i32(laneOffset * exp2(i));
       for (unsigned j = 0; j < accValues.size(); ++j) {
@@ -117,6 +117,9 @@ public:
         accumulate(rewriter, op.getRegion(), accValues[j], shfled);
       }
     }
+    auto resultType = op.getType();
+    auto resultLayout = getLayout<FragmentsLayoutAttr>(resultType);
+    loopSpace = resultLayout.getLoopSpace(resultType.getShape());
     SmallVector<Value> resultValues(product(loopSpace));
     for (int64_t loopIv0 = 0; loopIv0 < loopSpace[0]; ++loopIv0) {
       for (int64_t loopIv1 = 0; loopIv1 < loopSpace[1]; ++loopIv1) {
@@ -128,8 +131,8 @@ public:
         resultValues[loopIv] = accValues[axis == 1 ? loopIv0 : loopIv1];
       }
     }
-    auto resultType = getResultStructType(op);
-    packAndReplace(rewriter, op, resultType, resultValues);
+    auto structType = getResultStructType(op);
+    packAndReplace(rewriter, op, structType, resultValues);
     return success();
   }
 

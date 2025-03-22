@@ -116,8 +116,6 @@ public:
 
 private:
   struct Buffer {
-    // EXPLICIT: MkSharedOp
-    // VIRTUAL: CallOp
     enum class BufferKind { EXPLICIT, VIRTUAL };
 
     // MT: thread safe

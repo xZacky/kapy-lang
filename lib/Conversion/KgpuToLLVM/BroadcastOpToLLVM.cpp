@@ -43,8 +43,8 @@ public:
     for (int64_t loopIv = 0; loopIv < loopSize; ++loopIv) {
       auto indices = newMap.compose({0, loopIv});
       indices[axis] = 0;
-      auto inputId = oldMap.compose(indices)[0];
-      resultValues.push_back(sourceValues[inputId]);
+      auto fromIv = oldMap.compose(indices)[0];
+      resultValues.push_back(sourceValues[fromIv]);
     }
 
     auto structType = getResultStructType(op);

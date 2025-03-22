@@ -23,6 +23,14 @@ ReduceOpHelper::ReduceOpHelper(RankedTensorType sourceType, unsigned axis) {
   this->axis = axis;
 }
 
+int64_t ReduceOpHelper::getLaneOffset() const {
+  auto layout = getLayout<FragmentsLayoutAttr>(sourceType);
+  if (layout.getMajorAxis() == axis)
+    return 1;
+  else
+    return layout.getLaneArray()[axis == 1 ? 0 : 1];
+}
+
 int64_t ReduceOpHelper::getNumShfls() const {
   auto shape = sourceType.getShape();
   auto layout = getLayout<FragmentsLayoutAttr>(sourceType);
@@ -39,14 +47,6 @@ int64_t ReduceOpHelper::getNumShfls() const {
   return log2(laneIdSet.size());
 }
 
-int64_t ReduceOpHelper::getLaneOffset() const {
-  auto layout = getLayout<FragmentsLayoutAttr>(sourceType);
-  if (layout.getMajorAxis() == axis)
-    return 1;
-  else
-    return layout.getLaneArray()[axis == 1 ? 0 : 1];
-}
-
 ChangeOpHelper::ChangeOpHelper(ChangeOp changeOp) {
   this->sourceType = changeOp.getSource().getType();
   this->resultType = changeOp.getType();
@@ -58,17 +58,26 @@ ChangeOpHelper::ChangeOpHelper(RankedTensorType sourceType,
   this->resultType = resultType;
 }
 
-int64_t ChangeOpHelper::getNumShfls() const {
+SetVector<int64_t> ChangeOpHelper::getIvsNeedShfl() const {
   auto layout = getLayout<FragmentsLayoutAttr>(resultType);
   auto loopSize = product(layout.getLoopSpace(resultType.getShape()));
   auto map = getShflIdxMap();
-  int64_t numShfls = 0;
-  for (int64_t loopIv = 0; loopIv < loopSize; ++loopIv) {
-    auto laneId = map.compose({0, loopIv})[0];
-    if (laneId != 0)
-      numShfls += 1;
+  SetVector<int64_t> ivsNeedShfl;
+  for (int64_t laneId = 0; laneId < warpSize; ++laneId) {
+    for (int64_t loopIv = 0; loopIv < loopSize; ++loopIv) {
+      // Compute the source lane id and loop iv where we shuffle from.
+      auto idPair = map.compose({laneId, loopIv});
+      if (idPair[0] != laneId)
+        ivsNeedShfl.insert(idPair[1]);
+    }
   }
-  return numShfls;
+  return ivsNeedShfl;
+}
+
+int64_t ChangeOpHelper::getNumShfls() const {
+  auto layout = getLayout<FragmentsLayoutAttr>(resultType);
+  auto loopSize = product(layout.getLoopSpace(resultType.getShape()));
+  return loopSize * getIvsNeedShfl().size();
 }
 
 AffineMap ChangeOpHelper::getShflIdxMap() const {
